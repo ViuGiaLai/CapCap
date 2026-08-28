@@ -7,43 +7,37 @@ import faster_whisper
 import rapidocr
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-project_root = Path(r"D:\CodingTime\CapCap")
+project_root = Path(SPECPATH).resolve() if "SPECPATH" in dir() else Path(__file__).resolve().parent
 ui_root = project_root / "ui"
 app_root = project_root / "app"
 
-datas = [
-    (str(project_root / "assets"), "assets"),
-    (str(project_root / "bin" / "ffmpeg"), "bin/ffmpeg"),
-    (str(project_root / "bin" / "mpv"), "bin/mpv"),
-    (str(project_root / "bin" / "UVR-MDX-NET-Inst_HQ_3.onnx"), "bin"),
-    (str(project_root / "bin" / "silero_vad.onnx"), "bin"),
-    (str(project_root / "app" / "voice_preview_catalog.json"), "app"),
-    (str(project_root / "app" / "voice_download_catalog.json"), "app"),
-    (str(project_root / "app" / "voice_preview_catalog.release.json"), "app"),
-    (str(project_root / "app" / "translation" / "prompts"), "app/translation/prompts"),
-    (str(project_root / "models" / "piper" / "ngochuyen.onnx"), "models/piper"),
-    (str(project_root / "models" / "piper" / "ngochuyen.onnx.json"), "models/piper"),
-    (str(project_root / "models" / "pyannote" / "model.int8.onnx"), "models/pyannote"),
-    (str(project_root / "models" / "pyannote" / "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"), "models/pyannote"),
-    (str(project_root / "models" / "pyannote" / "LICENSE"), "models/pyannote"),
-    # Ship one ready-to-use offline transcription engine. Keep only the
-    # quantized model and vocabulary; test audio, caches, and export docs stay
-    # out of the installer and Whisper/OCR remain optional downloads.
-    (str(project_root / "models" / "sensevoice" / "model.int8.onnx"), "models/sensevoice"),
-    (str(project_root / "models" / "sensevoice" / "tokens.txt"), "models/sensevoice"),
-    (str(project_root / "bin" / "cuda12_fw" / "README.txt"), "bin/cuda12_fw"),
-    (str(project_root / "models" / "faster_whisper" / "README.txt"), "models/faster_whisper"),
-    (str(project_root / "app" / "utils" / "voice_preview_utils.py"), "utils"),
-    (str(project_root / ".env_example"), "."),
-    (os.path.join(os.path.dirname(faster_whisper.__file__), "assets"), "faster_whisper/assets"),
-    (os.path.join(os.path.dirname(rapidocr.__file__), "models"), "rapidocr/models"),
-    # RapidOCR loads these YAML files at runtime before it resolves the ONNX
-    # models.  They are data files, so PyInstaller does not always discover
-    # them from imports alone.
-    (os.path.join(os.path.dirname(rapidocr.__file__), "config.yaml"), "rapidocr"),
-    (os.path.join(os.path.dirname(rapidocr.__file__), "default_models.yaml"), "rapidocr"),
-    (str(project_root / "ui" / "views" / "editor"), "views/editor"),
-]
+def _safe_data(src, dest):
+    p = Path(src)
+    return [(str(p), dest)] if p.exists() else []
+
+datas = []
+datas += _safe_data(project_root / "assets", "assets")
+datas += _safe_data(project_root / "bin" / "ffmpeg", "bin/ffmpeg")
+datas += _safe_data(project_root / "bin" / "mpv", "bin/mpv")
+datas += _safe_data(project_root / "bin" / "UVR-MDX-NET-Inst_HQ_3.onnx", "bin")
+datas += _safe_data(project_root / "bin" / "silero_vad.onnx", "bin")
+datas += _safe_data(project_root / "app" / "voice_preview_catalog.json", "app")
+datas += _safe_data(project_root / "app" / "voice_download_catalog.json", "app")
+datas += _safe_data(project_root / "app" / "voice_preview_catalog.release.json", "app")
+datas += _safe_data(project_root / "app" / "translation" / "prompts", "app/translation/prompts")
+datas += _safe_data(project_root / "models" / "piper", "models/piper")
+datas += _safe_data(project_root / "models" / "pyannote", "models/pyannote")
+datas += _safe_data(project_root / "models" / "sensevoice" / "model.int8.onnx", "models/sensevoice")
+datas += _safe_data(project_root / "models" / "sensevoice" / "tokens.txt", "models/sensevoice")
+datas += _safe_data(project_root / "bin" / "cuda12_fw" / "README.txt", "bin/cuda12_fw")
+datas += _safe_data(project_root / "models" / "faster_whisper" / "README.txt", "models/faster_whisper")
+datas += _safe_data(project_root / "app" / "utils" / "voice_preview_utils.py", "utils")
+datas += _safe_data(project_root / ".env_example", ".")
+datas += _safe_data(os.path.join(os.path.dirname(faster_whisper.__file__), "assets"), "faster_whisper/assets")
+datas += _safe_data(os.path.join(os.path.dirname(rapidocr.__file__), "models"), "rapidocr/models")
+datas += _safe_data(os.path.join(os.path.dirname(rapidocr.__file__), "config.yaml"), "rapidocr")
+datas += _safe_data(os.path.join(os.path.dirname(rapidocr.__file__), "default_models.yaml"), "rapidocr")
+datas += _safe_data(project_root / "ui" / "views" / "editor", "views/editor")
 datas += collect_data_files("piper")
 
 # RapidOCR selects its ONNX implementation through runtime configuration.

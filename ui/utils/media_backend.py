@@ -243,31 +243,59 @@ class QtMediaPlayerBackend(QObject):
 
         self.backend_name = "qt"
         self.video_view = video_view
-        self._player = QMediaPlayer()
-        self._audio_output = QAudioOutput()
-        self._player.setAudioOutput(self._audio_output)
+        self._source_path = ""
+        self._audio_path = ""
+        self._original_audio_path = ""
+        self._dubbed_loaded_path = ""
+        self._original_loaded_path = ""
+
+        # Main video player
+        self._player = QMediaPlayer(self)
+        self._video_audio_output = QAudioOutput(self)
+        self._player.setAudioOutput(self._video_audio_output)
         if isinstance(video_view, VideoView):
             self._player.setVideoOutput(video_view.video_item)
-        self._player.positionChanged.connect(self.positionChanged.emit)
+
+        # Sidecar original audio player (A1)
+        self._original_player = QMediaPlayer(self)
+        self._original_output = QAudioOutput(self)
+        self._original_player.setAudioOutput(self._original_output)
+
+        # Sidecar dubbed voice audio player (A2)
+        self._dubbed_player = QMediaPlayer(self)
+        self._dubbed_output = QAudioOutput(self)
+        self._dubbed_player.setAudioOutput(self._dubbed_output)
+
+        self._player.positionChanged.connect(self._on_player_position_changed)
         self._player.durationChanged.connect(self.durationChanged.emit)
         if hasattr(self._player, "playbackStateChanged"):
             self._player.playbackStateChanged.connect(lambda s: self.stateChanged.emit(int(getattr(s, "value", s))))
         elif hasattr(self._player, "stateChanged"):
             self._player.stateChanged.connect(lambda s: self.stateChanged.emit(int(getattr(s, "value", s))))
-        # When the clip reaches the end, the QMediaPlayer goes to
-        # StoppedState — surface this so the timeline can stop too
-        # (Bug 2: video not pausing at end, timeline keeps running).
         self._player.mediaStatusChanged.connect(self._on_media_status)
+
         self._mute_original = False
         self._mute_dubbed = False
+        self._original_vol = 0.5
+        self._dubbed_vol = 1.0
+
+    def _on_player_position_changed(self, pos: int):
+        self.positionChanged.emit(pos)
+        # Resync sidecars if drifting
+        if self._original_loaded_path and self._original_player.playbackState() == QMediaPlayer.PlayingState:
+            diff = abs(self._original_player.position() - pos)
+            if diff > 250:
+                self._original_player.setPosition(pos)
+        if self._dubbed_loaded_path and self._dubbed_player.playbackState() == QMediaPlayer.PlayingState:
+            diff = abs(self._dubbed_player.position() - pos)
+            if diff > 250:
+                self._dubbed_player.setPosition(pos)
 
     def _on_media_status(self, status):
         try:
             from PySide6.QtMultimedia import QMediaPlayer as _QMP
             if status == _QMP.EndOfMedia:
-                # Pause (hold last frame) and emit StoppedState so the
-                # timeline play state is re-synced to "not playing".
-                self._player.pause()
+                self.pause()
                 self.stateChanged.emit(int(QMediaPlayer.PausedState.value))
         except Exception:
             pass
@@ -275,18 +303,35 @@ class QtMediaPlayerBackend(QObject):
     def setSource(self, source):
         self._source_path = source.toLocalFile() if isinstance(source, QUrl) else str(source)
         self._player.setSource(source)
+        self._apply_audio_volumes_and_mutes()
 
     def play(self):
         self._player.play()
+        if self._original_loaded_path:
+            self._original_player.play()
+        if self._dubbed_loaded_path:
+            self._dubbed_player.play()
 
     def pause(self):
         self._player.pause()
+        if self._original_loaded_path:
+            self._original_player.pause()
+        if self._dubbed_loaded_path:
+            self._dubbed_player.pause()
 
     def stop(self):
         self._player.stop()
+        if self._original_loaded_path:
+            self._original_player.stop()
+        if self._dubbed_loaded_path:
+            self._dubbed_player.stop()
 
     def setPosition(self, position):
         self._player.setPosition(position)
+        if self._original_loaded_path:
+            self._original_player.setPosition(position)
+        if self._dubbed_loaded_path:
+            self._dubbed_player.setPosition(position)
 
     def position(self):
         return self._player.position()
@@ -307,16 +352,55 @@ class QtMediaPlayerBackend(QObject):
         return None
 
     def set_audio_file(self, audio_path):
-        return None
+        """Load dubbed AI audio file (A2)."""
+        if not audio_path or not os.path.exists(audio_path):
+            self.clear_audio()
+            return
+        self._audio_path = audio_path
+        self._dubbed_loaded_path = audio_path
+        self._dubbed_player.setSource(QUrl.fromLocalFile(audio_path))
+        self._apply_audio_volumes_and_mutes()
 
     def clear_audio(self):
-        return None
+        self._audio_path = ""
+        self._dubbed_loaded_path = ""
+        try:
+            self._dubbed_player.stop()
+            self._dubbed_player.setSource(QUrl())
+        except Exception:
+            pass
 
     def set_original_audio_file(self, audio_path):
-        return None
+        """Load original audio file (A1)."""
+        if not audio_path or not os.path.exists(audio_path):
+            self._clear_original_audio()
+            return
+        self._original_audio_path = audio_path
+        self._original_loaded_path = audio_path
+        self._original_player.setSource(QUrl.fromLocalFile(audio_path))
+        self._apply_audio_volumes_and_mutes()
 
     def _clear_original_audio(self):
-        return None
+        self._original_audio_path = ""
+        self._original_loaded_path = ""
+        try:
+            self._original_player.stop()
+            self._original_player.setSource(QUrl())
+        except Exception:
+            pass
+        self._apply_audio_volumes_and_mutes()
+
+    def _apply_audio_volumes_and_mutes(self):
+        if self._original_loaded_path:
+            self._video_audio_output.setMuted(True)
+            self._original_output.setVolume(min(1.0, max(0.0, self._original_vol)))
+            self._original_output.setMuted(bool(self._mute_original or self._original_vol <= 0.0))
+        else:
+            self._video_audio_output.setVolume(min(1.0, max(0.0, self._original_vol)))
+            self._video_audio_output.setMuted(bool(self._mute_original or self._original_vol <= 0.0))
+
+        self._dubbed_output.setVolume(min(1.0, max(0.0, self._dubbed_vol)))
+        self._dubbed_output.setMuted(bool(self._mute_dubbed or self._dubbed_vol <= 0.0 or not self._dubbed_loaded_path))
 
     def set_blur_region(self, blur_region=None):
         return None
@@ -340,49 +424,43 @@ class QtMediaPlayerBackend(QObject):
         return None
 
     def set_volume(self, percent):
-        value = max(0, min(100, int(percent)))
-        self._audio_output.setVolume(value / 100.0)
+        val = max(0, min(100, int(percent))) / 100.0
+        self._original_vol = val
+        self._dubbed_vol = val
+        self._apply_audio_volumes_and_mutes()
 
     def set_original_volume(self, percent):
-        value = max(0, min(200, int(percent))) / 100.0
-        self._audio_output.setVolume(min(1.0, value))
-        if value <= 0.0:
-            self._audio_output.setMuted(True)
-        else:
-            self._audio_output.setMuted(bool(self._mute_original and self._mute_dubbed))
+        self._original_vol = max(0.0, min(200.0, float(percent))) / 100.0
+        self._apply_audio_volumes_and_mutes()
 
     def set_dubbed_volume(self, percent):
-        value = max(0, min(200, int(percent))) / 100.0
-        self._audio_output.setVolume(min(1.0, value))
-        if value <= 0.0:
-            self._audio_output.setMuted(True)
-        else:
-            self._audio_output.setMuted(bool(self._mute_original and self._mute_dubbed))
+        self._dubbed_vol = max(0.0, min(200.0, float(percent))) / 100.0
+        self._apply_audio_volumes_and_mutes()
 
     def original_volume(self):
-        return int(round(self._audio_output.volume() * 100.0))
+        return int(round(self._original_vol * 100.0))
 
     def dubbed_volume(self):
-        return int(round(self._audio_output.volume() * 100.0))
+        return int(round(self._dubbed_vol * 100.0))
 
     def volume(self):
-        return int(round(self._audio_output.volume() * 100.0))
+        return int(round(self._original_vol * 100.0))
 
     def set_muted(self, muted):
         self._mute_original = bool(muted)
         self._mute_dubbed = bool(muted)
-        self._audio_output.setMuted(bool(muted))
+        self._apply_audio_volumes_and_mutes()
 
     def is_muted(self):
-        return bool(self._audio_output.isMuted())
+        return self._mute_original and self._mute_dubbed
 
     def set_mute_original(self, muted):
         self._mute_original = bool(muted)
-        self._audio_output.setMuted(self._mute_original and self._mute_dubbed)
+        self._apply_audio_volumes_and_mutes()
 
     def set_mute_dubbed(self, muted):
         self._mute_dubbed = bool(muted)
-        self._audio_output.setMuted(self._mute_original and self._mute_dubbed)
+        self._apply_audio_volumes_and_mutes()
 
     def is_original_muted(self):
         return self._mute_original
@@ -392,13 +470,18 @@ class QtMediaPlayerBackend(QObject):
 
     def set_playback_rate(self, rate):
         try:
-            self._player.setPlaybackRate(float(rate))
+            r = float(rate)
+            self._player.setPlaybackRate(r)
+            if self._original_loaded_path:
+                self._original_player.setPlaybackRate(r)
+            if self._dubbed_loaded_path:
+                self._dubbed_player.setPlaybackRate(r)
         except Exception:
             pass
 
     def playback_rate(self):
         try:
-            return float(self._player.playbackRate())
+            return float(self._player.playbackRate() or 1.0)
         except Exception:
             return 1.0
 

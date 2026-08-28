@@ -216,8 +216,14 @@ class ExportWorkflow:
         
         try:
             # Extract logo layers from timeline
-            timeline_data = state.artifacts.get("timeline")
-            print(f"[Export] timeline artifact: {timeline_data}")
+            timeline_data = state.artifacts.get("timeline") if (hasattr(state, "artifacts") and isinstance(state.artifacts, dict)) else None
+            if not timeline_data and hasattr(state, "timeline") and state.timeline:
+                timeline_data = state.timeline
+            if not timeline_data and hasattr(state, "project_root") and state.project_root:
+                tl_file = os.path.join(state.project_root, "timeline.json")
+                if os.path.exists(tl_file):
+                    timeline_data = tl_file
+            print(f"[Export] timeline data/path: {timeline_data}")
             if timeline_data:
                 import json
                 # timeline_data is a file path, not JSON string
@@ -291,28 +297,38 @@ class ExportWorkflow:
                                 source = layer.get("source", "")
                                 if not source:
                                     continue
-                                transform = layer.get("transform", {})
-                                # Transform x,y are in pixels, need to normalize to 0-1
-                                # For now, assume they are percentages (0-100) and convert to 0-1
-                                x = float(transform.get("x", 10.0)) / 100.0
-                                y = float(transform.get("y", 10.0)) / 100.0
-                                # Scale is relative, assume 0.2 (20%) as base size
-                                scale_x = float(transform.get("scale_x", 1.0))
-                                scale_y = float(transform.get("scale_y", 1.0))
-                                w = 0.2 * scale_x
-                                h = 0.2 * scale_y
+                                transform = layer.get("transform", {}) or {}
+                                val_x = transform.get("x", 0.0)
+                                raw_x = float(val_x if val_x is not None else 0.0)
+                                x = raw_x / 100.0 if raw_x > 1.0 else raw_x
+
+                                val_y = transform.get("y", 0.0)
+                                raw_y = float(val_y if val_y is not None else 0.0)
+                                y = raw_y / 100.0 if raw_y > 1.0 else raw_y
+
+                                val_sx = transform.get("scale_x", 0.2)
+                                raw_sx = float(val_sx if val_sx is not None else 0.2)
+                                w = raw_sx / 100.0 if raw_sx > 1.0 else raw_sx
+
+                                val_sy = transform.get("scale_y", 0.2)
+                                raw_sy = float(val_sy if val_sy is not None else 0.2)
+                                h = raw_sy / 100.0 if raw_sy > 1.0 else raw_sy
+
+                                val_rot = transform.get("rotation", 0.0)
+                                rotation = float(val_rot if val_rot is not None else 0.0)
+
                                 logo_layers.append({
                                     "source": str(source),
                                     "x": x,
                                     "y": y,
                                     "width": w,
                                     "height": h,
-                                    "opacity": float(layer.get("opacity", 1.0)),
-                                    "rotation": float(transform.get("rotation", 0.0)),
-                                    "start": max(0.0, float(layer.get("start", 0.0))),
-                                    "end": max(0.0, float(layer.get("end", 0.0))),
+                                    "opacity": float(layer.get("opacity", 1.0) or 1.0),
+                                    "rotation": rotation,
+                                    "start": max(0.0, float(layer.get("start", 0.0) or 0.0)),
+                                    "end": max(0.0, float(layer.get("end", 0.0) or 0.0)),
                                 })
-                                print(f"[Export] Added logo layer: source={source}, x={x}, y={y}, w={w}, h={h}")
+                                print(f"[Export] Added logo layer: source={source}, x={x:.2f}, y={y:.2f}, w={w:.2f}, h={h:.2f}")
             
                     # Extract ordinary text layers. Their transform x/y is
                     # already normalized (unlike legacy logo percentages).
@@ -641,7 +657,8 @@ class ExportWorkflow:
                 # fast path when there is no Text layer, but burn text after
                 # muxing when the editor contains text overlays.
                 voice_output = output_path
-                if text_image_layers:
+                has_overlays = bool(text_image_layers or logo_layers or mask_regions or blur_regions)
+                if has_overlays:
                     tmp_mux_path = self._build_temp_mux_path(project_temp_dir)
                     voice_output = tmp_mux_path
                 self.engine_runtime.mux_audio_for_preview(
