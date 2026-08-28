@@ -34,12 +34,6 @@ class ProjectService:
         if os.path.exists(state_path):
             state = self.load_project(state_path)
             state.input_video = video_path
-            state.mode = mode
-            state.translator_ai = translator_ai
-            state.translator_style = translator_style
-            state.input_language = input_language
-            state.target_language = target_language
-            self.save_project(state)
             return state
  
         state = ProjectState(

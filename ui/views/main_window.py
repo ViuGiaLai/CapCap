@@ -138,7 +138,13 @@ def _build_header_bar(gui):
     gui.normalizer_dict_action = more_menu.addAction("Normalizer Dictionary")
     gui.normalizer_dict_action.triggered.connect(gui.open_normalizer_dict_dialog)
 
-    gui.more_actions_btn.setMenu(more_menu)
+    gui.header_home_btn = QPushButton("Projects")
+    gui.header_home_btn.setObjectName("secondaryActionBtn")
+    gui.header_home_btn.setMinimumHeight(36)
+    gui.header_home_btn.setToolTip("Return to Projects Launcher")
+    gui.header_home_btn.clicked.connect(gui.exit_to_launcher)
+    layout.addWidget(gui.header_home_btn)
+
     layout.addWidget(gui.more_actions_btn)
     layout.addSpacing(8)
 
@@ -151,9 +157,9 @@ def _build_header_bar(gui):
 
     gui.titlebar_close_btn = QPushButton("✕")
     gui.titlebar_close_btn.setFixedSize(32, 32)
-    gui.titlebar_close_btn.setToolTip("Close")
+    gui.titlebar_close_btn.setToolTip("Close Project and Return to Launcher")
     gui.titlebar_close_btn.setStyleSheet("QPushButton { background: transparent; color: #94a3b8; font-size: 13px; font-weight: bold; border: none; border-radius: 4px; } QPushButton:hover { background: #ef4444; color: #fff; }")
-    gui.titlebar_close_btn.clicked.connect(gui.close)
+    gui.titlebar_close_btn.clicked.connect(gui.exit_to_launcher)
     layout.addWidget(gui.titlebar_close_btn)
     return header
 

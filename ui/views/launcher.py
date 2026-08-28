@@ -127,39 +127,47 @@ class ProjectCard(QFrame):
         super().__init__(parent)
         self.video_path = video_path
         self._orig_pixmap = None
-        self.setObjectName("statusCard")
-        self.setMinimumSize(180, 184)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setObjectName("projectCard")
+        self.setMinimumSize(220, 210)
+        self.setMaximumWidth(300)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet(
-            "QFrame#statusCard { background-color: #141824; border: 1px solid #23293a; border-radius: 10px; }"
-            "QFrame#statusCard:hover { border: 1px solid #3b82f6; background-color: #181d2c; }"
-        )
+        self.setStyleSheet("""
+            QFrame#projectCard {
+                background-color: #0f1c2b;
+                border: 1px solid #1e3047;
+                border-radius: 12px;
+            }
+            QFrame#projectCard:hover {
+                border: 1px solid #3a90d0;
+                background-color: #132438;
+            }
+        """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
 
         self.thumb_label = QLabel()
-        self.thumb_label.setMinimumSize(160, 110)
+        self.thumb_label.setMinimumSize(200, 120)
+        self.thumb_label.setFixedHeight(125)
         self.thumb_label.setAlignment(Qt.AlignCenter)
-        self.thumb_label.setStyleSheet("background-color: #0c0e14; border-radius: 6px;")
+        self.thumb_label.setStyleSheet("background-color: #070d14; border-radius: 8px; color: #475569; font-size: 11px;")
         self.thumb_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
         layout.addWidget(self.thumb_label)
 
         self.name_label = QLabel(os.path.basename(video_path))
         self.name_label.setWordWrap(True)
-        self.name_label.setMaximumHeight(36)
-        self.name_label.setStyleSheet("color: #f1f5f9; font-size: 11px; font-weight: 600;")
+        self.name_label.setMaximumHeight(34)
+        self.name_label.setStyleSheet("color: #eaf4ff; font-size: 12px; font-weight: 600; line-height: 1.2em;")
         layout.addWidget(self.name_label)
 
         stage_text, stage_color = _project_pipeline_status(video_path)
         self.stage_badge = QLabel(stage_text)
         self.stage_badge.setAlignment(Qt.AlignCenter)
         self.stage_badge.setStyleSheet(
-            f"background-color: #11141d; color: {stage_color}; border: 1px solid #1e2433; "
-            "border-radius: 6px; padding: 3px 6px; font-size: 10px; font-weight: 600;"
+            f"background-color: #0b1420; color: {stage_color}; border: 1px solid #1e3047; "
+            "border-radius: 999px; padding: 4px 10px; font-size: 10px; font-weight: 700;"
         )
         layout.addWidget(self.stage_badge)
 
@@ -178,9 +186,9 @@ class ProjectCard(QFrame):
     def _update_thumb(self):
         if self._orig_pixmap is None or self._orig_pixmap.isNull():
             return
-        w = self.thumb_label.width()
-        if w > 0:
-            self.thumb_label.setPixmap(self._orig_pixmap.scaled(w, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        w = max(100, self.thumb_label.width())
+        h = max(80, self.thumb_label.height())
+        self.thumb_label.setPixmap(self._orig_pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -345,17 +353,26 @@ class LauncherWindow(QDialog):
             self.setWindowIcon(QIcon(logo))
 
         self.setWindowTitle("CapCap - Video Translator")
-        self.setMinimumSize(840, 540)
+        self.setMinimumSize(860, 560)
         self.setStyleSheet("""
             QDialog {
-                background-color: #0c0e14;
-                color: #e2e8f0;
-                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Inter', Roboto, Arial, sans-serif;
+                background-color: #0b1118;
+                color: #cdd9e5;
+                font-family: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
             }
-            #statusCard {
-                background-color: #141824;
-                border: 1px solid #23293a;
-                border-radius: 10px;
+            #headerCard {
+                background-color: #0e1520;
+                border: 1px solid #1a2536;
+                border-radius: 14px;
+            }
+            #projectCard {
+                background-color: #0f1c2b;
+                border: 1px solid #1e3047;
+                border-radius: 12px;
+            }
+            #projectCard:hover {
+                border: 1px solid #3a90d0;
+                background-color: #132438;
             }
             QScrollArea {
                 border: none;
@@ -363,17 +380,17 @@ class LauncherWindow(QDialog):
             }
             QScrollBar:vertical {
                 border: none;
-                background: #0e1118;
+                background: #0b1118;
                 width: 8px;
                 margin: 0px;
             }
             QScrollBar::handle:vertical {
-                background: #252b3d;
-                min-height: 24px;
+                background: #1e3555;
+                min-height: 28px;
                 border-radius: 4px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #38425d;
+                background: #2a4e7a;
             }
         """)
 
@@ -383,17 +400,22 @@ class LauncherWindow(QDialog):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(16)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(18)
 
-        header = QHBoxLayout()
+        header_frame = QFrame()
+        header_frame.setObjectName("headerCard")
+        header = QHBoxLayout(header_frame)
+        header.setContentsMargins(18, 16, 18, 16)
+        header.setSpacing(16)
+
         title = QLabel("CapCap")
-        title.setStyleSheet("font-size: 24px; font-weight: 700; color: #f8fafc;")
+        title.setStyleSheet("font-size: 24px; font-weight: 800; color: #eaf4ff; letter-spacing: 0.3px;")
         subtitle = QLabel("Video Translation & Voiceover Studio")
-        subtitle.setStyleSheet("font-size: 12px; color: #94a3b8;")
+        subtitle.setStyleSheet("font-size: 12px; color: #7a8fa8; font-weight: 500;")
 
         header_text = QVBoxLayout()
-        header_text.setSpacing(2)
+        header_text.setSpacing(4)
         header_text.addWidget(title)
         header_text.addWidget(subtitle)
 
@@ -403,6 +425,7 @@ class LauncherWindow(QDialog):
         LauncherWindow._gpu_name = gpu_name if has_gpu else ""
 
         self._gpu_label = QLabel()
+        self._gpu_label.setStyleSheet("font-size: 11px; color: #64748b;")
         header_text.addWidget(self._gpu_label)
         self._update_gpu_label(has_gpu, gpu_name, cuda_ready)
 
@@ -410,7 +433,7 @@ class LauncherWindow(QDialog):
         self._missing_label.setWordWrap(True)
         self._missing_label.setStyleSheet(
             "font-size: 11px; color: #fca5a5; padding: 4px 8px;"
-            " background-color: #2a181e; border: 1px solid #4f202a; border-radius: 6px;"
+            " background-color: #2a141a; border: 1px solid #4a1f26; border-radius: 6px;"
         )
         self._missing_label.hide()
         header_text.addWidget(self._missing_label)
@@ -428,22 +451,22 @@ class LauncherWindow(QDialog):
 
         btn_style = """
             QPushButton {
-                color: #94a3b8; border: 1px solid #252b3d; padding: 4px 12px;
-                font-size: 11px; font-weight: 600; border-radius: 0;
-                background-color: #11141d;
+                color: #7a8fa8; border: 1px solid #1e3047; padding: 5px 14px;
+                font-size: 11px; font-weight: 700; border-radius: 0;
+                background-color: #0d1825;
             }
             QPushButton:hover {
-                background-color: #1a1e2b; color: #f1f5f9;
+                background-color: #162436; color: #c8d6e6;
             }
             QPushButton:checked {
-                background-color: #1e2a40; color: #60a5fa; border-color: #3b82f6;
+                background-color: #1a3550; color: #4da6e8; border-color: #3a90d0;
             }
             QPushButton:disabled {
-                color: #475569; border-color: #1a1e2b; background-color: #0e1017;
+                color: #3d5068; border-color: #162030; background-color: #0b1420;
             }
         """
-        self.cpu_btn.setStyleSheet(btn_style + "QPushButton { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }")
-        self.gpu_btn.setStyleSheet(btn_style + "QPushButton { border-top-right-radius: 6px; border-bottom-right-radius: 6px; border-left: none; }")
+        self.cpu_btn.setStyleSheet(btn_style + "QPushButton { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }")
+        self.gpu_btn.setStyleSheet(btn_style + "QPushButton { border-top-right-radius: 8px; border-bottom-right-radius: 8px; border-left: none; }")
 
         def _select_cpu(checked):
             if checked:
@@ -471,150 +494,136 @@ class LauncherWindow(QDialog):
         header.addLayout(header_text, 1)
 
         action_rows = QVBoxLayout()
-        action_rows.setSpacing(6)
+        action_rows.setSpacing(8)
         action_row_one = QHBoxLayout()
-        action_row_one.setSpacing(6)
+        action_row_one.setSpacing(8)
         action_row_two = QHBoxLayout()
-        action_row_two.setSpacing(6)
+        action_row_two.setSpacing(8)
 
         self.new_btn = QPushButton("+ New Project")
-        self.new_btn.setMinimumHeight(40)
-        self.new_btn.setMinimumWidth(140)
+        self.new_btn.setMinimumHeight(38)
+        self.new_btn.setMinimumWidth(135)
+        self.new_btn.setCursor(Qt.PointingHandCursor)
         self.new_btn.setStyleSheet("""
             QPushButton {
-                background-color: #10b981;
-                color: #ffffff;
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #2dbd9a, stop:1 #1e9078);
+                color: #071210;
                 font-weight: 700;
                 font-size: 13px;
-                border-radius: 6px;
-                border: 1px solid #059669;
+                border-radius: 8px;
+                border: none;
+                border-bottom: 2px solid #136754;
+                padding: 6px 16px;
+                letter-spacing: 0.2px;
             }
             QPushButton:hover {
-                background-color: #059669;
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #40d4ae, stop:1 #25a98d);
+            }
+            QPushButton:pressed {
+                border-bottom: 1px solid #0e4d3c;
+                padding-top: 7px;
             }
             QPushButton:disabled {
-                background-color: #141722;
-                color: #4b5563;
-                border-color: #1e2433;
+                background-color: #0e1824;
+                color: #3d5068;
+                border-color: #1a2a3a;
             }
         """)
         self.new_btn.clicked.connect(self._on_new_project)
         action_row_one.addWidget(self.new_btn)
 
-        self.split_btn = QPushButton("Split Video")
-        self.split_btn.setMinimumHeight(40)
-        self.split_btn.setMinimumWidth(110)
-        self.split_btn.setStyleSheet("""
+        sec_btn_style = """
             QPushButton {
-                background-color: #1c2230;
-                color: #e2e8f0;
+                background-color: #142032;
+                color: #c8dcf0;
                 font-weight: 600;
                 font-size: 12px;
-                border-radius: 6px;
-                border: 1px solid #2b354a;
+                border-radius: 8px;
+                border: 1px solid #2e5070;
+                border-bottom: 2px solid #1e3d58;
+                padding: 6px 14px;
             }
             QPushButton:hover {
-                background-color: #262e42;
-                border-color: #3b82f6;
-                color: #ffffff;
+                background-color: #1a2d44;
+                border-color: #4480b0;
+                color: #e8f4ff;
             }
-        """)
+            QPushButton:pressed {
+                border-bottom: 1px solid #1a3248;
+                padding-top: 7px;
+            }
+        """
+
+        self.split_btn = QPushButton("Split Video")
+        self.split_btn.setMinimumHeight(38)
+        self.split_btn.setMinimumWidth(100)
+        self.split_btn.setCursor(Qt.PointingHandCursor)
+        self.split_btn.setStyleSheet(sec_btn_style)
         self.split_btn.clicked.connect(self._on_split_video)
         action_row_one.addWidget(self.split_btn)
 
         self.resource_btn = QPushButton("Manage Resources")
-        self.resource_btn.setMinimumHeight(40)
-        self.resource_btn.setMinimumWidth(140)
-        self.resource_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1c2230;
-                color: #e2e8f0;
-                font-weight: 600;
-                font-size: 12px;
-                border-radius: 6px;
-                border: 1px solid #2b354a;
-            }
-            QPushButton:hover {
-                background-color: #262e42;
-                border-color: #3b82f6;
-                color: #ffffff;
-            }
-        """)
+        self.resource_btn.setMinimumHeight(38)
+        self.resource_btn.setMinimumWidth(135)
+        self.resource_btn.setCursor(Qt.PointingHandCursor)
+        self.resource_btn.setStyleSheet(sec_btn_style)
         self.resource_btn.clicked.connect(self._on_manage_resources)
         action_row_one.addWidget(self.resource_btn)
 
+        self.open_project_btn = QPushButton("Open Projects Folder")
+        self.open_project_btn.setMinimumHeight(38)
+        self.open_project_btn.setMinimumWidth(145)
+        self.open_project_btn.setCursor(Qt.PointingHandCursor)
+        self.open_project_btn.setStyleSheet(sec_btn_style)
+        self.open_project_btn.setToolTip("Open the CapCap projects folder")
+        self.open_project_btn.clicked.connect(self._on_open_project_folder)
+        action_row_two.addWidget(self.open_project_btn)
+
         self.clean_video_btn = QPushButton("Clean Data")
-        self.clean_video_btn.setMinimumHeight(40)
-        self.clean_video_btn.setMinimumWidth(110)
+        self.clean_video_btn.setMinimumHeight(38)
+        self.clean_video_btn.setMinimumWidth(100)
+        self.clean_video_btn.setCursor(Qt.PointingHandCursor)
         self.clean_video_btn.setStyleSheet("""
             QPushButton {
-                background-color: #24141a;
+                background-color: #1a1218;
                 color: #fca5a5;
                 font-weight: 600;
                 font-size: 12px;
-                border-radius: 6px;
-                border: 1px solid #4a2028;
+                border-radius: 8px;
+                border: 1px solid #3d1e26;
+                border-bottom: 2px solid #2a1218;
+                padding: 6px 12px;
             }
             QPushButton:hover {
-                background-color: #361a24;
+                background-color: #261620;
                 border-color: #ef4444;
+            }
+            QPushButton:pressed {
+                border-bottom: 1px solid #200e14;
+                padding-top: 7px;
             }
         """)
         self.clean_video_btn.setToolTip("Remove generated project data and video preview caches")
         self.clean_video_btn.clicked.connect(self._on_clean_video_data)
         action_row_two.addWidget(self.clean_video_btn)
 
-        self.open_project_btn = QPushButton("Open Projects Folder")
-        self.open_project_btn.setMinimumHeight(40)
-        self.open_project_btn.setMinimumWidth(150)
-        self.open_project_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1c2230;
-                color: #e2e8f0;
-                font-weight: 600;
-                font-size: 12px;
-                border-radius: 6px;
-                border: 1px solid #2b354a;
-            }
-            QPushButton:hover {
-                background-color: #262e42;
-                border-color: #3b82f6;
-                color: #ffffff;
-            }
-        """)
-        self.open_project_btn.setToolTip("Open the CapCap projects folder")
-        self.open_project_btn.clicked.connect(self._on_open_project_folder)
-        action_row_two.insertWidget(0, self.open_project_btn)
-
         self.about_btn = QPushButton("About / Help")
-        self.about_btn.setMinimumHeight(40)
-        self.about_btn.setMinimumWidth(110)
-        self.about_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1c2230;
-                color: #e2e8f0;
-                font-weight: 600;
-                font-size: 12px;
-                border-radius: 6px;
-                border: 1px solid #2b354a;
-            }
-            QPushButton:hover {
-                background-color: #262e42;
-                border-color: #3b82f6;
-                color: #ffffff;
-            }
-        """)
+        self.about_btn.setMinimumHeight(38)
+        self.about_btn.setMinimumWidth(100)
+        self.about_btn.setCursor(Qt.PointingHandCursor)
+        self.about_btn.setStyleSheet(sec_btn_style)
         self.about_btn.clicked.connect(self._on_about)
         action_row_two.addWidget(self.about_btn)
-        action_row_two.addStretch()
 
         action_rows.addLayout(action_row_one)
         action_rows.addLayout(action_row_two)
         header.addLayout(action_rows)
-        root.addLayout(header)
+        root.addWidget(header_frame)
 
         self.section_label = QLabel("Recent Projects")
-        self.section_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #8ad7ff;")
+        self.section_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #4da6e8; letter-spacing: 0.5px; text-transform: uppercase;")
         root.addWidget(self.section_label)
 
         scroll = QScrollArea()
@@ -625,7 +634,7 @@ class LauncherWindow(QDialog):
         self.grid_widget = QWidget()
         self.grid = QGridLayout(self.grid_widget)
         self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setSpacing(12)
+        self.grid.setSpacing(16)
         self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
         scroll.setWidget(self.grid_widget)
@@ -853,12 +862,14 @@ class LauncherWindow(QDialog):
             return
         self.empty_label.hide()
 
-        columns = min(3, max(1, (self.grid_widget.width() - 24) // 242))
+        available_width = max(800, self.grid_widget.width(), self.width() - 48)
+        columns = max(3, min(4, available_width // 260))
         for i, proj in enumerate(existing):
             card = ProjectCard(proj["video_path"], self._thumbnail_dir, self)
             row, col = divmod(i, max(1, columns))
             self.grid.addWidget(card, row, col)
-            self.grid.setColumnStretch(col, 1)
+            self.grid.setColumnStretch(col, 0)
+        self.grid.setColumnStretch(columns, 1)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

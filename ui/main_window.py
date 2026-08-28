@@ -4081,17 +4081,37 @@ class VideoTranslatorGUI(QMainWindow):
             if voice_signature:
                 state.set_setting("voice_signature", voice_signature)
 
-        # These states belong to the project editor view.  The track-label
-        # widget itself is rebuilt on startup, so it cannot be their source
-        # of truth.
-        state.set_setting("preview_track_visibility", {
-            "TS1": bool(getattr(self, "_subtitle_track_preview_visible", True)),
-            "T1 Text": bool(getattr(self, "_text_track_preview_visible", True)),
-            "L1 Logo": bool(getattr(self, "_logo_track_preview_visible", True)),
-            "M1": bool(getattr(self, "_mask_track_preview_visible", True)),
-            "B1": bool(self._blur_effect_enabled()),
-        })
-        state.set_setting("subtitle_style_controls", self._current_subtitle_style_controls_state())
+        # Collect and save all current project settings
+        proj_settings = {
+            "output_mode": self.output_mode_combo.currentText() if hasattr(self, "output_mode_combo") else "",
+            "output_quality": self.output_quality_combo.currentText() if hasattr(self, "output_quality_combo") else "",
+            "output_fps": self.output_fps_combo.currentText() if hasattr(self, "output_fps_combo") else "",
+            "output_ratio": self.output_ratio_combo.currentText() if hasattr(self, "output_ratio_combo") else "",
+            "output_scale_mode": self.output_scale_mode_combo.currentText() if hasattr(self, "output_scale_mode_combo") else "",
+            "audio_handling_mode": self.get_audio_handling_mode() if hasattr(self, "get_audio_handling_mode") else "",
+            "source_lang": self.lang_whisper_combo.currentText() if hasattr(self, "lang_whisper_combo") else "",
+            "target_lang": (self.lang_target_combo.currentData() or self.lang_target_combo.currentText()) if hasattr(self, "lang_target_combo") else "",
+            "translation_engine": (self.translation_engine_combo.currentData() or self.translation_engine_combo.currentText()) if hasattr(self, "translation_engine_combo") else "",
+            "translation_style_preset": (self.translation_style_preset_combo.currentData() or self.translation_style_preset_combo.currentText()) if hasattr(self, "translation_style_preset_combo") else "",
+            "voice_engine": (self.voice_engine_combo.currentData() or self.voice_engine_combo.currentText()) if hasattr(self, "voice_engine_combo") else "",
+            "free_voice_name": self.free_voice_combo.currentText() if hasattr(self, "free_voice_combo") else "",
+            "voice_gender": self.voice_gender_combo.currentText() if hasattr(self, "voice_gender_combo") else "",
+            "voice_speed": self.voice_speed_spin.currentText() if hasattr(self, "voice_speed_spin") else "",
+            "voice_timing_sync_mode": self.voice_timing_sync_combo.currentText() if hasattr(self, "voice_timing_sync_combo") else "",
+            "speaker_diarization": self.speaker_diarization_cb.isChecked() if hasattr(self, "speaker_diarization_cb") else False,
+            "speaker_diarization_num_speakers": self.speaker_diarization_speakers_combo.currentData() if hasattr(self, "speaker_diarization_speakers_combo") else -1,
+            "ai_dubbing_rewrite": self.ai_dubbing_rewrite_cb.isChecked() if hasattr(self, "ai_dubbing_rewrite_cb") else False,
+            "preview_track_visibility": {
+                "TS1": bool(getattr(self, "_subtitle_track_preview_visible", True)),
+                "T1 Text": bool(getattr(self, "_text_track_preview_visible", True)),
+                "L1 Logo": bool(getattr(self, "_logo_track_preview_visible", True)),
+                "M1": bool(getattr(self, "_mask_track_preview_visible", True)),
+                "B1": bool(self._blur_effect_enabled()),
+            },
+            "subtitle_style_controls": self._current_subtitle_style_controls_state(),
+        }
+        for k, v in proj_settings.items():
+            state.set_setting(k, v)
         
         # Save timeline data (includes mask and logo layers)
         if hasattr(self, "timeline") and self.timeline._timeline:
@@ -4240,16 +4260,136 @@ class VideoTranslatorGUI(QMainWindow):
         if not state:
             return
         self._allow_post_pipeline_preview_assets = False
-        # Subtitle Source is stored only with this project.  Old projects
-        # without a value start from the normal default instead of inheriting
-        # the last global .env selection.
-        project_engine = str(getattr(state, "settings", {}).get("transcription_engine", "") or "").strip().lower()
-        os.environ["TRANSCRIPTION_ENGINE"] = project_engine if project_engine in {"whisper", "sensevoice", "ocr"} else _default_asr_engine()
-        audio_handling_mode = str(getattr(state, "settings", {}).get("audio_handling_mode", "") or "").strip().lower()
+
+        st = getattr(state, "settings", {}) or {}
+
+        # 1. Output & Media Settings
+        saved_output_mode = st.get("output_mode")
+        if saved_output_mode and hasattr(self, "output_mode_combo"):
+            idx = self.output_mode_combo.findText(saved_output_mode)
+            if idx >= 0:
+                self.output_mode_combo.setCurrentIndex(idx)
+
+        saved_q = st.get("output_quality")
+        if saved_q and hasattr(self, "output_quality_combo"):
+            idx = self.output_quality_combo.findText(saved_q)
+            if idx >= 0:
+                self.output_quality_combo.setCurrentIndex(idx)
+
+        saved_fps = st.get("output_fps")
+        if saved_fps and hasattr(self, "output_fps_combo"):
+            idx = self.output_fps_combo.findText(saved_fps)
+            if idx >= 0:
+                self.output_fps_combo.setCurrentIndex(idx)
+
+        saved_ratio = st.get("output_ratio")
+        if saved_ratio and hasattr(self, "output_ratio_combo"):
+            idx = self.output_ratio_combo.findText(saved_ratio)
+            if idx >= 0:
+                self.output_ratio_combo.setCurrentIndex(idx)
+
+        saved_scale = st.get("output_scale_mode")
+        if saved_scale and hasattr(self, "output_scale_mode_combo"):
+            idx = self.output_scale_mode_combo.findText(saved_scale)
+            if idx >= 0:
+                self.output_scale_mode_combo.setCurrentIndex(idx)
+
+        # 2. Audio Settings
+        audio_handling_mode = str(st.get("audio_handling_mode", "") or "").strip().lower()
         if audio_handling_mode and hasattr(self, "audio_handling_combo"):
             combo_index = self.audio_handling_combo.findData(audio_handling_mode)
+            if combo_index < 0:
+                combo_index = self.audio_handling_combo.findText(audio_handling_mode)
             if combo_index >= 0:
                 self.audio_handling_combo.setCurrentIndex(combo_index)
+
+        # 3. Language & Translation Engine
+        project_engine = str(st.get("transcription_engine", "") or "").strip().lower()
+        os.environ["TRANSCRIPTION_ENGINE"] = project_engine if project_engine in {"whisper", "sensevoice", "ocr"} else _default_asr_engine()
+
+        saved_src = st.get("source_lang")
+        if saved_src and hasattr(self, "lang_whisper_combo"):
+            idx = self.lang_whisper_combo.findText(saved_src)
+            if idx < 0:
+                idx = self.lang_whisper_combo.findData(saved_src)
+            if idx >= 0:
+                self.lang_whisper_combo.setCurrentIndex(idx)
+
+        saved_tgt = st.get("target_lang")
+        if saved_tgt and hasattr(self, "lang_target_combo"):
+            idx = self.lang_target_combo.findData(saved_tgt)
+            if idx < 0:
+                idx = self.lang_target_combo.findText(saved_tgt)
+            if idx >= 0:
+                self.lang_target_combo.setCurrentIndex(idx)
+
+        saved_tengine = st.get("translation_engine")
+        if saved_tengine and hasattr(self, "translation_engine_combo"):
+            idx = self.translation_engine_combo.findData(saved_tengine)
+            if idx < 0:
+                idx = self.translation_engine_combo.findText(saved_tengine)
+            if idx >= 0:
+                self.translation_engine_combo.setCurrentIndex(idx)
+
+        saved_tstyle = st.get("translation_style_preset")
+        if saved_tstyle and hasattr(self, "translation_style_preset_combo"):
+            idx = self.translation_style_preset_combo.findData(saved_tstyle)
+            if idx < 0:
+                idx = self.translation_style_preset_combo.findText(saved_tstyle)
+            if idx >= 0:
+                self.translation_style_preset_combo.setCurrentIndex(idx)
+
+        # 4. Voice Settings
+        saved_vengine = st.get("voice_engine")
+        if saved_vengine and hasattr(self, "voice_engine_combo"):
+            idx = self.voice_engine_combo.findData(saved_vengine)
+            if idx < 0:
+                idx = self.voice_engine_combo.findText(saved_vengine)
+            if idx >= 0:
+                self.voice_engine_combo.setCurrentIndex(idx)
+
+        saved_voice = st.get("free_voice_name") or st.get("voice_name")
+        if saved_voice and hasattr(self, "free_voice_combo"):
+            idx = self.free_voice_combo.findText(saved_voice)
+            if idx >= 0:
+                self.free_voice_combo.setCurrentIndex(idx)
+
+        saved_gender = st.get("voice_gender")
+        if saved_gender and hasattr(self, "voice_gender_combo"):
+            idx = self.voice_gender_combo.findText(saved_gender)
+            if idx >= 0:
+                self.voice_gender_combo.setCurrentIndex(idx)
+
+        saved_speed = st.get("voice_speed")
+        if saved_speed and hasattr(self, "voice_speed_spin"):
+            self.voice_speed_spin.setCurrentText(str(saved_speed))
+
+        saved_sync = st.get("voice_timing_sync_mode")
+        if saved_sync and hasattr(self, "voice_timing_sync_combo"):
+            idx = self.voice_timing_sync_combo.findText(saved_sync)
+            if idx >= 0:
+                self.voice_timing_sync_combo.setCurrentIndex(idx)
+            if hasattr(self, "timeline") and self.timeline is not None:
+                self.timeline.set_voice_sync_mode(saved_sync)
+
+        # 5. Advanced Settings
+        if "speaker_diarization" in st and hasattr(self, "speaker_diarization_cb"):
+            self.speaker_diarization_cb.setChecked(bool(st.get("speaker_diarization")))
+            if hasattr(self, "update_speaker_diarization_availability"):
+                self.update_speaker_diarization_availability()
+
+        saved_spk = st.get("speaker_diarization_num_speakers")
+        if saved_spk is not None and hasattr(self, "speaker_diarization_speakers_combo"):
+            try:
+                idx = self.speaker_diarization_speakers_combo.findData(int(saved_spk))
+                if idx >= 0:
+                    self.speaker_diarization_speakers_combo.setCurrentIndex(idx)
+            except Exception:
+                pass
+
+        if "ai_dubbing_rewrite" in st and hasattr(self, "ai_dubbing_rewrite_cb"):
+            self.ai_dubbing_rewrite_cb.setChecked(bool(st.get("ai_dubbing_rewrite")))
+
         context = self.project_bridge.load_context(state)
         self.processed_artifacts = {}
         # Restore project-scoped visibility. Old projects remain visible by
@@ -14513,6 +14653,25 @@ class VideoTranslatorGUI(QMainWindow):
         QTimer.singleShot(100, _relaunch_launcher)
 
     def _terminate_workers(self):
+        # Stop local worker process server immediately
+        if hasattr(self, "pipeline_controller") and hasattr(self.pipeline_controller, "_stop_local_worker_server"):
+            try:
+                self.pipeline_controller._stop_local_worker_server()
+            except Exception:
+                pass
+
+        # Stop media players
+        if hasattr(self, "media_player"):
+            try:
+                self.media_player.stop()
+            except Exception:
+                pass
+        if hasattr(self, "audio_preview_player"):
+            try:
+                self.audio_preview_player.stop()
+            except Exception:
+                pass
+
         attrs = [
             "extraction_thread",
             "vocal_thread",
@@ -14536,32 +14695,30 @@ class VideoTranslatorGUI(QMainWindow):
         ]
         for name in attrs:
             worker = getattr(self, name, None)
-            if worker is not None and getattr(worker, "isRunning", lambda: False)():
-                print(f"[Cleanup] Terminating worker: {name}")
+            if worker is not None:
                 try:
-                    worker.quit()
-                    worker.wait(3000)
-                    if worker.isRunning():
-                        worker.terminate()
-                        worker.wait(2000)
-                        print(f"[Cleanup] Force-terminated {name}")
-                    else:
-                        print(f"[Cleanup] Graceful quit {name}")
+                    if getattr(worker, "isRunning", lambda: False)():
+                        worker.requestInterruption()
+                        worker.quit()
+                        if not worker.wait(50):
+                            worker.terminate()
+                            worker.wait(50)
                 except Exception as e:
-                    print(f"[Cleanup] Failed to terminate {name}: {e}")
+                    pass
+                setattr(self, name, None)
+
         threads_dict = getattr(self, "_segment_preview_threads", None)
         if threads_dict:
             for idx, worker in list(threads_dict.items()):
                 try:
                     if getattr(worker, "isRunning", lambda: False)():
-                        print(f"[Cleanup] Terminating segment preview thread idx={idx}")
+                        worker.requestInterruption()
                         worker.quit()
-                        worker.wait(3000)
-                        if worker.isRunning():
+                        if not worker.wait(50):
                             worker.terminate()
-                            worker.wait(2000)
-                except Exception as e:
-                    print(f"[Cleanup] Failed to terminate segment thread {idx}: {e}")
+                            worker.wait(50)
+                except Exception:
+                    pass
             threads_dict.clear()
         print("[Cleanup] Worker termination complete.")
 

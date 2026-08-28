@@ -1,15 +1,29 @@
+import os
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTransform
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
-from PySide6.QtWidgets import QFrame, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import QFrame, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
 from .subtitle_overlay import SubtitleOverlayItem
 
 
 class VideoView(QGraphicsView):
-    """Hosts video and subtitle overlay in one scene."""
+    """Hosts video, logo, and subtitle overlay in one scene."""
 
     framingChanged = Signal(float, float)
+    blurRegionChanged = Signal(object)
+    blurEditFinished = Signal()
+    subtitlePositionChanged = Signal(int, int)  # x_percent, y_percent
+    subtitleDragStarted = Signal()
+    logoMoved = Signal(float, float, float, float)  # x, y, w, h
+    logoDeleted = Signal()
+    logoEditFinished = Signal()
+    maskRegionChanged = Signal()
+    maskMoved = Signal(float, float, float, float)  # x, y, w, h
+    maskDeleted = Signal()
+    maskEditFinished = Signal()
+    textLayerSelected = Signal(str)
+    textLayerMoved = Signal(str, float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -25,7 +39,18 @@ class VideoView(QGraphicsView):
         self.video_item = QGraphicsVideoItem()
         self._scene.addItem(self.video_item)
 
+        self.logo_item = QGraphicsPixmapItem()
+        self.logo_item.setZValue(5)
+        self._scene.addItem(self.logo_item)
+        self.logo_item.hide()
+        self._current_logos = []
+        self._raw_logo_pixmap = None
+        self._logo_opacity = 1.0
+        self._logo_rotation = 0.0
+        self._logo_visible = True
+
         self.subtitle_item = SubtitleOverlayItem()
+        self.subtitle_item.setZValue(10)
         self._scene.addItem(self.subtitle_item)
         self.subtitle_item.hide()
         self.video_source_width = 0
@@ -46,6 +71,7 @@ class VideoView(QGraphicsView):
         self.video_item.setPos(content_rect.topLeft())
         self.video_item.setSize(QSizeF(content_rect.width(), content_rect.height()))
         self.reposition_subtitle()
+        self.reposition_logo()
         self.viewport().update()
 
     def set_video_dimensions(self, width: int, height: int):
@@ -118,6 +144,105 @@ class VideoView(QGraphicsView):
 
     def set_subtitle_render_dimensions(self, width: int, height: int):
         pass
+
+    def set_subtitle_track_visible(self, visible: bool):
+        if hasattr(self, "subtitle_item") and self.subtitle_item is not None:
+            if not visible:
+                self.subtitle_item.hide()
+
+    def set_logos(self, logos=None, active_index=0, editable=False):
+        self._current_logos = list(logos or [])
+        if not self._current_logos or not self._logo_visible:
+            if hasattr(self, "logo_item") and self.logo_item is not None:
+                self.logo_item.hide()
+            return
+
+        idx = max(0, min(active_index, len(self._current_logos) - 1))
+        logo_data = self._current_logos[idx]
+        src = str(logo_data.get("source", "") or "")
+        if not src or not os.path.exists(src):
+            if hasattr(self, "logo_item") and self.logo_item is not None:
+                self.logo_item.hide()
+            return
+
+        self._raw_logo_pixmap = QPixmap(src)
+        if self._raw_logo_pixmap.isNull():
+            if hasattr(self, "logo_item") and self.logo_item is not None:
+                self.logo_item.hide()
+            return
+
+        self._logo_opacity = float(logo_data.get("opacity", 1.0))
+        self._logo_rotation = float(logo_data.get("rotation", 0.0) or 0.0)
+        self.logo_item.setOpacity(self._logo_opacity)
+        self.reposition_logo()
+        self.logo_item.show()
+        self.viewport().update()
+
+    def set_logo_opacity(self, opacity: float = 1.0):
+        self._logo_opacity = max(0.0, min(1.0, float(opacity)))
+        if hasattr(self, "logo_item") and self.logo_item is not None:
+            self.logo_item.setOpacity(self._logo_opacity)
+            self.viewport().update()
+
+    def set_logo_rotation(self, rotation: float = 0.0):
+        self._logo_rotation = float(rotation)
+        if hasattr(self, "logo_item") and self.logo_item is not None:
+            self.logo_item.setRotation(self._logo_rotation)
+            self.viewport().update()
+
+    def set_logo_editable(self, editable: bool):
+        pass
+
+    def set_logo_track_visible(self, visible: bool):
+        self._logo_visible = bool(visible)
+        if hasattr(self, "logo_item") and self.logo_item is not None:
+            if not self._logo_visible:
+                self.logo_item.hide()
+            elif self._current_logos and self._raw_logo_pixmap and not self._raw_logo_pixmap.isNull():
+                self.logo_item.show()
+            self.viewport().update()
+
+    def clear_logo(self):
+        self._current_logos = []
+        self._raw_logo_pixmap = None
+        if hasattr(self, "logo_item") and self.logo_item is not None:
+            self.logo_item.hide()
+            self.viewport().update()
+
+    def set_logo_properties(self, *args, **kwargs):
+        pass
+
+    def set_logo_image(self, *args, **kwargs):
+        pass
+
+    def set_text_track_visible(self, visible: bool):
+        pass
+
+    def clear_text_layers(self):
+        pass
+
+    def reposition_logo(self):
+        if not hasattr(self, "logo_item") or not self._current_logos or self._raw_logo_pixmap is None or self._raw_logo_pixmap.isNull():
+            return
+        rect = self.get_preview_canvas_rect()
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+
+        logo_data = self._current_logos[0]
+        x_norm = float(logo_data.get("x", 0.05))
+        y_norm = float(logo_data.get("y", 0.05))
+        w_norm = float(logo_data.get("width", 0.2))
+        h_norm = float(logo_data.get("height", 0.2))
+
+        target_w = max(16, int(rect.width() * w_norm))
+        target_h = max(16, int(rect.height() * h_norm))
+
+        scaled_pix = self._raw_logo_pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.logo_item.setPixmap(scaled_pix)
+
+        pos_x = rect.left() + rect.width() * x_norm
+        pos_y = rect.top() + rect.height() * y_norm
+        self.logo_item.setPos(pos_x, pos_y)
 
     def _resolve_canvas_aspect_ratio(self) -> float | None:
         aspect_key = str(getattr(self, "preview_aspect_key", "source") or "source").strip().lower()

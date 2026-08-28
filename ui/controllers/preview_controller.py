@@ -1045,8 +1045,8 @@ class PreviewController:
         try:
             thread = getattr(self.gui, 'export_thread', None)
             if thread is not None:
-                thread.wait(msecs=2000)  # let Qt drain any pending signals
-        except RuntimeError:
+                thread.wait(2000)  # positional int milliseconds in PySide6
+        except Exception:
             pass
         self.gui.export_thread = None
 
