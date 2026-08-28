@@ -985,7 +985,7 @@ class PreviewController:
             output_fill_focus_y=fill_focus_y,
             video_filter_state=self.gui.get_video_filter_state() if hasattr(self.gui, "get_video_filter_state") else {},
             original_audio_gain_db=original_audio_gain_db,
-            project_file=project_state_path,
+            project_state_path=project_state_path,
             project_temp_dir=self.gui.get_project_temp_dir("export"),
         )
         self.gui.export_thread.progress.connect(self.gui.on_export_progress)
