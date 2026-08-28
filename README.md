@@ -49,11 +49,11 @@ Scan the QR code:
 
 <img src="assets/qr.png"  style="width: 25%; height: auto;">
 
-### International Donation
+<!-- ### International Donation
 
 [![Buy Me a Coffee](assets/buymeacoffee.png)](https://buymeacoffee.com/hcaht)
 
-Click the image or visit [Buy Me a Coffee](https://buymeacoffee.com/hcaht).
+Click the image or visit [Buy Me a Coffee](https://buymeacoffee.com/hcaht). -->
 
 ## License
 

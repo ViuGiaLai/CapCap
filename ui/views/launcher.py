@@ -1050,7 +1050,7 @@ class LauncherWindow(QDialog):
         </ol>
 
         <h3 style='color:#8ad7ff;'>Developer Information</h3>
-        <p>GitHub: <a href='https://github.com/notepower2k1/CapCap'>github.com/notepower2k1/CapCap</a></p>
+        <p>GitHub: <a href='https://github.com/ViuGiaLai/CapCap'>github.com/ViuGiaLai/CapCap</a></p>
         """)
         layout.addWidget(browser, 1)
 
@@ -1072,9 +1072,10 @@ class LauncherWindow(QDialog):
 
         coffee_group = QHBoxLayout()
         coffee_group.setSpacing(5)
-        coffee_text = QLabel("International Donation\nClick to Buy Me a Coffee", dialog)
-        coffee_text.setStyleSheet("color:#d7e3f4; font-weight:600;")
-        coffee_group.addWidget(coffee_text)
+        # coffee_text = QLabel("International Donation\nClick to Buy Me a Coffee", dialog)
+        # coffee_text.setStyleSheet("color:#d7e3f4; font-weight:600;")
+        # coffee_group.addWidget(coffee_text)
+        
         coffee_path = asset_path("buymeacoffee.png")
         coffee_pixmap = QPixmap(coffee_path)
         coffee_image = QLabel(dialog)
