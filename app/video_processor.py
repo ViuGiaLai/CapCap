@@ -115,8 +115,37 @@ def _ffmpeg_supports_encoder(ffmpeg_path: str, encoder_name: str) -> bool:
     return supported
 
 
+def _ffmpeg_nvenc_works(ffmpeg_path: str) -> bool:
+    """Do a real 1-frame encode test to verify h264_nvenc actually works at runtime.
+
+    _ffmpeg_supports_encoder() only checks the --encoders list, which is true
+    even on machines without a working NVIDIA driver.  This function actually
+    tries to encode one black frame; if it fails we know to fall back to
+    libx264 without wasting a full encode attempt.
+    """
+    cache_key = (os.path.abspath(ffmpeg_path), '_nvenc_works')
+    if cache_key in _FFMPEG_ENCODER_CACHE:
+        return _FFMPEG_ENCODER_CACHE[cache_key]
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg_path, '-hide_banner', '-loglevel', 'error',
+                '-f', 'lavfi', '-i', 'color=black:size=128x72:duration=0.1:rate=1',
+                '-c:v', 'h264_nvenc', '-preset', 'p4', '-frames:v', '1',
+                '-f', 'null', '-',
+            ],
+            capture_output=True,
+            **_text_subprocess_run_kwargs(),
+        )
+        works = result.returncode == 0
+    except Exception:
+        works = False
+    _FFMPEG_ENCODER_CACHE[cache_key] = works
+    return works
+
+
 def _preferred_h264_encoder_args(ffmpeg_path: str, fast: bool = False) -> list[str]:
-    if _ffmpeg_supports_encoder(ffmpeg_path, 'h264_nvenc'):
+    if _ffmpeg_supports_encoder(ffmpeg_path, 'h264_nvenc') and _ffmpeg_nvenc_works(ffmpeg_path):
         return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '23', '-pix_fmt', 'yuv420p']
     preset = 'veryfast' if fast else 'medium'
     return ['-c:v', 'libx264', '-preset', preset, '-crf', '18', '-pix_fmt', 'yuv420p']

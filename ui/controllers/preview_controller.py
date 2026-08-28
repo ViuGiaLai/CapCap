@@ -981,10 +981,15 @@ class PreviewController:
         ):
             return
 
-        # Check if an export is already running
-        if hasattr(self.gui, 'export_thread') and self.gui.export_thread.isRunning():
-            self.gui.log("[Export] Export already running, ignoring request")
-            return
+        # Check if an export is already running — guard against deleted C++ object
+        if hasattr(self.gui, 'export_thread') and self.gui.export_thread is not None:
+            try:
+                if self.gui.export_thread.isRunning():
+                    self.gui.log("[Export] Export already running, ignoring request")
+                    return
+            except RuntimeError:
+                # C++ object was already deleted by Qt; safe to proceed
+                self.gui.export_thread = None
 
         # Persist timeline data before export so mask/logo layers are available
         if hasattr(self.gui, "persist_current_timeline_project_data"):
@@ -1022,8 +1027,28 @@ class PreviewController:
         )
         self.gui.export_thread.progress.connect(self.gui.on_export_progress)
         self.gui.export_thread.finished.connect(self.gui.on_export_finished)
-        self.gui.export_thread.finished.connect(self.gui.export_thread.deleteLater)
+        # Do NOT use deleteLater() here — it destroys the C++ object while
+        # self.gui.export_thread still holds the Python reference, causing
+        # "Internal C++ object already deleted" on the next Export click.
+        # Instead, clear the reference once the thread is truly done.
+        self.gui.export_thread.finished.connect(self._on_export_thread_done)
         self.gui.export_thread.start()
+
+    def _on_export_thread_done(self, *args):
+        """Clear the export_thread reference after the thread finishes.
+
+        Using deleteLater() caused 'Internal C++ object already deleted' crashes
+        on subsequent Export clicks because the Python attribute still pointed to
+        the dead object.  Instead we just set it to None so the guard in
+        export_final_video() can distinguish 'no thread' from 'running thread'.
+        """
+        try:
+            thread = getattr(self.gui, 'export_thread', None)
+            if thread is not None:
+                thread.wait(msecs=2000)  # let Qt drain any pending signals
+        except RuntimeError:
+            pass
+        self.gui.export_thread = None
 
     def preview_five_seconds(self):
         if hasattr(self.gui, "ensure_media_backend_ready"):

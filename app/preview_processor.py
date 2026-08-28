@@ -42,7 +42,12 @@ def _ffmpeg_supports_encoder(ffmpeg_path: str, encoder_name: str) -> bool:
 
 
 def _preferred_h264_encoder_args(ffmpeg_path: str, *, fast: bool = False) -> list[str]:
-    if _ffmpeg_supports_encoder(ffmpeg_path, "h264_nvenc"):
+    try:
+        from video_processor import _ffmpeg_nvenc_works
+        nvenc_ok = _ffmpeg_nvenc_works(ffmpeg_path)
+    except ImportError:
+        nvenc_ok = False
+    if _ffmpeg_supports_encoder(ffmpeg_path, "h264_nvenc") and nvenc_ok:
         return [
             "-c:v",
             "h264_nvenc",
