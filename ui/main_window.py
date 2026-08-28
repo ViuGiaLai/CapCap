@@ -7,6 +7,8 @@ import glob
 import hashlib
 import shutil
 import threading
+import time
+import datetime
 from typing import Any
 from uuid import uuid4
 from PySide6.QtWidgets import (
@@ -4754,7 +4756,9 @@ class VideoTranslatorGUI(QMainWindow):
         os.makedirs(path, exist_ok=True)
         return path
     def get_output_mode_key(self):
-        return "both"
+        if not hasattr(self, "output_mode_combo"):
+            return "both"
+        return get_output_mode_key(self.output_mode_combo.currentText())
 
     def get_output_quality_key(self):
         if not hasattr(self, "output_quality_combo"):

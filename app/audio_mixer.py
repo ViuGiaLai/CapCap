@@ -400,61 +400,90 @@ def build_voice_track_from_srt_segments(
     """
     Build a single voice track by overlaying each segment wav at its start time.
 
-    segments: list of dicts {start: seconds, end: seconds, text: str}
-    tts_wav_paths: list of wav paths aligned to segments index
+    Optimized for long videos (>1-3 hours) using pre-allocated numpy audio buffer
+    instead of repeated pydub AudioSegment.overlay() copies.
     """
     _require_pydub()
     from pydub import AudioSegment
+    import numpy as np
 
     if len(segments) != len(tts_wav_paths):
         raise ValueError("segments and tts_wav_paths length mismatch")
 
+    def _seg_val(s, key, default=0.0):
+        if isinstance(s, dict):
+            return s.get(key, default)
+        return getattr(s, key, default)
+
     if total_duration_ms is None:
         max_end = 0.0
         for seg in segments:
-            max_end = max(max_end, float(seg.get("end", 0.0)))
+            max_end = max(max_end, float(_seg_val(seg, "end", 0.0) or 0.0))
         total_duration_ms = int(max_end * 1000) + 500
 
-    base = AudioSegment.silent(duration=max(0, total_duration_ms), frame_rate=16000).set_channels(1)
+    sr = 16000
+    total_samples = int(max(0, total_duration_ms) * sr / 1000) + sr  # add 1s safety buffer
+    audio_buffer = np.zeros(total_samples, dtype=np.int32)
 
     for idx, (seg, wav_path) in enumerate(zip(segments, tts_wav_paths)):
         if not wav_path or not os.path.exists(wav_path):
             continue
-        start_ms = int(float(seg.get("start", 0.0)) * 1000)
-        end_ms = int(float(seg.get("end", 0.0)) * 1000)
+        start_ms = int(float(_seg_val(seg, "start", 0.0) or 0.0) * 1000)
+        end_ms = int(float(_seg_val(seg, "end", 0.0) or 0.0) * 1000)
         max_len = max(0, end_ms - start_ms)
 
-        clip = AudioSegment.from_file(wav_path)
-        clip = clip.set_frame_rate(16000).set_channels(1)
-        if gain_db:
-            clip = clip + gain_db
+        try:
+            clip = AudioSegment.from_file(wav_path)
+            clip = clip.set_frame_rate(sr).set_channels(1)
+            if gain_db:
+                clip = clip + gain_db
 
-        if max_len > 0:
-            clip_len = len(clip)
-            if clip_len < max_len:
-                gap_ms = max_len - clip_len
-                clip_end_ms = start_ms + clip_len
-                if idx + 1 < len(segments):
-                    next_start_ms = int(float(segments[idx + 1].get("start", 0.0)) * 1000)
-                    next_gap = next_start_ms - clip_end_ms
-                    if 0 < next_gap <= 20:
-                        overlap_ms = 10
-                        extend_ms = min(next_gap + overlap_ms, clip_len)
-                        clip = clip.fade_out(duration=extend_ms)
-                        clip = clip + AudioSegment.silent(duration=extend_ms, frame_rate=16000)
-                        gap_ms = 0
-                if gap_ms > 0:
-                    fade_ms = min(gap_ms, 50)
-                    clip = clip.fade_out(duration=fade_ms)
-                    silent_ms = gap_ms - fade_ms
-                    if silent_ms > 0:
-                        clip = clip + AudioSegment.silent(duration=silent_ms, frame_rate=16000)
+            if max_len > 0:
+                clip_len = len(clip)
+                if clip_len < max_len:
+                    gap_ms = max_len - clip_len
+                    clip_end_ms = start_ms + clip_len
+                    if idx + 1 < len(segments):
+                        next_start_ms = int(float(_seg_val(segments[idx + 1], "start", 0.0) or 0.0) * 1000)
+                        next_gap = next_start_ms - clip_end_ms
+                        if 0 < next_gap <= 20:
+                            overlap_ms = 10
+                            extend_ms = min(next_gap + overlap_ms, clip_len)
+                            clip = clip.fade_out(duration=extend_ms)
+                            clip = clip + AudioSegment.silent(duration=extend_ms, frame_rate=sr)
+                            gap_ms = 0
+                    if gap_ms > 0:
+                        fade_ms = min(gap_ms, 50)
+                        clip = clip.fade_out(duration=fade_ms)
+                        silent_ms = gap_ms - fade_ms
+                        if silent_ms > 0:
+                            clip = clip + AudioSegment.silent(duration=silent_ms, frame_rate=sr)
 
-        final_clip_len = len(clip)
-        base = base.overlay(clip, position=max(0, start_ms))
+            clip_samples = np.frombuffer(clip.raw_data, dtype=np.int16)
+            start_sample = int(max(0, start_ms) * sr / 1000)
+            end_sample = start_sample + len(clip_samples)
+
+            if end_sample > len(audio_buffer):
+                # Dynamically expand buffer if needed
+                pad = np.zeros(end_sample - len(audio_buffer) + sr, dtype=np.int32)
+                audio_buffer = np.concatenate([audio_buffer, pad])
+
+            # In-place add samples (mixing overlaps cleanly)
+            audio_buffer[start_sample:end_sample] += clip_samples.astype(np.int32)
+        except Exception as e:
+            print(f"[audio_mixer] Error processing segment {idx} wav: {e}")
+
+    # Clip to int16 range to prevent overflow distortion
+    np.clip(audio_buffer, -32768, 32767, out=audio_buffer)
+    final_pcm = audio_buffer.astype(np.int16).tobytes()
 
     os.makedirs(os.path.dirname(output_wav_path) or ".", exist_ok=True)
-    base.export(output_wav_path, format="wav")
+    with wave.open(output_wav_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(final_pcm)
+
     return output_wav_path
 
 

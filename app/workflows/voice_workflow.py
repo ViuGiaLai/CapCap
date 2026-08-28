@@ -1227,14 +1227,16 @@ class VoiceWorkflow:
             pending_providers = {self._voice_provider(str(job["voice_name"])) for job in pending_jobs}
             if pending_providers == {"piper"}:
                 configured_workers = int(os.getenv("CAPCAP_PIPER_TTS_WORKERS", self.PIPER_TTS_WORKERS) or self.PIPER_TTS_WORKERS)
-                # Scale workers with queue length; cap at CPU count - 1 to keep UI responsive.
-                if len(pending_jobs) >= 120:
+                cpu_count = os.cpu_count() or 4
+                if len(pending_jobs) >= 500:
+                    long_project_workers = min(configured_workers, max(8, cpu_count - 2))
+                elif len(pending_jobs) >= 120:
                     long_project_workers = min(configured_workers, 8)
                 elif len(pending_jobs) >= 40:
                     long_project_workers = min(configured_workers, 6)
                 else:
                     long_project_workers = min(configured_workers, 4)
-                cpu_limit = max(1, (os.cpu_count() or 4))
+                cpu_limit = max(1, cpu_count)
                 worker_count = max(1, min(long_project_workers, len(pending_jobs), cpu_limit))
                 # Pre-load the Piper model in the main thread so all workers share
                 # the cached model object without racing on first-load I/O.

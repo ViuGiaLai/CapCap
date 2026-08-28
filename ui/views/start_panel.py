@@ -357,12 +357,17 @@ def build_start_group(gui, left_layout):
     upload_card.hide()
 
     output_card, output_layout = _build_collapsible_section("Output")
-    # Output is always subtitles + voice. Keep the hidden compatibility
-    # control because older settings/project helpers still read it.
+    output_mode_card, output_mode_layout = _section_card()
+    output_mode_title = QLabel("Output Mode")
+    output_mode_title.setObjectName("sectionTitle")
+    output_mode_layout.addWidget(output_mode_title)
     gui.output_mode_combo = QComboBox(gui)
     gui.output_mode_combo.addItem("Vietnamese subtitles + voice")
+    gui.output_mode_combo.addItem("Vietnamese voice only")
+    gui.output_mode_combo.addItem("Vietnamese subtitles only")
     gui.output_mode_combo.setCurrentText("Vietnamese subtitles + voice")
-    gui.output_mode_combo.hide()
+    output_mode_layout.addWidget(gui.output_mode_combo)
+    output_layout.addWidget(output_mode_card)
 
     output_quality_card, output_quality_layout = _section_card()
     output_quality_title = QLabel("Quality")
