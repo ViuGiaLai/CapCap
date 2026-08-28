@@ -16,15 +16,6 @@ if APP_PATH not in sys.path:
 from runtime_paths import bin_path, subprocess_hidden_kwargs
 from services import EngineRuntime, ResourceDownloadService
 try:
-    from utils.voice_preview_utils import (
-        clamp_requested_speed,
-        load_manifest,
-        provider_native_speed,
-        save_manifest,
-        segment_cache_key,
-        voice_provider,
-    )
-except ImportError:
     from app.utils.voice_preview_utils import (
         clamp_requested_speed,
         load_manifest,
@@ -33,6 +24,28 @@ except ImportError:
         segment_cache_key,
         voice_provider,
     )
+except ImportError:
+    import importlib.util
+    _vpu_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "app", "utils", "voice_preview_utils.py")
+    if os.path.exists(_vpu_path):
+        _spec = importlib.util.spec_from_file_location("capcap_voice_preview_utils", _vpu_path)
+        _vpu = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_vpu)
+        clamp_requested_speed = _vpu.clamp_requested_speed
+        load_manifest = _vpu.load_manifest
+        provider_native_speed = _vpu.provider_native_speed
+        save_manifest = _vpu.save_manifest
+        segment_cache_key = _vpu.segment_cache_key
+        voice_provider = _vpu.voice_provider
+    else:
+        from utils.voice_preview_utils import (
+            clamp_requested_speed,
+            load_manifest,
+            provider_native_speed,
+            save_manifest,
+            segment_cache_key,
+            voice_provider,
+        )
 
 
 class VocalSeparationWorker(QThread):

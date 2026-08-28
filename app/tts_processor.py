@@ -222,39 +222,6 @@ def normalize_text_for_tts(text: str, *, provider: str = "piper", language: str 
         return value
 
 
-def _subprocess_run_kwargs() -> dict:
-    kwargs = {}
-    if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        kwargs["startupinfo"] = startupinfo
-    return kwargs
-
-
-def _sanitize_filename(name: str) -> str:
-    name = re.sub(r"[^\w\-. ]+", "_", name, flags=re.UNICODE).strip()
-    return name[:120] if len(name) > 120 else name
-
-
-def _voice_provider_and_id(voice: str) -> tuple[str, str]:
-    raw = (voice or "").strip()
-    if ":" in raw:
-        provider, voice_id = raw.split(":", 1)
-        return provider.strip().lower(), voice_id.strip()
-    return "edge", raw
-
-
-def _speed_to_float(speed) -> float:
-    if isinstance(speed, (int, float)):
-        return float(speed)
-    text = str(speed or "").strip().lower().replace("x", "")
-    try:
-        return float(text or "1.0")
-    except ValueError:
-        return 1.0
-
-
 
 
 

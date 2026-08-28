@@ -4,6 +4,17 @@ import sys
 import threading
 import traceback
 
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_CURRENT_DIR)
+_APP_DIR = os.path.join(_REPO_ROOT, "app")
+
+if _CURRENT_DIR not in sys.path:
+    sys.path.insert(0, _CURRENT_DIR)
+if _REPO_ROOT not in sys.path:
+    sys.path.append(_REPO_ROOT)
+if _APP_DIR not in sys.path:
+    sys.path.append(_APP_DIR)
+
 _SINGLE_INSTANCE_HANDLE = None
 
 
