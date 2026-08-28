@@ -1035,7 +1035,7 @@ def build_start_group(gui, left_layout):
     audio_tracks_layout.addLayout(a1_row)
 
     a2_row = QHBoxLayout()
-    a2_label = QLabel("TS1 Dub")
+    a2_label = QLabel("A2 Dub")
     a2_label.setMinimumWidth(100)
     a2_row.addWidget(a2_label)
     gui.audio_a2_volume_slider = QSlider(Qt.Horizontal)

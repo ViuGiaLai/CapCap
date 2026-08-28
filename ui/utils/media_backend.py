@@ -345,11 +345,19 @@ class QtMediaPlayerBackend(QObject):
 
     def set_original_volume(self, percent):
         value = max(0, min(200, int(percent))) / 100.0
-        self._audio_output.setVolume(value)
+        self._audio_output.setVolume(min(1.0, value))
+        if value <= 0.0:
+            self._audio_output.setMuted(True)
+        else:
+            self._audio_output.setMuted(bool(self._mute_original and self._mute_dubbed))
 
     def set_dubbed_volume(self, percent):
         value = max(0, min(200, int(percent))) / 100.0
-        self._audio_output.setVolume(value)
+        self._audio_output.setVolume(min(1.0, value))
+        if value <= 0.0:
+            self._audio_output.setMuted(True)
+        else:
+            self._audio_output.setMuted(bool(self._mute_original and self._mute_dubbed))
 
     def original_volume(self):
         return int(round(self._audio_output.volume() * 100.0))
@@ -1410,14 +1418,22 @@ class MpvMediaPlayerBackend(QObject):
     def set_original_volume(self, percent):
         try:
             v = max(0.0, min(200.0, float(percent))) / 100.0
-            self._original_output.setVolume(v)
+            self._original_output.setVolume(min(1.0, v))
+            if v <= 0.0:
+                self._original_output.setMuted(True)
+            else:
+                self._original_output.setMuted(bool(self._mute_original))
         except Exception:
             pass
 
     def set_dubbed_volume(self, percent):
         try:
             v = max(0.0, min(200.0, float(percent))) / 100.0
-            self._dubbed_output.setVolume(v)
+            self._dubbed_output.setVolume(min(1.0, v))
+            if v <= 0.0:
+                self._dubbed_output.setMuted(True)
+            else:
+                self._dubbed_output.setMuted(bool(self._mute_dubbed))
         except Exception:
             pass
 

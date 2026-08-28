@@ -3787,6 +3787,7 @@ class VideoTranslatorGUI(QMainWindow):
             "highlight_color": self.subtitle_highlight_color_combo.currentText().strip(),
             "highlight_mode": self.subtitle_highlight_mode_combo.currentText().strip(),
             "single_line": bool(getattr(self, "subtitle_single_line_cb", None) and self.subtitle_single_line_cb.isChecked()),
+            "single_line_words": int(self.subtitle_words_per_segment_spin.value()) if hasattr(self, "subtitle_words_per_segment_spin") else 4,
             "position": self.get_subtitle_position_config(),
         }
 
@@ -3839,8 +3840,13 @@ class VideoTranslatorGUI(QMainWindow):
         self.subtitle_highlight_mode_combo.setCurrentText(
             str(state.get("highlight_mode", self.subtitle_highlight_mode_combo.currentText()))
         )
-        if hasattr(self, "subtitle_single_line_cb"):
-            self.subtitle_single_line_cb.setChecked(bool(state.get("single_line", self.subtitle_single_line_cb.isChecked())))
+        if hasattr(self, "subtitle_single_line_cb") and "single_line" in state:
+            self.subtitle_single_line_cb.setChecked(bool(state.get("single_line")))
+        if hasattr(self, "subtitle_words_per_segment_spin") and "single_line_words" in state:
+            try:
+                self.subtitle_words_per_segment_spin.setValue(int(state.get("single_line_words", 4)))
+            except Exception:
+                pass
         position = dict(state.get("position") or {})
         if position:
             mode_combo = getattr(self, "subtitle_position_mode_combo", None)
@@ -4465,6 +4471,8 @@ class VideoTranslatorGUI(QMainWindow):
         if self.current_translated_segments:
             self.translated_text.setText(self.format_to_srt(self.current_translated_segments))
         if self.current_translated_segments or self.current_segments:
+            if bool(getattr(self, "subtitle_single_line_cb", None) and self.subtitle_single_line_cb.isChecked()):
+                self._split_segments_for_single_line()
             self._enable_post_pipeline_preview_assets(refresh=True)
             self.apply_segments_to_timeline()
             self.set_selected_segment_index(0, sync_ui=True)
@@ -4899,6 +4907,25 @@ class VideoTranslatorGUI(QMainWindow):
         if not hasattr(self, "output_mode_combo"):
             return "both"
         return get_output_mode_key(self.output_mode_combo.currentText())
+
+    def get_final_dub_audio_path(self) -> str:
+        """Return the resolved path to the generated or selected dub audio."""
+        candidates = [
+            getattr(self, "last_mixed_vi_path", ""),
+            getattr(self, "last_voice_vi_path", ""),
+            self.processed_artifacts.get("mixed_vi", ""),
+            self.processed_artifacts.get("voice_vi", ""),
+        ]
+        if hasattr(self, "current_project_state") and self.current_project_state:
+            artifacts = getattr(self.current_project_state, "artifacts", {}) or {}
+            candidates.extend([
+                artifacts.get("mixed_vi", ""),
+                artifacts.get("voice_vi", ""),
+            ])
+        for p in candidates:
+            if p and os.path.exists(p):
+                return p
+        return ""
 
     def get_output_quality_key(self):
         if not hasattr(self, "output_quality_combo"):
@@ -5727,6 +5754,7 @@ class VideoTranslatorGUI(QMainWindow):
             self._single_line_split_cache = None
         self.apply_segments_to_timeline()
         self.schedule_live_subtitle_preview_refresh()
+        self.schedule_timeline_project_persist()
 
     def _split_segments_for_single_line(self):
         from translation import TranslationOrchestrator
@@ -6794,14 +6822,23 @@ class VideoTranslatorGUI(QMainWindow):
                 continue
             source = str(getattr(candidate, "source", "") or "")
             candidate_transform = getattr(candidate, "transform", None)
-            if candidate_transform is not None and hasattr(candidate_transform, "x"):
-                logo_x = float(getattr(candidate_transform, "x", 0.1)) / 100.0
-                logo_y = float(getattr(candidate_transform, "y", 0.1)) / 100.0
-                logo_w = 0.2 * float(getattr(candidate_transform, "scale_x", 1.0))
-                logo_h = 0.2 * float(getattr(candidate_transform, "scale_y", 1.0))
-                logo_rotation = float(getattr(candidate_transform, "rotation", 0.0) or 0.0)
+            if candidate_transform is not None:
+                val_x = getattr(candidate_transform, "x", 0.0)
+                raw_x = float(val_x if val_x is not None else 0.0)
+                logo_x = raw_x / 100.0 if raw_x > 1.0 else raw_x
+                val_y = getattr(candidate_transform, "y", 0.0)
+                raw_y = float(val_y if val_y is not None else 0.0)
+                logo_y = raw_y / 100.0 if raw_y > 1.0 else raw_y
+                val_sx = getattr(candidate_transform, "scale_x", 0.2)
+                raw_scale_x = float(val_sx if val_sx is not None else 0.2)
+                logo_w = raw_scale_x / 100.0 if raw_scale_x > 1.0 else raw_scale_x
+                val_sy = getattr(candidate_transform, "scale_y", 0.2)
+                raw_scale_y = float(val_sy if val_sy is not None else 0.2)
+                logo_h = raw_scale_y / 100.0 if raw_scale_y > 1.0 else raw_scale_y
+                val_rot = getattr(candidate_transform, "rotation", 0.0)
+                logo_rotation = float(val_rot if val_rot is not None else 0.0)
             else:
-                logo_x, logo_y, logo_w, logo_h, logo_rotation = 0.1, 0.1, 0.2, 0.2, 0.0
+                logo_x, logo_y, logo_w, logo_h, logo_rotation = 0.0, 0.0, 0.2, 0.2, 0.0
             logos.append({
                 "source": source, "x": logo_x, "y": logo_y,
                 "width": logo_w, "height": logo_h,
@@ -7638,92 +7675,345 @@ class VideoTranslatorGUI(QMainWindow):
         self.text_inspector_background_btn.clicked.connect(background_changed)
         self.text_inspector_background_opacity_slider.valueChanged.connect(background_opacity_changed)
 
+    def _on_logo_moved(self, layer, x, y, w, h):
+        """Update the ImageLayer's transform from the logo overlay drag."""
+        if self._preview_is_playing():
+            return
+        try:
+            from app.layers.transform import Transform
+            transform = getattr(layer, "transform", None) or Transform()
+            transform.x = float(x)
+            transform.y = float(y)
+            transform.scale_x = float(w)
+            transform.scale_y = float(h)
+            layer.transform = transform
+        except Exception:
+            pass
+        # Coalesce the disk write while the overlay emits drag events.
+        self.schedule_timeline_project_persist()
+
+    def _show_mask_overlay(self, track, layer):
+        """Show the draggable mask overlay for the selected mask layer."""
+        if not hasattr(self, "video_view"):
+            return
+        if not bool(getattr(self, "_mask_track_preview_visible", True)):
+            # Hide/Show controls both the visual effect and its edit chrome.
+            # A later focus/selection event must not resurrect either one.
+            if hasattr(self.video_view, "clear_mask_region"):
+                self.video_view.clear_mask_region()
+            return
+        # Disconnect any previous handlers to avoid the libpyside
+        # RuntimeWarning that occurs when calling disconnect() with no
+        # args or a lambda that was never connected.
+        prev_moved = getattr(self, "_mask_moved_handler", None)
+        if prev_moved is not None:
+            try:
+                self.video_view.maskMoved.disconnect(prev_moved)
+            except (RuntimeError, TypeError, Exception):
+                pass
+        prev_deleted = getattr(self, "_mask_deleted_handler", None)
+        if prev_deleted is not None:
+            try:
+                self.video_view.maskDeleted.disconnect(prev_deleted)
+            except (RuntimeError, TypeError, Exception):
+                pass
+
+        self._mask_overlay_layer = layer
+
+        def _moved_handler(nx, ny, nw, nh, l=layer):
+            self._on_mask_moved(l, nx, ny, nw, nh)
+
+        def _deleted_handler(l=layer):
+            self._delete_mask_layer(l)
+
+        self._mask_moved_handler = _moved_handler
+        self._mask_deleted_handler = _deleted_handler
+
+        self.video_view.maskMoved.connect(_moved_handler)
+        self.video_view.maskDeleted.connect(_deleted_handler)
+
+        regions = []
+        active_index = 0
+        for index, candidate in enumerate(track.layers):
+            if not self._layer_is_active_at_preview_time(candidate):
+                continue
+            regions.append(self._mask_layer_to_region_dict(candidate))
+            if candidate is layer:
+                active_index = len(regions) - 1
+        if not regions:
+            if hasattr(self.video_view, "clear_mask_region"):
+                self.video_view.clear_mask_region()
+            return
+        editable = bool(getattr(self, "mask_edit_mode_active", False)
+                        and not self._preview_is_playing())
+        self.video_view.set_mask_regions(
+            regions,
+            active_index=active_index,
+            editable=editable,
+        )
+
+    def _delete_mask_layer(self, layer):
+        """Delete a mask layer from the M1 track."""
+        if hasattr(self.video_view, "clear_mask_region"):
+            self.video_view.clear_mask_region()
+        self._mask_overlay_layer = None
+        self._delete_layer_from_timeline(layer)
+
     def _show_logo_inspector_for_track(self, track, layer=None):
         """Show the Logo Track Inspector populated with the selected L1 layer."""
         self._switch_inspector("logo")
+        self._sync_logo_inspector_for_layer(track, layer)
+
+    def _sync_logo_inspector_for_layer(self, track, layer):
+        """Sync Logo Inspector controls to match the selected ImageLayer."""
         self._wire_logo_inspector_controls()
-        self._wire_layer_timing_controls("logo")
+        self._logo_overlay_layer = layer
+
         if layer is None:
             return
-        self._set_layer_timing_controls("logo", layer)
-        # Read current opacity/rotation from the layer and apply to the
+
+        # Push the layer's saved opacity, rotation, scale, position to the
         # inspector controls.
-        opacity = float(getattr(layer, "opacity", 1.0) or 1.0)
+        opacity = float(getattr(layer, "opacity", 1.0) if getattr(layer, "opacity", None) is not None else 1.0)
         rotation = 0.0
+        scale = 0.2
+        pos_x = 0.0
+        pos_y = 0.0
         try:
             transform = getattr(layer, "transform", None)
-            if transform is not None and hasattr(transform, "rotation"):
-                rotation = float(getattr(transform, "rotation", 0.0) or 0.0)
+            if transform is not None:
+                val_rot = getattr(transform, "rotation", 0.0)
+                rotation = float(val_rot if val_rot is not None else 0.0)
+                val_s = getattr(transform, "scale_x", 0.2)
+                raw_s = float(val_s if val_s is not None else 0.2)
+                scale = raw_s / 100.0 if raw_s > 1.0 else raw_s
+                val_x = getattr(transform, "x", 0.0)
+                raw_x = float(val_x if val_x is not None else 0.0)
+                pos_x = raw_x / 100.0 if raw_x > 1.0 else raw_x
+                val_y = getattr(transform, "y", 0.0)
+                raw_y = float(val_y if val_y is not None else 0.0)
+                pos_y = raw_y / 100.0 if raw_y > 1.0 else raw_y
         except Exception:
-            rotation = 0.0
+            pass
+
+        if hasattr(self, "logo_inspector_scale_slider"):
+            self.logo_inspector_scale_slider.blockSignals(True)
+            self.logo_inspector_scale_slider.setValue(int(round(scale * 100)))
+            self.logo_inspector_scale_slider.blockSignals(False)
+        if hasattr(self, "logo_inspector_scale_value_label"):
+            self.logo_inspector_scale_value_label.setText(f"{int(round(scale * 100))}%")
+
         if hasattr(self, "logo_inspector_opacity_slider"):
             self.logo_inspector_opacity_slider.blockSignals(True)
             self.logo_inspector_opacity_slider.setValue(int(round(opacity * 100)))
             self.logo_inspector_opacity_slider.blockSignals(False)
         if hasattr(self, "logo_inspector_opacity_value_label"):
             self.logo_inspector_opacity_value_label.setText(f"{int(round(opacity * 100))}%")
+
         if hasattr(self, "logo_inspector_rotation_slider"):
             self.logo_inspector_rotation_slider.blockSignals(True)
             self.logo_inspector_rotation_slider.setValue(int(round(rotation)))
             self.logo_inspector_rotation_slider.blockSignals(False)
         if hasattr(self, "logo_inspector_rotation_value_label"):
             self.logo_inspector_rotation_value_label.setText(f"{int(round(rotation))}°")
+
+        if hasattr(self, "logo_inspector_pos_x_slider"):
+            self.logo_inspector_pos_x_slider.blockSignals(True)
+            self.logo_inspector_pos_x_slider.setValue(int(round(pos_x * 100)))
+            self.logo_inspector_pos_x_slider.blockSignals(False)
+        if hasattr(self, "logo_inspector_pos_x_value_label"):
+            self.logo_inspector_pos_x_value_label.setText(f"{int(round(pos_x * 100))}%")
+
+        if hasattr(self, "logo_inspector_pos_y_slider"):
+            self.logo_inspector_pos_y_slider.blockSignals(True)
+            self.logo_inspector_pos_y_slider.setValue(int(round(pos_y * 100)))
+            self.logo_inspector_pos_y_slider.blockSignals(False)
+        if hasattr(self, "logo_inspector_pos_y_value_label"):
+            self.logo_inspector_pos_y_value_label.setText(f"{int(round(pos_y * 100))}%")
+
         if hasattr(self, "logo_inspector_summary_label"):
             tname = getattr(track, "name", "L1 Logo")
             lname = getattr(layer, "name", "Logo")
             self.logo_inspector_summary_label.setText(
                 f"Selected: {tname} → {lname}. "
-                "Adjust opacity and rotation below; drag the logo on the "
-                "preview to reposition."
+                "Adjust scale, position, rotation, and opacity below."
             )
 
     def _wire_logo_inspector_controls(self):
-        """One-time wiring of the Logo Inspector's opacity/rotation controls."""
+        """One-time wiring of the Logo Inspector's scale/opacity/rotation/position controls."""
         if getattr(self, "_logo_inspector_wired", False):
             return
         self._logo_inspector_wired = True
 
-        def _on_opacity_changed(value, l=None):
+        def _on_scale_changed(value, l=None):
+            if hasattr(self, "logo_inspector_scale_value_label"):
+                self.logo_inspector_scale_value_label.setText(f"{int(value)}%")
+            scale = max(0.02, min(1.0, float(value) / 100.0))
+            if hasattr(self, "video_view") and hasattr(self.video_view, "set_logo_scale"):
+                self.video_view.set_logo_scale(scale)
             if l is None:
                 l = getattr(self, "_logo_overlay_layer", None)
-            if l is None:
-                return
-            opacity = max(0.0, min(1.0, float(value) / 100.0))
-            try:
-                l.opacity = opacity
-            except Exception:
-                pass
+            if l is not None:
+                try:
+                    from app.layers.transform import Transform
+                    transform = getattr(l, "transform", None) or Transform()
+                    transform.scale_x = scale
+                    transform.scale_y = scale
+                    l.transform = transform
+                    self.schedule_timeline_project_persist()
+                except Exception:
+                    pass
+
+        def _on_opacity_changed(value, l=None):
             if hasattr(self, "logo_inspector_opacity_value_label"):
                 self.logo_inspector_opacity_value_label.setText(f"{int(value)}%")
+            opacity = max(0.0, min(1.0, float(value) / 100.0))
             if hasattr(self, "video_view") and hasattr(self.video_view, "set_logo_opacity"):
                 self.video_view.set_logo_opacity(opacity)
-
-        def _on_rotation_changed(value, l=None):
             if l is None:
                 l = getattr(self, "_logo_overlay_layer", None)
-            if l is None:
-                return
-            rotation = float(value)
-            try:
-                from app.layers.transform import Transform
-                transform = getattr(l, "transform", None) or Transform()
-                transform.rotation = rotation
-                l.transform = transform
-            except Exception:
-                pass
+            if l is not None:
+                try:
+                    l.opacity = opacity
+                    self.schedule_timeline_project_persist()
+                except Exception:
+                    pass
+
+        def _on_rotation_changed(value, l=None):
             if hasattr(self, "logo_inspector_rotation_value_label"):
                 self.logo_inspector_rotation_value_label.setText(f"{int(value)}°")
+            rotation = float(value)
             if hasattr(self, "video_view") and hasattr(self.video_view, "set_logo_rotation"):
                 self.video_view.set_logo_rotation(rotation)
+            if l is None:
+                l = getattr(self, "_logo_overlay_layer", None)
+            if l is not None:
+                try:
+                    from app.layers.transform import Transform
+                    transform = getattr(l, "transform", None) or Transform()
+                    transform.rotation = rotation
+                    l.transform = transform
+                    self.schedule_timeline_project_persist()
+                except Exception:
+                    pass
 
-        # Store handlers so we can disconnect on re-wire.
-        self._logo_opacity_handler = _on_opacity_changed
-        self._logo_rotation_handler = _on_rotation_changed
+        def _on_pos_x_changed(value, l=None):
+            if hasattr(self, "logo_inspector_pos_x_value_label"):
+                self.logo_inspector_pos_x_value_label.setText(f"{int(value)}%")
+            pos_x = max(0.0, min(1.0, float(value) / 100.0))
+            pos_y = 0.0
+            if l is None:
+                l = getattr(self, "_logo_overlay_layer", None)
+            if l is not None:
+                try:
+                    from app.layers.transform import Transform
+                    transform = getattr(l, "transform", None) or Transform()
+                    transform.x = pos_x
+                    l.transform = transform
+                    val_y = getattr(transform, "y", 0.0)
+                    pos_y = float(val_y if val_y is not None else 0.0)
+                    self.schedule_timeline_project_persist()
+                except Exception:
+                    pass
+            elif hasattr(self, "logo_inspector_pos_y_slider"):
+                pos_y = float(self.logo_inspector_pos_y_slider.value()) / 100.0
+            if hasattr(self, "video_view") and hasattr(self.video_view, "set_logo_position"):
+                self.video_view.set_logo_position(pos_x, pos_y)
 
+        def _on_pos_y_changed(value, l=None):
+            if hasattr(self, "logo_inspector_pos_y_value_label"):
+                self.logo_inspector_pos_y_value_label.setText(f"{int(value)}%")
+            pos_y = max(0.0, min(1.0, float(value) / 100.0))
+            pos_x = 0.0
+            if l is None:
+                l = getattr(self, "_logo_overlay_layer", None)
+            if l is not None:
+                try:
+                    from app.layers.transform import Transform
+                    transform = getattr(l, "transform", None) or Transform()
+                    transform.y = pos_y
+                    l.transform = transform
+                    val_x = getattr(transform, "x", 0.0)
+                    pos_x = float(val_x if val_x is not None else 0.0)
+                    self.schedule_timeline_project_persist()
+                except Exception:
+                    pass
+            elif hasattr(self, "logo_inspector_pos_x_slider"):
+                pos_x = float(self.logo_inspector_pos_x_slider.value()) / 100.0
+            if hasattr(self, "video_view") and hasattr(self.video_view, "set_logo_position"):
+                self.video_view.set_logo_position(pos_x, pos_y)
+
+        def _apply_preset(x, y):
+            if hasattr(self, "logo_inspector_pos_x_slider"):
+                self.logo_inspector_pos_x_slider.setValue(int(round(x * 100)))
+            if hasattr(self, "logo_inspector_pos_y_slider"):
+                self.logo_inspector_pos_y_slider.setValue(int(round(y * 100)))
+
+        def _on_replace_logo():
+            from PySide6.QtWidgets import QFileDialog
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Select Logo / Watermark Image", "",
+                "Image Files (*.png *.jpg *.jpeg *.webp *.bmp);;All Files (*)"
+            )
+            if file_path and os.path.exists(file_path):
+                l = getattr(self, "_logo_overlay_layer", None)
+                if l is not None:
+                    l.source = file_path
+                logos = [{"source": file_path, "x": 0.0, "y": 0.0, "width": 0.2, "height": 0.2, "opacity": 1.0}]
+                if hasattr(self, "video_view") and hasattr(self.video_view, "set_logos"):
+                    self.video_view.set_logos(logos, active_index=0)
+                self.schedule_timeline_project_persist()
+
+        def _on_reset_logo():
+            if hasattr(self, "logo_inspector_scale_slider"):
+                self.logo_inspector_scale_slider.setValue(20)
+            if hasattr(self, "logo_inspector_opacity_slider"):
+                self.logo_inspector_opacity_slider.setValue(100)
+            if hasattr(self, "logo_inspector_rotation_slider"):
+                self.logo_inspector_rotation_slider.setValue(0)
+            _apply_preset(0.0, 0.0)
+
+        def _on_delete_logo():
+            if hasattr(self, "video_view") and hasattr(self.video_view, "clear_logo"):
+                self.video_view.clear_logo()
+            if hasattr(self, "timeline") and self.timeline is not None:
+                try:
+                    selected_id = getattr(self.timeline, "_selected_layer_id", "")
+                    if selected_id:
+                        self.timeline.delete_layer(selected_id)
+                except Exception:
+                    pass
+            self._show_default_inspector()
+            self.schedule_timeline_project_persist()
+
+        if hasattr(self, "logo_inspector_scale_slider"):
+            self.logo_inspector_scale_slider.valueChanged.connect(_on_scale_changed)
         if hasattr(self, "logo_inspector_opacity_slider"):
             self.logo_inspector_opacity_slider.valueChanged.connect(_on_opacity_changed)
         if hasattr(self, "logo_inspector_rotation_slider"):
             self.logo_inspector_rotation_slider.valueChanged.connect(_on_rotation_changed)
+        if hasattr(self, "logo_inspector_pos_x_slider"):
+            self.logo_inspector_pos_x_slider.valueChanged.connect(_on_pos_x_changed)
+        if hasattr(self, "logo_inspector_pos_y_slider"):
+            self.logo_inspector_pos_y_slider.valueChanged.connect(_on_pos_y_changed)
+
+        if hasattr(self, "logo_pos_tl_btn"):
+            self.logo_pos_tl_btn.clicked.connect(lambda: _apply_preset(0.0, 0.0))
+        if hasattr(self, "logo_pos_tr_btn"):
+            self.logo_pos_tr_btn.clicked.connect(lambda: _apply_preset(0.80, 0.0))
+        if hasattr(self, "logo_pos_bl_btn"):
+            self.logo_pos_bl_btn.clicked.connect(lambda: _apply_preset(0.0, 0.80))
+        if hasattr(self, "logo_pos_br_btn"):
+            self.logo_pos_br_btn.clicked.connect(lambda: _apply_preset(0.80, 0.80))
+        if hasattr(self, "logo_pos_center_btn"):
+            self.logo_pos_center_btn.clicked.connect(lambda: _apply_preset(0.40, 0.40))
+
+        if hasattr(self, "logo_replace_btn"):
+            self.logo_replace_btn.clicked.connect(_on_replace_logo)
+        if hasattr(self, "logo_reset_btn"):
+            self.logo_reset_btn.clicked.connect(_on_reset_logo)
+        if hasattr(self, "logo_delete_btn"):
+            self.logo_delete_btn.clicked.connect(_on_delete_logo)
 
     def _show_video_inspector_for_track(self, track, layer=None):
         """Show the Video Track Inspector (V1 Video)."""
@@ -8151,19 +8441,24 @@ class VideoTranslatorGUI(QMainWindow):
             self.audio_a1_volume_label.setText(f"{int(value)}%")
         self._sync_audio_track_volume("A1 Audio", int(value))
         self._set_audio_mix_preset_custom()
+        self.schedule_timeline_project_persist()
 
     def on_audio_a2_volume_changed(self, value: int):
         if hasattr(self, "audio_a2_volume_label"):
             self.audio_a2_volume_label.setText(f"{int(value)}%")
+        self._sync_audio_track_volume("A2 Dub", int(value))
         self._sync_audio_track_volume("TS1", int(value))
         self._set_audio_mix_preset_custom()
+        self.schedule_timeline_project_persist()
 
     def _apply_audio_mix_to_tracks(self, a1_val: int, a2_val: int):
         self._sync_audio_track_volume("A1 Audio", a1_val)
+        self._sync_audio_track_volume("A2 Dub", a2_val)
         self._sync_audio_track_volume("TS1", a2_val)
+        self.schedule_timeline_project_persist()
 
     def _sync_audio_track_volume(self, track_name: str, volume: int):
-        if not hasattr(self, "timeline") or self.timeline is None:
+        if not hasattr(self, "timeline") or self.timeline is None or not self.timeline._timeline:
             return
         for t in self.timeline._timeline.tracks:
             if t.name == track_name:
@@ -8195,21 +8490,21 @@ class VideoTranslatorGUI(QMainWindow):
                 gain_db = self._get_audio_track_gain_db(track_name)
                 effective = vol * (10 ** (gain_db / 20.0))
                 effective = max(0.0, min(200.0, effective))
-                if hasattr(self.media_player, "set_original_volume"):
-                    self.media_player.set_original_volume(effective)
                 muted = self._is_audio_track_muted(track_name)
                 if hasattr(self.media_player, "set_mute_original"):
-                    self.media_player.set_mute_original(muted)
+                    self.media_player.set_mute_original(muted or (effective <= 0.0))
+                if hasattr(self.media_player, "set_original_volume"):
+                    self.media_player.set_original_volume(effective)
             elif track_name in ("A2 Dub", "TS1"):
                 vol = self._compute_audio_track_volume(track_name, base=100.0)
                 gain_db = self._get_audio_track_gain_db(track_name)
                 effective = vol * (10 ** (gain_db / 20.0))
                 effective = max(0.0, min(200.0, effective))
-                if hasattr(self.media_player, "set_dubbed_volume"):
-                    self.media_player.set_dubbed_volume(effective)
                 muted = self._is_audio_track_muted(track_name)
                 if hasattr(self.media_player, "set_mute_dubbed"):
-                    self.media_player.set_mute_dubbed(muted)
+                    self.media_player.set_mute_dubbed(muted or (effective <= 0.0))
+                if hasattr(self.media_player, "set_dubbed_volume"):
+                    self.media_player.set_dubbed_volume(effective)
         except Exception:
             pass
 
@@ -8633,12 +8928,15 @@ class VideoTranslatorGUI(QMainWindow):
                     img_track.height or 80
                 )
             self.timeline._redraw()
+            if hasattr(self, "_sync_track_labels"):
+                self._sync_track_labels()
             # Show the logo overlay immediately (no need to click the
             # layer first) and persist the logo state.
             try:
                 self._show_logo_overlay(img_track, layer)
             except Exception:
                 pass
+            self.schedule_timeline_project_persist()
 
         elif layer_type == "blur":
             from app.layers.blur import BlurLayer

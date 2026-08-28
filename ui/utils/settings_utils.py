@@ -71,6 +71,10 @@ def save_user_settings(gui):
         s.setValue("auto_preview_frame", gui.auto_preview_frame_cb.isChecked())
     if hasattr(gui, "ai_dubbing_rewrite_cb"):
         s.setValue("ai_dubbing_rewrite", gui.ai_dubbing_rewrite_cb.isChecked())
+    if hasattr(gui, "subtitle_single_line_cb"):
+        s.setValue("subtitle_single_line", gui.subtitle_single_line_cb.isChecked())
+    if hasattr(gui, "subtitle_words_per_segment_spin"):
+        s.setValue("subtitle_words_per_segment", gui.subtitle_words_per_segment_spin.value())
     if hasattr(gui, "toggle_advanced_btn"):
         s.setValue("advanced_section_open", gui.toggle_advanced_btn.isChecked())
 
@@ -244,6 +248,18 @@ def load_user_settings(gui):
 
     if hasattr(gui, "ai_dubbing_rewrite_cb"):
         gui.ai_dubbing_rewrite_cb.setChecked(str(s.value("ai_dubbing_rewrite", "true")).lower() == "true")
+
+    if hasattr(gui, "subtitle_single_line_cb"):
+        saved_sl = s.value("subtitle_single_line", None)
+        if saved_sl is not None:
+            gui.subtitle_single_line_cb.setChecked(str(saved_sl).lower() == "true")
+    if hasattr(gui, "subtitle_words_per_segment_spin"):
+        saved_w = s.value("subtitle_words_per_segment", None)
+        if saved_w is not None:
+            try:
+                gui.subtitle_words_per_segment_spin.setValue(int(saved_w))
+            except Exception:
+                pass
 
     advanced_open = str(s.value("advanced_section_open", "false")).lower() == "true"
     if hasattr(gui, "toggle_advanced_btn"):

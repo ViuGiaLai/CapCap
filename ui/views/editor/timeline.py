@@ -619,8 +619,7 @@ class EditorTimeline(QGraphicsView):
         # additional ruler-height in the scene so QGraphicsView's vertical
         # scrollbar does not count that covered area as usable track space.
         # Without this, the final track stops underneath the horizontal
-        # scrollbar and cannot be clicked even after scrolling to the end.
-        total_h = self.RULER_HEIGHT * 2 + sum(
+        total_h = self.RULER_HEIGHT + sum(
             self._track_heights.get(t.id, self.TRACK_DEFAULT_H) for t in tracks
         )
         scene_w = self.CONTENT_LEFT_PAD + max(self._duration * self.pixels_per_second + 200, 800)
@@ -638,7 +637,7 @@ class EditorTimeline(QGraphicsView):
         if not self._timeline:
             return
         tracks = [t for t in self._timeline.tracks if self.is_track_shown_on_timeline(t)]
-        total_h = self.RULER_HEIGHT * 2 + sum(
+        total_h = self.RULER_HEIGHT + sum(
             self._track_heights.get(t.id, self.TRACK_DEFAULT_H) for t in tracks
         )
         scene_w = self.CONTENT_LEFT_PAD + max(self._duration * self.pixels_per_second + 200, 800)

@@ -209,6 +209,20 @@ class VideoView(QGraphicsView):
             self.logo_item.hide()
             self.viewport().update()
 
+    def set_logo_scale(self, scale: float = 0.2):
+        if self._current_logos:
+            self._current_logos[0]["width"] = max(0.02, min(1.0, float(scale)))
+            self._current_logos[0]["height"] = max(0.02, min(1.0, float(scale)))
+            self.reposition_logo()
+            self.viewport().update()
+
+    def set_logo_position(self, x: float = 0.05, y: float = 0.05):
+        if self._current_logos:
+            self._current_logos[0]["x"] = max(0.0, min(1.0, float(x)))
+            self._current_logos[0]["y"] = max(0.0, min(1.0, float(y)))
+            self.reposition_logo()
+            self.viewport().update()
+
     def set_logo_properties(self, *args, **kwargs):
         pass
 

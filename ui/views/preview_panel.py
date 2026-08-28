@@ -1567,18 +1567,32 @@ def build_preview_panel(gui):
     logo_layout.addWidget(gui.logo_inspector_summary_label)
     _add_layer_timing_controls(logo_layout, "logo")
 
+    # --- Scale / Size ---
+    scale_row = QHBoxLayout()
+    scale_label = QLabel("Scale (Size)")
+    scale_label.setObjectName("sectionTitle")
+    scale_label.setFixedWidth(100)
+    scale_row.addWidget(scale_label)
+    gui.logo_inspector_scale_slider = QSlider(Qt.Horizontal)
+    gui.logo_inspector_scale_slider.setRange(2, 100)
+    gui.logo_inspector_scale_slider.setValue(20)
+    gui.logo_inspector_scale_slider.setToolTip("Resize the watermark logo (2% - 100%)")
+    scale_row.addWidget(gui.logo_inspector_scale_slider, 1)
+    gui.logo_inspector_scale_value_label = QLabel("20%")
+    gui.logo_inspector_scale_value_label.setFixedWidth(40)
+    scale_row.addWidget(gui.logo_inspector_scale_value_label)
+    logo_layout.addLayout(scale_row)
+
     # --- Opacity ---
     opacity_row = QHBoxLayout()
     opacity_label = QLabel("Opacity")
     opacity_label.setObjectName("sectionTitle")
-    opacity_label.setFixedWidth(90)
+    opacity_label.setFixedWidth(100)
     opacity_row.addWidget(opacity_label)
     gui.logo_inspector_opacity_slider = QSlider(Qt.Horizontal)
     gui.logo_inspector_opacity_slider.setRange(0, 100)
     gui.logo_inspector_opacity_slider.setValue(100)
-    gui.logo_inspector_opacity_slider.setToolTip(
-        "Set the transparency of the logo (0% invisible, 100% fully visible)."
-    )
+    gui.logo_inspector_opacity_slider.setToolTip("Set logo transparency (0% transparent, 100% opaque)")
     opacity_row.addWidget(gui.logo_inspector_opacity_slider, 1)
     gui.logo_inspector_opacity_value_label = QLabel("100%")
     gui.logo_inspector_opacity_value_label.setFixedWidth(40)
@@ -1589,23 +1603,97 @@ def build_preview_panel(gui):
     rotation_row = QHBoxLayout()
     rotation_label = QLabel("Rotation")
     rotation_label.setObjectName("sectionTitle")
-    rotation_label.setFixedWidth(90)
+    rotation_label.setFixedWidth(100)
     rotation_row.addWidget(rotation_label)
     gui.logo_inspector_rotation_slider = QSlider(Qt.Horizontal)
     gui.logo_inspector_rotation_slider.setRange(-180, 180)
     gui.logo_inspector_rotation_slider.setValue(0)
-    gui.logo_inspector_rotation_slider.setToolTip(
-        "Rotate the logo in degrees (-180 to 180)."
-    )
+    gui.logo_inspector_rotation_slider.setToolTip("Rotate the logo in degrees (-180° to 180°)")
     rotation_row.addWidget(gui.logo_inspector_rotation_slider, 1)
     gui.logo_inspector_rotation_value_label = QLabel("0°")
     gui.logo_inspector_rotation_value_label.setFixedWidth(40)
     rotation_row.addWidget(gui.logo_inspector_rotation_value_label)
     logo_layout.addLayout(rotation_row)
 
+    # --- Position Presets ---
+    preset_title = QLabel("Quick Position")
+    preset_title.setObjectName("sectionTitle")
+    logo_layout.addWidget(preset_title)
+    
+    preset_row = QHBoxLayout()
+    preset_row.setSpacing(6)
+    
+    btn_preset_style = "QPushButton { background: #142032; color: #c8dcf0; border: 1px solid #243a55; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; } QPushButton:hover { background: #1a2d44; border-color: #3b82f6; color: #fff; }"
+    
+    gui.logo_pos_tl_btn = QPushButton("Top-Left")
+    gui.logo_pos_tl_btn.setStyleSheet(btn_preset_style)
+    preset_row.addWidget(gui.logo_pos_tl_btn)
+
+    gui.logo_pos_tr_btn = QPushButton("Top-Right")
+    gui.logo_pos_tr_btn.setStyleSheet(btn_preset_style)
+    preset_row.addWidget(gui.logo_pos_tr_btn)
+
+    gui.logo_pos_bl_btn = QPushButton("Bottom-Left")
+    gui.logo_pos_bl_btn.setStyleSheet(btn_preset_style)
+    preset_row.addWidget(gui.logo_pos_bl_btn)
+
+    gui.logo_pos_br_btn = QPushButton("Bottom-Right")
+    gui.logo_pos_br_btn.setStyleSheet(btn_preset_style)
+    preset_row.addWidget(gui.logo_pos_br_btn)
+
+    gui.logo_pos_center_btn = QPushButton("Center")
+    gui.logo_pos_center_btn.setStyleSheet(btn_preset_style)
+    preset_row.addWidget(gui.logo_pos_center_btn)
+    logo_layout.addLayout(preset_row)
+
+    # --- Position Fine-tuning (X, Y) ---
+    pos_x_row = QHBoxLayout()
+    pos_x_label = QLabel("Position X")
+    pos_x_label.setObjectName("sectionTitle")
+    pos_x_label.setFixedWidth(100)
+    pos_x_row.addWidget(pos_x_label)
+    gui.logo_inspector_pos_x_slider = QSlider(Qt.Horizontal)
+    gui.logo_inspector_pos_x_slider.setRange(0, 100)
+    gui.logo_inspector_pos_x_slider.setValue(5)
+    pos_x_row.addWidget(gui.logo_inspector_pos_x_slider, 1)
+    gui.logo_inspector_pos_x_value_label = QLabel("5%")
+    gui.logo_inspector_pos_x_value_label.setFixedWidth(40)
+    pos_x_row.addWidget(gui.logo_inspector_pos_x_value_label)
+    logo_layout.addLayout(pos_x_row)
+
+    pos_y_row = QHBoxLayout()
+    pos_y_label = QLabel("Position Y")
+    pos_y_label.setObjectName("sectionTitle")
+    pos_y_label.setFixedWidth(100)
+    pos_y_row.addWidget(pos_y_label)
+    gui.logo_inspector_pos_y_slider = QSlider(Qt.Horizontal)
+    gui.logo_inspector_pos_y_slider.setRange(0, 100)
+    gui.logo_inspector_pos_y_slider.setValue(5)
+    pos_y_row.addWidget(gui.logo_inspector_pos_y_slider, 1)
+    gui.logo_inspector_pos_y_value_label = QLabel("5%")
+    gui.logo_inspector_pos_y_value_label.setFixedWidth(40)
+    pos_y_row.addWidget(gui.logo_inspector_pos_y_value_label)
+    logo_layout.addLayout(pos_y_row)
+
+    # --- Actions Row ---
+    actions_row = QHBoxLayout()
+    actions_row.setSpacing(8)
+
+    gui.logo_replace_btn = QPushButton("Replace Logo")
+    gui.logo_replace_btn.setStyleSheet(btn_preset_style)
+    actions_row.addWidget(gui.logo_replace_btn)
+
+    gui.logo_reset_btn = QPushButton("Reset")
+    gui.logo_reset_btn.setStyleSheet(btn_preset_style)
+    actions_row.addWidget(gui.logo_reset_btn)
+
+    gui.logo_delete_btn = QPushButton("Delete Logo")
+    gui.logo_delete_btn.setStyleSheet("QPushButton { background: #24141a; color: #fca5a5; border: 1px solid #4a2028; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; } QPushButton:hover { background: #361a24; border-color: #ef4444; color: #fff; }")
+    actions_row.addWidget(gui.logo_delete_btn)
+    logo_layout.addLayout(actions_row)
+
     gui.logo_inspector_tip_label = QLabel(
-        "Tip: drag the logo on the video preview to reposition it; "
-        "use the corner handles to resize. The X button deletes the logo."
+        "Tip: Adjust size, opacity, rotation, and position using the sliders or quick presets."
     )
     gui.logo_inspector_tip_label.setObjectName("helperLabel")
     gui.logo_inspector_tip_label.setWordWrap(True)

@@ -122,17 +122,23 @@ class PreviewController:
                                         continue
                                     transform = getattr(layer, "transform", None)
                                     if transform:
-                                        # Transform x,y are in pixels or percentage, normalize to 0-1
-                                        x = float(getattr(transform, "x", 10.0)) / 100.0
-                                        y = float(getattr(transform, "y", 10.0)) / 100.0
-                                        scale_x = float(getattr(transform, "scale_x", 1.0))
-                                        scale_y = float(getattr(transform, "scale_y", 1.0))
-                                        w = 0.2 * scale_x
-                                        h = 0.2 * scale_y
-                                        rotation = float(getattr(transform, "rotation", 0.0))
+                                        val_x = getattr(transform, "x", 0.0)
+                                        raw_x = float(val_x if val_x is not None else 0.0)
+                                        x = raw_x / 100.0 if raw_x > 1.0 else raw_x
+                                        val_y = getattr(transform, "y", 0.0)
+                                        raw_y = float(val_y if val_y is not None else 0.0)
+                                        y = raw_y / 100.0 if raw_y > 1.0 else raw_y
+                                        val_sx = getattr(transform, "scale_x", 0.2)
+                                        raw_sx = float(val_sx if val_sx is not None else 0.2)
+                                        w = raw_sx / 100.0 if raw_sx > 1.0 else raw_sx
+                                        val_sy = getattr(transform, "scale_y", 0.2)
+                                        raw_sy = float(val_sy if val_sy is not None else 0.2)
+                                        h = raw_sy / 100.0 if raw_sy > 1.0 else raw_sy
+                                        val_rot = getattr(transform, "rotation", 0.0)
+                                        rotation = float(val_rot if val_rot is not None else 0.0)
                                     else:
-                                        x = 0.1
-                                        y = 0.1
+                                        x = 0.0
+                                        y = 0.0
                                         w = 0.2
                                         h = 0.2
                                         rotation = 0.0
@@ -142,10 +148,12 @@ class PreviewController:
                                         "y": y,
                                         "width": w,
                                         "height": h,
-                                        "opacity": float(getattr(layer, "opacity", 1.0)),
+                                        "opacity": float(getattr(layer, "opacity", 1.0) or 1.0),
                                         "rotation": rotation,
+                                        "start": float(getattr(layer, "start", 0.0) or 0.0),
+                                        "end": float(getattr(layer, "end", 0.0) or 0.0),
                                     })
-                                    print(f"[Preview] Added logo layer: source={source}, x={x}, y={y}")
+                                    print(f"[Preview/Export] Added logo layer: source={source}, x={x:.2f}, y={y:.2f}, w={w:.2f}, h={h:.2f}")
                                 except (TypeError, ValueError) as e:
                                     print(f"[Preview] Failed to extract logo layer: {e}")
                                     continue
