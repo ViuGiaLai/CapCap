@@ -29,15 +29,15 @@ def build_main_window_ui(gui):
     central_widget.setObjectName("centralWidget")
     gui.setCentralWidget(central_widget)
     root_layout = QVBoxLayout(central_widget)
-    root_layout.setContentsMargins(15, 15, 15, 15)
-    root_layout.setSpacing(15)
+    root_layout.setContentsMargins(10, 10, 10, 10)
+    root_layout.setSpacing(10)
     gui.root_layout = root_layout
 
     scroll_area = _build_left_panel(gui)
     root_layout.addWidget(_build_header_bar(gui))
 
     content_layout = QHBoxLayout()
-    content_layout.setSpacing(15)
+    content_layout.setSpacing(10)
     gui.content_layout = content_layout
     right_panel = build_preview_panel(gui)
 
@@ -62,46 +62,51 @@ def _build_header_bar(gui):
     header = _TitleBar()
     header.setObjectName("statusCard")
     layout = QHBoxLayout(header)
-    layout.setContentsMargins(18, 14, 18, 14)
-    layout.setSpacing(12)
+    layout.setContentsMargins(14, 8, 14, 8)
+    layout.setSpacing(10)
     gui.header_bar = header
     gui.header_layout = layout
 
     logo_label = QLabel()
-    logo_label.setFixedSize(34, 34)
+    logo_label.setFixedSize(30, 30)
     logo_label.setAlignment(Qt.AlignCenter)
     if os.path.exists(getattr(gui, "logo_path", "")):
         logo_pixmap = QPixmap(gui.logo_path)
         if not logo_pixmap.isNull():
             white_logo = _tint_pixmap(logo_pixmap, QColor("#FFFFFF"))
-            logo_label.setPixmap(white_logo.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            logo_label.setPixmap(white_logo.scaled(26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation))
     layout.addWidget(logo_label)
     gui.header_logo_label = logo_label
 
     brand_label = QLabel("CapCap")
     brand_label.setObjectName("heroTitle")
-    brand_label.setStyleSheet("color: #ffffff; font-size: 18px; font-weight: 800;")
+    brand_label.setStyleSheet("color: #ffffff; font-size: 16px; font-weight: 700;")
     layout.addWidget(brand_label)
     gui.header_brand_label = brand_label
 
     gui.project_title_label = QLabel("Project: No video selected")
     gui.project_title_label.setObjectName("statusHeadline")
     layout.addWidget(gui.project_title_label, 1)
-    gui.run_all_btn.setMinimumHeight(42)
+
+    gui.run_all_btn.setMinimumHeight(36)
+    gui.run_all_btn.setMinimumWidth(120)
     layout.addWidget(gui.run_all_btn)
+
     gui.export_btn.setObjectName("secondaryActionBtn")
-    gui.export_btn.setMinimumHeight(42)
+    gui.export_btn.setMinimumHeight(36)
+    gui.export_btn.setMinimumWidth(90)
     layout.addWidget(gui.export_btn)
+
     gui.preview_5s_btn.setObjectName("secondaryActionBtn")
-    gui.preview_5s_btn.setMinimumHeight(42)
-    gui.preview_5s_btn.setMinimumWidth(140)
+    gui.preview_5s_btn.setMinimumHeight(36)
+    gui.preview_5s_btn.setMinimumWidth(110)
     gui.preview_5s_btn.setToolTip("Render five seconds with final export subtitle styling")
     layout.addWidget(gui.preview_5s_btn)
 
     gui.toggle_panel_btn = QPushButton("Control")
     gui.toggle_panel_btn.setObjectName("secondaryActionBtn")
-    gui.toggle_panel_btn.setMinimumHeight(42)
-    gui.toggle_panel_btn.setMinimumWidth(180)
+    gui.toggle_panel_btn.setMinimumHeight(36)
+    gui.toggle_panel_btn.setMinimumWidth(80)
     gui.toggle_panel_btn.setToolTip("Toggle side panel")
     gui.toggle_panel_btn.setText("Controls")
     gui.toggle_panel_btn.clicked.connect(gui.toggle_controls_panel)
@@ -111,8 +116,8 @@ def _build_header_bar(gui):
 
     gui.more_actions_btn = QPushButton("More")
     gui.more_actions_btn.setObjectName("secondaryActionBtn")
-    gui.more_actions_btn.setMinimumHeight(42)
-    gui.more_actions_btn.setMinimumWidth(180)
+    gui.more_actions_btn.setMinimumHeight(36)
+    gui.more_actions_btn.setMinimumWidth(80)
     more_menu = QMenu(gui.more_actions_btn)
     more_menu.setObjectName("headerMoreMenu")
 
@@ -135,19 +140,19 @@ def _build_header_bar(gui):
 
     gui.more_actions_btn.setMenu(more_menu)
     layout.addWidget(gui.more_actions_btn)
-    layout.addSpacing(12)
+    layout.addSpacing(8)
 
     gui.titlebar_min_btn = QPushButton("—")
-    gui.titlebar_min_btn.setFixedSize(38, 38)
+    gui.titlebar_min_btn.setFixedSize(32, 32)
     gui.titlebar_min_btn.setToolTip("Minimize")
-    gui.titlebar_min_btn.setStyleSheet("QPushButton { background: transparent; color: #a0b4cc; font-size: 16px; font-weight: bold; border-radius: 4px; } QPushButton:hover { background: #223248; color: #fff; }")
+    gui.titlebar_min_btn.setStyleSheet("QPushButton { background: transparent; color: #94a3b8; font-size: 14px; font-weight: bold; border: none; border-radius: 4px; } QPushButton:hover { background: #1e2433; color: #fff; }")
     gui.titlebar_min_btn.clicked.connect(gui.showMinimized)
     layout.addWidget(gui.titlebar_min_btn)
 
     gui.titlebar_close_btn = QPushButton("✕")
-    gui.titlebar_close_btn.setFixedSize(38, 38)
+    gui.titlebar_close_btn.setFixedSize(32, 32)
     gui.titlebar_close_btn.setToolTip("Close")
-    gui.titlebar_close_btn.setStyleSheet("QPushButton { background: transparent; color: #a0b4cc; font-size: 14px; font-weight: bold; border-radius: 4px; } QPushButton:hover { background: #e34f4f; color: #fff; }")
+    gui.titlebar_close_btn.setStyleSheet("QPushButton { background: transparent; color: #94a3b8; font-size: 13px; font-weight: bold; border: none; border-radius: 4px; } QPushButton:hover { background: #ef4444; color: #fff; }")
     gui.titlebar_close_btn.clicked.connect(gui.close)
     layout.addWidget(gui.titlebar_close_btn)
     return header
@@ -177,7 +182,7 @@ def _build_left_panel(gui):
     gui.left_panel_scroll_area = scroll_area
     scroll_area.setObjectName("leftPanelArea")
     scroll_area.setWidgetResizable(True)
-    scroll_area.setFixedWidth(420)
+    scroll_area.setFixedWidth(380)
     scroll_area.setAlignment(Qt.AlignTop | Qt.AlignLeft)
     scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     scroll_area.setFrameShape(QFrame.NoFrame)
@@ -186,8 +191,8 @@ def _build_left_panel(gui):
     left_panel_container.setObjectName("leftPanelContainer")
     gui.left_panel_container = left_panel_container
     left_layout = QVBoxLayout(left_panel_container)
-    left_layout.setContentsMargins(10, 0, 10, 0)
-    left_layout.setSpacing(12)
+    left_layout.setContentsMargins(8, 0, 8, 0)
+    left_layout.setSpacing(10)
     scroll_area.setWidget(left_panel_container)
     scroll_area.installEventFilter(gui)
     scroll_area.viewport().installEventFilter(gui)
@@ -274,6 +279,10 @@ def _connect_ui_signals(gui):
     if hasattr(gui, "subtitle_words_per_segment_spin"):
         gui.subtitle_words_per_segment_spin.valueChanged.connect(lambda _value: gui.on_single_line_toggled(gui.subtitle_single_line_cb.isChecked()))
     gui.use_existing_audio_radio.toggled.connect(gui.on_audio_source_mode_changed)
+    if hasattr(gui, "translation_engine_combo"):
+        gui.translation_engine_combo.currentIndexChanged.connect(gui.on_translation_engine_changed)
+    if hasattr(gui, "translation_test_btn"):
+        gui.translation_test_btn.clicked.connect(gui.on_translation_engine_test_connection)
     gui.blur_area_btn.toggled.connect(gui.toggle_blur_effect_enabled)
     # The visible Blur button creates a timeline-backed B1 layer.  Keeping
     # creation in one path ensures multiple Blur layers receive independent

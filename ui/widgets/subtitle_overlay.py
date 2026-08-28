@@ -11,6 +11,7 @@ class SubtitleOverlayItem(QGraphicsItem):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.ItemIsMovable, False)
         self.setZValue(10)
         self.current_text = ""
         self.current_lines: list[str] = []
@@ -28,18 +29,45 @@ class SubtitleOverlayItem(QGraphicsItem):
         self.custom_position_enabled = False
         self.custom_x_percent = 50
         self.custom_y_percent = 86
-        # The libmpv overlay exposes this same switch.  Keep the Qt fallback
-        # API-compatible so a machine that cannot load libmpv still starts.
+        self.highlight_color = QColor("#FFD400")
+        self.highlight_phrases: list[str] = []
+        self.karaoke_word_index = -1
+        self.auto_keyword_highlight = False
+        self.animation_style = "static"
+        self.animation_progress = 1.0
         self._text_rendering_enabled = True
+        self._editable = False
+        self._suppressed = False
+
+    def set_editable(self, editable: bool):
+        """Match the MPV subtitle overlay API on the Qt fallback preview."""
+        self._editable = bool(editable)
+        self.setFlag(QGraphicsItem.ItemIsMovable, self._editable)
+        self.setAcceptedMouseButtons(Qt.LeftButton if self._editable else Qt.NoButton)
+
+    def set_suppressed(self, suppressed: bool):
+        """Temporarily keep this overlay hidden during modal dialogs."""
+        self._suppressed = bool(suppressed)
+        if self._suppressed:
+            self.hide()
+
+    def is_top_level_overlay(self) -> bool:
+        return False
+
+    def set_effects(self, *, highlight_color=None, highlight_phrases=None,
+                    karaoke_word_index=-1, auto_keyword_highlight=False,
+                    animation_style="Static", animation_progress=1.0):
+        """Apply cue-specific highlight and karaoke effects."""
+        self.highlight_color = QColor(highlight_color or "#FFD400")
+        self.highlight_phrases = [str(value).strip() for value in (highlight_phrases or []) if str(value).strip()]
+        self.karaoke_word_index = int(karaoke_word_index)
+        self.auto_keyword_highlight = bool(auto_keyword_highlight)
+        self.animation_style = str(animation_style or "Static").strip().lower()
+        self.animation_progress = max(0.0, min(1.0, float(animation_progress)))
+        self.update()
 
     def set_text_rendering(self, enabled: bool):
-        """Enable/disable Qt text painting while retaining the drag item.
-
-        MPV uses this when libass renders the visible subtitle underneath its
-        native surface.  On the Qt media fallback it remains enabled, but the
-        method must exist because the shared main-window code uses both
-        preview backends.
-        """
+        """Enable/disable Qt text painting while retaining the drag item."""
         enabled = bool(enabled)
         if enabled == self._text_rendering_enabled:
             return
@@ -55,9 +83,7 @@ class SubtitleOverlayItem(QGraphicsItem):
             self.update()
 
     def set_lines(self, lines):
-        """Set multiple subtitle lines (e.g. when two segments overlap).
-        Each line is drawn on its own row, stacked vertically.
-        """
+        """Set multiple subtitle lines (e.g. when two segments overlap)."""
         cleaned = [str(line or "").strip() for line in (lines or []) if str(line or "").strip()]
         joined = "\n".join(cleaned)
         if self.current_lines != cleaned or self.current_text != joined:
@@ -91,7 +117,6 @@ class SubtitleOverlayItem(QGraphicsItem):
             self.font_name = font_name
             changed = True
         if font_size and font_size != self.font_size:
-            self.font_size = font_size
             self.prepareGeometryChange()
             self.H = max(96, int(font_size * 4) + max(0, len(self.current_lines) - 1) * int(font_size * self.LINE_HEIGHT_FACTOR))
             changed = True

@@ -1,7 +1,5 @@
 import os
 
-import os
-
 from PySide6 import QtCore
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
@@ -792,6 +790,19 @@ def build_preview_panel(gui):
     gui.timeline.zoomChanged.connect(lambda value: gui.timeline_zoom_label.setText(f"{value}%"))
     gui.timeline.layerSelected.connect(gui.on_timeline_layer_selected)
     gui.timeline.layoutChanged.connect(lambda: getattr(gui, '_sync_track_labels', lambda: None)())
+    gui.timeline.deleteRequested.connect(gui.delete_selected_timeline_segment)
+    gui.timeline.splitRequested.connect(gui.split_selected_timeline_segment)
+    gui.timeline.regenerateVoiceRequested.connect(
+        lambda: gui.audio_inspector_regenerate_voice_btn.click()
+        if hasattr(gui, "audio_inspector_regenerate_voice_btn") and gui.audio_inspector_regenerate_voice_btn.isEnabled()
+        else None
+    )
+    gui.timeline.openSubtitleEditorRequested.connect(
+        lambda: gui.subtitle_editor_btn.click() if hasattr(gui, "subtitle_editor_btn") else None
+    )
+    gui.timeline.addSubtitleAtRequested.connect(
+        lambda _t: gui.on_add_timeline_layer("subtitle") if hasattr(gui, "on_add_timeline_layer") else None
+    )
     gui.time_label = QLabel("00:00 / 00:00")
     gui.time_label.setStyleSheet("font-weight: bold; min-width: 100px; color: #6ee7d6;")
 
@@ -824,31 +835,32 @@ def build_preview_panel(gui):
     gui.blur_area_btn = QPushButton()
     gui.blur_area_btn.setCheckable(True)
     gui.blur_area_btn.setChecked(True)
-    gui.blur_add_btn = QPushButton()
-    gui.ocr_region_btn = QPushButton()
+    gui.blur_add_btn = QPushButton("Blur")
+    gui.ocr_region_btn = QPushButton("OCR Box")
     gui.ocr_region_btn.setCheckable(True)
-    gui.ocr_translator_btn = QPushButton("OCR Translate")
+    gui.ocr_translator_btn = QPushButton("OCR")
     gui.ocr_translator_btn.setCheckable(True)
+
     _set_preview_icon_button(gui.play_btn, os.path.join(icons_dir, "play.svg"), "Play or pause preview")
     _set_preview_icon_button(gui.stop_btn, os.path.join(icons_dir, "reset.svg"), "Reset preview to the beginning")
     _set_preview_icon_button(gui.preview_btn, os.path.join(icons_dir, "preview.svg"), "Render a fresh preview using current subtitle and audio")
     _set_preview_icon_button(gui.blur_area_btn, os.path.join(icons_dir, "blur.svg"), "Turn blur effect on or off")
-    gui.blur_add_btn.setText("Blur")
+
+    gui.play_btn.setFixedSize(34, 32)
+    gui.stop_btn.setFixedSize(34, 32)
+    gui.preview_btn.setFixedSize(34, 32)
+
     gui.blur_add_btn.setToolTip("Add a blur region")
-    gui.blur_add_btn.setFixedSize(50, 38)
+    gui.blur_add_btn.setFixedSize(44, 32)
     gui.blur_add_btn.setEnabled(False)
-    gui.blur_add_btn.setStyleSheet(
-        "QPushButton { color: #ffc15e; font-weight: bold; font-size: 13px; padding: 0; }"
-    )
-    gui.ocr_region_btn.setText("OCR")
+
     gui.ocr_region_btn.setToolTip("Edit OCR subtitle region")
-    gui.ocr_region_btn.setFixedSize(38, 38)
-    gui.ocr_region_btn.setStyleSheet("QPushButton { color: #6ee7d6; font-weight: bold; font-size: 10px; padding: 0; }")
+    gui.ocr_region_btn.setFixedSize(58, 32)
     gui.ocr_region_btn.hide()
-    gui.ocr_translator_btn.setFixedSize(92, 38)
+
+    gui.ocr_translator_btn.setFixedSize(54, 32)
     gui.ocr_translator_btn.setToolTip("Capture and translate visual text from the current video frame")
     gui.ocr_translator_btn.setStyleSheet(
-        "QPushButton { color: #d8b4fe; font-weight: bold; font-size: 11px; padding: 0 6px; }"
         "QPushButton:checked { background: #3b2557; border-color: #a855f7; color: #ffffff; }"
     )
 
@@ -859,25 +871,24 @@ def build_preview_panel(gui):
     gui.preview_speed_combo.addItem("1.5x", 1.5)
     gui.preview_speed_combo.addItem("2.0x", 2.0)
     gui.preview_speed_combo.setCurrentIndex(1)
+    gui.preview_speed_combo.setFixedWidth(64)
+    gui.preview_speed_combo.setFixedHeight(30)
 
     play_group = QHBoxLayout()
-    play_group.setSpacing(6)
+    play_group.setSpacing(4)
     play_group.addWidget(gui.play_btn)
     play_group.addWidget(gui.stop_btn)
     play_group.addWidget(gui.preview_btn)
 
     blur_group = QHBoxLayout()
-    blur_group.setSpacing(6)
+    blur_group.setSpacing(4)
     # The blur ON/OFF toggle is controlled by clicking the B1
     # track label in the timeline's left strip (like audio mute).
     gui.blur_area_btn.setVisible(False)
     # Dedicated Logo / Watermark button (beside the Blur button)
     gui.add_logo_btn = QPushButton("Logo")
-    gui.add_logo_btn.setFixedSize(50, 38)
+    gui.add_logo_btn.setFixedSize(44, 32)
     gui.add_logo_btn.setEnabled(False)
-    gui.add_logo_btn.setStyleSheet(
-        "QPushButton { color: #6ee7d6; font-weight: bold; font-size: 13px; padding: 0; }"
-    )
     gui.add_logo_btn.setToolTip("Add a logo or watermark image to the video")
     gui.add_logo_btn.clicked.connect(
         lambda: gui.on_add_timeline_layer("logo") if hasattr(gui, "on_add_timeline_layer") else None
@@ -885,21 +896,15 @@ def build_preview_panel(gui):
     # Dedicated Mask button (beside the Logo button). Adds a new
     # rectangular mask to the M1 track.
     gui.add_mask_btn = QPushButton("Mask")
-    gui.add_mask_btn.setFixedSize(50, 38)
+    gui.add_mask_btn.setFixedSize(44, 32)
     gui.add_mask_btn.setEnabled(False)
-    gui.add_mask_btn.setStyleSheet(
-        "QPushButton { color: #c98c5a; font-weight: bold; font-size: 13px; padding: 0; }"
-    )
     gui.add_mask_btn.setToolTip("Add a rectangular mask to the video")
     gui.add_mask_btn.clicked.connect(
         lambda: gui.on_add_timeline_layer("mask") if hasattr(gui, "on_add_timeline_layer") else None
     )
     gui.add_text_btn = QPushButton("Text")
-    gui.add_text_btn.setFixedSize(50, 38)
+    gui.add_text_btn.setFixedSize(44, 32)
     gui.add_text_btn.setEnabled(False)
-    gui.add_text_btn.setStyleSheet(
-        "QPushButton { color: #c084fc; font-weight: bold; font-size: 13px; padding: 0; }"
-    )
     gui.add_text_btn.setToolTip("Add editable text to the video")
     gui.add_text_btn.clicked.connect(
         lambda: gui.on_add_timeline_layer("text") if hasattr(gui, "on_add_timeline_layer") else None
@@ -912,19 +917,21 @@ def build_preview_panel(gui):
     blur_group.addWidget(gui.ocr_translator_btn)
 
     speed_group = QHBoxLayout()
-    speed_group.setSpacing(6)
-    speed_group.addStretch(0)
-    speed_group.addWidget(QLabel("Speed"))
+    speed_group.setSpacing(4)
+    speed_label = QLabel("Speed")
+    speed_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+    speed_group.addWidget(speed_label)
     speed_group.addWidget(gui.preview_speed_combo)
 
     transport_row = QHBoxLayout()
-    transport_row.setContentsMargins(0, 0, 0, 0)
-    transport_row.setSpacing(10)
+    transport_row.setContentsMargins(4, 4, 4, 4)
+    transport_row.setSpacing(8)
     transport_row.addLayout(play_group)
     transport_row.addWidget(_make_sep())
     transport_row.addLayout(blur_group)
+    transport_row.addStretch(1)
     transport_row.addWidget(_make_sep())
-    transport_row.addLayout(speed_group, 1)
+    transport_row.addLayout(speed_group)
     transport_row.addWidget(gui.time_label)
     preview_card_layout.addLayout(transport_row)
     gui.frame_preview_badge_label.setParent(preview_card)
@@ -1003,109 +1010,149 @@ def build_preview_panel(gui):
     timeline_layout.setSpacing(8)
 
     timeline_header_layout = QHBoxLayout()
-    timeline_header_layout.setSpacing(10)
+    timeline_header_layout.setContentsMargins(4, 2, 4, 2)
+    timeline_header_layout.setSpacing(8)
     timeline_copy_layout = QVBoxLayout()
     timeline_copy_layout.setSpacing(1)
     timeline_title = QLabel("Timeline")
     timeline_title.setObjectName("statusHeadline")
-    timeline_meta = QLabel("Editor-first layout with dedicated video, audio, and subtitle lanes.")
+    timeline_title.setStyleSheet("font-weight: 700; font-size: 13px; color: #f8fafc;")
+    timeline_meta = QLabel("Video, audio, and subtitle lanes")
     timeline_meta.setObjectName("helperLabel")
+    timeline_meta.setStyleSheet("font-size: 11px; color: #64748b;")
     timeline_copy_layout.addWidget(timeline_title)
     timeline_copy_layout.addWidget(timeline_meta)
     timeline_header_layout.addLayout(timeline_copy_layout, 0)
+
     gui.timeline_undo_btn = QPushButton("Undo")
-    gui.timeline_undo_btn.setFixedWidth(58)
+    gui.timeline_undo_btn.setFixedHeight(26)
+    gui.timeline_undo_btn.setMinimumWidth(54)
     gui.timeline_undo_btn.setEnabled(False)
     gui.timeline_redo_btn = QPushButton("Redo")
-    gui.timeline_redo_btn.setFixedWidth(58)
+    gui.timeline_redo_btn.setFixedHeight(26)
+    gui.timeline_redo_btn.setMinimumWidth(54)
     gui.timeline_redo_btn.setEnabled(False)
     gui.timeline_split_btn = QPushButton("Split")
-    gui.timeline_split_btn.setFixedWidth(58)
+    gui.timeline_split_btn.setFixedHeight(26)
+    gui.timeline_split_btn.setMinimumWidth(54)
     gui.timeline_split_btn.setEnabled(False)
     gui.timeline_delete_btn = QPushButton("Delete")
-    gui.timeline_delete_btn.setFixedWidth(62)
+    gui.timeline_delete_btn.setFixedHeight(26)
+    gui.timeline_delete_btn.setMinimumWidth(60)
     gui.timeline_delete_btn.setEnabled(False)
     gui.timeline_undo_btn.clicked.connect(gui.undo_last_timeline_timing_edit)
     gui.timeline_redo_btn.clicked.connect(gui.redo_last_timeline_timing_edit)
     gui.timeline_split_btn.clicked.connect(gui.split_selected_timeline_segment)
     gui.timeline_delete_btn.clicked.connect(gui.delete_selected_timeline_segment)
-    gui.timeline_selection_mode_btn = QPushButton("Select Range")
+
+    gui.timeline_selection_mode_btn = QPushButton("Select")
     gui.timeline_selection_mode_btn.setCheckable(True)
-    gui.timeline_selection_mode_btn.setFixedWidth(96)
+    gui.timeline_selection_mode_btn.setFixedHeight(26)
+    gui.timeline_selection_mode_btn.setMinimumWidth(60)
     gui.timeline_selection_mode_btn.setToolTip("Enable Selection Range Mode")
     gui.timeline_selection_mode_btn.setStyleSheet(
-        "QPushButton:checked { background:#244b6d; border-color:#71adff; color:#ffffff; }"
+        "QPushButton:checked { background:#1e2a40; border-color:#3b82f6; color:#60a5fa; }"
     )
     gui.timeline_selection_mode_btn.toggled.connect(gui.timeline.set_selection_mode)
-    gui.timeline_clear_selection_btn = QPushButton("Clear Range")
-    gui.timeline_clear_selection_btn.setFixedWidth(96)
+
+    gui.timeline_clear_selection_btn = QPushButton("Clear")
+    gui.timeline_clear_selection_btn.setFixedHeight(26)
+    gui.timeline_clear_selection_btn.setMinimumWidth(50)
     gui.timeline_clear_selection_btn.setToolTip("Clear the timeline selection range (Esc)")
     gui.timeline_clear_selection_btn.setEnabled(False)
     gui.timeline_clear_selection_btn.hide()
     gui.timeline_clear_selection_btn.clicked.connect(gui.timeline.clear_selection_range)
+
     gui.timeline_alt_transcribe_btn = QPushButton("Alt Transcribe")
-    gui.timeline_alt_transcribe_btn.setFixedWidth(118)
+    gui.timeline_alt_transcribe_btn.setFixedHeight(26)
+    gui.timeline_alt_transcribe_btn.setMinimumWidth(90)
     gui.timeline_alt_transcribe_btn.setToolTip("Retranscribe the Selection Range with custom Whisper or OCR settings")
     gui.timeline_alt_transcribe_btn.hide()
     gui.timeline_alt_transcribe_btn.clicked.connect(gui.transcribe_selected_range_alternate)
+
     def _on_range_changed(_start, _end):
         gui.timeline_clear_selection_btn.setEnabled(True)
         gui.timeline_clear_selection_btn.show()
         if hasattr(gui, "_update_alt_transcribe_button_label"):
             gui._update_alt_transcribe_button_label()
         gui.timeline_alt_transcribe_btn.show()
-        # Range signals can arrive in the middle of the media-state update.
-        # Refresh once on the next event-loop turn so the action is enabled
-        # after the timeline has entered paused/edit mode.
         if hasattr(gui, "refresh_ui_state"):
             QtCore.QTimer.singleShot(0, gui.refresh_ui_state)
+
     def _on_range_cleared():
         gui.timeline_clear_selection_btn.setEnabled(False)
         gui.timeline_clear_selection_btn.hide()
         gui.timeline_alt_transcribe_btn.hide()
+
     gui.timeline.selectionRangeChanged.connect(_on_range_changed)
     gui.timeline.selectionRangeCleared.connect(_on_range_cleared)
+
     def _on_selection_mode_changed(enabled):
         gui.timeline_selection_mode_btn.blockSignals(True)
         gui.timeline_selection_mode_btn.setChecked(bool(enabled))
         gui.timeline_selection_mode_btn.blockSignals(False)
-        gui.timeline_selection_mode_btn.setText("Selecting" if enabled else "Select Range")
+        gui.timeline_selection_mode_btn.setText("Selecting" if enabled else "Select")
         gui.timeline_selection_mode_btn.setToolTip(
             "Selection Range Mode active: drag the ruler to create or adjust a range"
             if enabled else "Enable Selection Range Mode"
         )
+
     gui.timeline.selectionModeChanged.connect(_on_selection_mode_changed)
-    gui.timeline_layers_btn = QPushButton("Layers")
-    gui.timeline_layers_btn.setFixedWidth(76)
+
+    gui.timeline_layers_btn = QPushButton("Layers ▾")
+    gui.timeline_layers_btn.setFixedHeight(26)
+    gui.timeline_layers_btn.setMinimumWidth(64)
     gui.timeline_layers_btn.setToolTip("Show or hide layers on the timeline only")
     gui.timeline_layers_menu = QMenu(gui.timeline_layers_btn)
     gui.timeline_layers_menu.setStyleSheet(
-        "QMenu { background: #142030; color: #dbe5f3; border: 1px solid #2f4868; padding: 5px; }"
-        "QMenu::item { padding: 7px 24px 7px 10px; border-radius: 4px; }"
-        "QMenu::item:selected { background: #203a56; color: #ffffff; }"
-        "QMenu::item:disabled { color: #71839a; }"
+        "QMenu { background: #141824; color: #e2e8f0; border: 1px solid #2a3347; padding: 4px; border-radius: 6px; }"
+        "QMenu::item { padding: 5px 20px 5px 8px; border-radius: 4px; font-size: 11px; }"
+        "QMenu::item:selected { background: #2563eb; color: #ffffff; }"
+        "QMenu::item:disabled { color: #475569; }"
         "QMenu::indicator { width: 14px; height: 14px; }"
-        "QMenu::indicator:unchecked { border: 1px solid #61758e; background: #0d1220; }"
-        "QMenu::indicator:checked { border: 1px solid #6ee7d6; background: #1f8d83; }"
+        "QMenu::indicator:unchecked { border: 1px solid #334155; background: #11141d; border-radius: 3px; }"
+        "QMenu::indicator:checked { border: 1px solid #3b82f6; background: #2563eb; border-radius: 3px; }"
     )
     gui.timeline_layers_menu.aboutToShow.connect(
         lambda: gui.populate_timeline_layers_menu() if hasattr(gui, "populate_timeline_layers_menu") else None
     )
     gui.timeline_layers_btn.setMenu(gui.timeline_layers_menu)
+
     gui.timeline_zoom_out_btn = QPushButton("-")
-    gui.timeline_zoom_out_btn.setFixedWidth(34)
+    gui.timeline_zoom_out_btn.setFixedSize(26, 26)
     gui.timeline_zoom_label = QLabel(f"{gui.timeline.zoom_percent()}%")
     gui.timeline_zoom_label.setObjectName("helperLabel")
     gui.timeline_zoom_label.setAlignment(Qt.AlignCenter)
-    gui.timeline_zoom_label.setFixedWidth(48)
-    gui.timeline_zoom_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    gui.timeline_zoom_label.setFixedWidth(40)
+    gui.timeline_zoom_label.setStyleSheet("font-size: 11px; color: #94a3b8;")
     gui.timeline_zoom_in_btn = QPushButton("+")
-    gui.timeline_zoom_in_btn.setFixedWidth(34)
+    gui.timeline_zoom_in_btn.setFixedSize(26, 26)
     gui.timeline_zoom_reset_btn = QPushButton("Fit")
-    gui.timeline_zoom_reset_btn.setFixedWidth(52)
+    gui.timeline_zoom_reset_btn.setFixedSize(36, 26)
     gui.timeline_zoom_out_btn.clicked.connect(gui.timeline.zoom_out)
     gui.timeline_zoom_in_btn.clicked.connect(gui.timeline.zoom_in)
     gui.timeline_zoom_reset_btn.clicked.connect(gui.timeline.reset_zoom)
+
+    gui.add_layer_btn = QPushButton("+ Layer ▾")
+    gui.add_layer_btn.setFixedHeight(26)
+    gui.add_layer_btn.setMinimumWidth(68)
+    gui.add_layer_btn.setToolTip("Add a new layer")
+    gui.add_layer_btn.setEnabled(False)
+    gui._layer_menu = QMenu(gui.add_layer_btn)
+    gui._layer_menu.setStyleSheet(
+        "QMenu { background: #141824; color: #e2e8f0; border: 1px solid #2a3347; padding: 4px; border-radius: 6px; }"
+        "QMenu::item { padding: 5px 20px 5px 8px; border-radius: 4px; font-size: 11px; }"
+        "QMenu::item:selected { background: #2563eb; color: #ffffff; }"
+        "QMenu::item:disabled { color: #475569; }"
+    )
+    gui.add_subtitle_segment_action = gui._layer_menu.addAction(
+        "Subtitle Segment", lambda: gui.on_add_timeline_layer("subtitle")
+    )
+    gui._layer_menu.addAction("Text", lambda: gui.on_add_timeline_layer("text"))
+    gui._layer_menu.addAction("Logo / Watermark", lambda: gui.on_add_timeline_layer("logo"))
+    gui._layer_menu.addAction("Blur", lambda: gui.on_add_timeline_layer("blur"))
+    gui._layer_menu.addAction("Mask", lambda: gui.on_add_timeline_layer("mask"))
+    gui.add_layer_btn.setMenu(gui._layer_menu)
 
     edit_group = QHBoxLayout()
     edit_group.setSpacing(4)
@@ -1120,37 +1167,12 @@ def build_preview_panel(gui):
     edit_group.addWidget(gui.timeline_alt_transcribe_btn)
     edit_group.addWidget(_make_sep())
     edit_group.addWidget(gui.timeline_layers_btn)
-
-    gui.add_layer_btn = QPushButton("+ Layer")
-    gui.add_layer_btn.setFixedWidth(82)
-    gui.add_layer_btn.setToolTip("Add a new layer")
-    # Keep this menu button visually consistent with the dark timeline toolbar.
-    # QMenu buttons can otherwise fall back to the platform's light palette.
-    gui.add_layer_btn.setStyleSheet(
-        "QPushButton { background: #213248; color: #ffffff; border: 1px solid #304b69; "
-        "border-radius: 10px; padding: 8px 10px; font-weight: bold; font-size: 11px; }"
-        "QPushButton:hover { background: #2d4665; border-color: #4575a8; }"
-        "QPushButton:pressed { background: #182a3d; border-color: #6ee7d6; }"
-        "QPushButton:disabled { background: #182636; color: #8ea3bb; border-color: #29405d; }"
-    )
-    gui.add_layer_btn.setEnabled(False)
-    gui._layer_menu = QMenu(gui.add_layer_btn)
-    gui._layer_menu.setStyleSheet(
-        "QMenu { background: #142030; color: #dbe5f3; border: 1px solid #2f4868; padding: 5px; }"
-        "QMenu::item { padding: 7px 24px 7px 10px; border-radius: 4px; }"
-        "QMenu::item:selected { background: #203a56; color: #ffffff; }"
-        "QMenu::item:disabled { color: #71839a; }"
-    )
-    gui.add_subtitle_segment_action = gui._layer_menu.addAction(
-        "Subtitle Segment", lambda: gui.on_add_timeline_layer("subtitle")
-    )
-    gui._layer_menu.addAction("Text", lambda: gui.on_add_timeline_layer("text"))
-    gui._layer_menu.addAction("Logo / Watermark", lambda: gui.on_add_timeline_layer("logo"))
-    gui._layer_menu.addAction("Blur", lambda: gui.on_add_timeline_layer("blur"))
-    gui._layer_menu.addAction("Mask", lambda: gui.on_add_timeline_layer("mask"))
-    gui.add_layer_btn.setMenu(gui._layer_menu)
-    edit_group.addWidget(_make_sep())
     edit_group.addWidget(gui.add_layer_btn)
+    edit_group.addWidget(_make_sep())
+    edit_group.addWidget(gui.timeline_zoom_out_btn)
+    edit_group.addWidget(gui.timeline_zoom_label)
+    edit_group.addWidget(gui.timeline_zoom_in_btn)
+    edit_group.addWidget(gui.timeline_zoom_reset_btn)
 
     timeline_header_layout.addStretch(1)
     timeline_header_layout.addLayout(edit_group)
@@ -1258,7 +1280,7 @@ def build_preview_panel(gui):
 
     # --- Action buttons at top ---
     inspector_actions_row = QHBoxLayout()
-    inspector_actions_row.setSpacing(8)
+    inspector_actions_row.setSpacing(6)
     gui.rewrite_translation_btn = QPushButton("Rewrite")
     gui.subtitle_editor_btn = QPushButton("Subtitle Editor")
     gui.import_translation_btn = QPushButton("Import SRT")
@@ -1266,14 +1288,22 @@ def build_preview_panel(gui):
     gui.audio_inspector_regenerate_voice_btn.setToolTip(
         "Re-generate the dubbed voice for the currently selected segment."
     )
+    gui.inspector_delete_segment_btn = QPushButton("🗑️ Delete")
+    gui.inspector_delete_segment_btn.setObjectName("danger")
+    gui.inspector_delete_segment_btn.setToolTip(
+        "Delete the currently selected subtitle cue (Xóa câu phụ đề đang chọn)"
+    )
     gui.rewrite_translation_btn.setEnabled(False)
     gui.subtitle_editor_btn.setEnabled(False)
     gui.audio_inspector_regenerate_voice_btn.setEnabled(False)
+    gui.inspector_delete_segment_btn.setEnabled(False)
     gui.subtitle_editor_btn.clicked.connect(gui.open_subtitle_editor)
+    gui.inspector_delete_segment_btn.clicked.connect(gui.delete_selected_timeline_segment)
     inspector_actions_row.addWidget(gui.rewrite_translation_btn)
     inspector_actions_row.addWidget(gui.subtitle_editor_btn)
     inspector_actions_row.addWidget(gui.import_translation_btn)
     inspector_actions_row.addWidget(gui.audio_inspector_regenerate_voice_btn)
+    inspector_actions_row.addWidget(gui.inspector_delete_segment_btn)
     inspector_actions_row.addStretch(1)
     inspector_layout.addLayout(inspector_actions_row)
 

@@ -87,6 +87,15 @@ class VideoView(QGraphicsView):
     def get_preview_fill_focus(self) -> tuple[float, float]:
         return (float(self.preview_fill_focus_x), float(self.preview_fill_focus_y))
 
+    def set_blur_edit_enabled(self, enabled: bool):
+        pass
+
+    def clear_blur_region(self):
+        pass
+
+    def set_subtitle_render_dimensions(self, width: int, height: int):
+        pass
+
     def _resolve_canvas_aspect_ratio(self) -> float | None:
         aspect_key = str(getattr(self, "preview_aspect_key", "source") or "source").strip().lower()
         aspect_map = {

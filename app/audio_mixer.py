@@ -157,7 +157,7 @@ def fit_wav_to_duration(
             output_wav_path,
         ]
 
-    proc = subprocess.run(cmd, capture_output=True, **subprocess_text_kwargs())
+    proc = subprocess.run(cmd, capture_output=True, timeout=120, **subprocess_text_kwargs())
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg fit failed:\n{proc.stderr or proc.stdout}")
     return output_wav_path
@@ -195,7 +195,7 @@ def change_wav_speed(
         "1",
         output_wav_path,
     ]
-    proc = subprocess.run(cmd, capture_output=True, **subprocess_text_kwargs())
+    proc = subprocess.run(cmd, capture_output=True, timeout=120, **subprocess_text_kwargs())
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg speed adjustment failed:\n{proc.stderr or proc.stdout}")
     return output_wav_path
@@ -256,7 +256,7 @@ def trim_trailing_silence(
         "-ar", "16000", "-ac", "1",
         output_wav_path,
     ]
-    proc = subprocess.run(cmd, capture_output=True, **subprocess_text_kwargs())
+    proc = subprocess.run(cmd, capture_output=True, timeout=120, **subprocess_text_kwargs())
     if proc.returncode != 0:
         return input_wav_path
     return output_wav_path
@@ -519,7 +519,7 @@ def mix_voice_with_background(
             "1",
             output_wav_path,
         ]
-        proc = subprocess.run(cmd, capture_output=True, **subprocess_text_kwargs())
+        proc = subprocess.run(cmd, capture_output=True, timeout=300, **subprocess_text_kwargs())
         if proc.returncode != 0:
             raise RuntimeError(f"FFmpeg ducking mix failed:\n{proc.stderr or proc.stdout}")
         return output_wav_path

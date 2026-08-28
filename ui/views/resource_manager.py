@@ -20,9 +20,9 @@ from services import ResourceDownloadService
 
 
 _STATUS_STYLES = {
-    "installed": ("Ready", "#3ddc97", "#1b3b2c"),
-    "partial":   ("Partial", "#f0b347", "#3b2f12"),
-    "missing":   ("Missing", "#ff6b6b", "#3b1a1a"),
+    "installed": ("Ready", "#6ee7b7", "#0d291e"),
+    "partial":   ("Partial", "#fde047", "#2b220e"),
+    "missing":   ("Missing", "#fca5a5", "#2a181e"),
 }
 
 
@@ -32,11 +32,12 @@ def _status_pill_widget(status_key: str, parent: QWidget, label_override: str = 
     label = str(label_override or default_label).strip() or default_label
     pill = QLabel(label, parent)
     pill.setAlignment(Qt.AlignCenter)
+    border_color = "#165b40" if status == "installed" else ("#715518" if status == "partial" else "#4f202a")
     pill.setStyleSheet(
-        f"color: {fg}; background-color: {bg}; border: 1px solid {fg}55;"
-        f" border-radius: 10px; padding: 3px 12px; font-weight: 700; font-size: 12px;"
+        f"color: {fg}; background-color: {bg}; border: 1px solid {border_color};"
+        f" border-radius: 6px; padding: 2px 10px; font-weight: 600; font-size: 11px;"
     )
-    pill.setFixedHeight(24)
+    pill.setFixedHeight(22)
     return pill
 
 
@@ -69,26 +70,44 @@ def open_resource_manager(workspace_root: str = None, parent=None,
     dialog = QDialog(parent)
     dialog.setWindowTitle("Manage Resources")
     dialog.setModal(True)
-    dialog.resize(820, 580)
+    dialog.resize(840, 600)
     dialog.setStyleSheet("""
-        QDialog { background-color: #0f1724; }
-        QLabel { color: #d7e3f4; background-color: transparent; }
-        QLabel#resourceTitle { color: #f8fbff; font-size: 16px; font-weight: 700; }
-        QLabel#resourceHint { color: #9fb3ca; font-size: 12px; }
-        QWidget#resourceContent { background-color: transparent; }
-        QScrollArea { border: none; background-color: #0f1724; }
-        QFrame#resourceCard { background-color: #132033; border: 1px solid #2f4868; border-radius: 12px; }
-        QPushButton {
-            background-color: #22344d; color: #f8fbff; border: 1px solid #34506f;
-            border-radius: 8px; padding: 6px 14px; font-weight: 600; min-width: 90px;
+        QDialog {
+            background-color: #0c0e14;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Inter', Roboto, Arial, sans-serif;
         }
-        QPushButton:hover { background-color: #29405d; }
-        QPushButton:disabled { color: #8ea3bb; background-color: #182636; border-color: #29405d; }
+        QLabel { color: #cbd5e1; background-color: transparent; font-size: 12px; }
+        QLabel#resourceTitle { color: #f8fafc; font-size: 16px; font-weight: 700; }
+        QLabel#resourceHint { color: #94a3b8; font-size: 12px; }
+        QWidget#resourceContent { background-color: transparent; }
+        QScrollArea { border: none; background-color: transparent; }
+        QFrame#resourceCard { background-color: #141824; border: 1px solid #23293a; border-radius: 10px; }
+        QPushButton {
+            background-color: #1c2230; color: #e2e8f0; border: 1px solid #2b354a;
+            border-radius: 6px; padding: 6px 14px; font-weight: 600; min-width: 80px; font-size: 11px;
+        }
+        QPushButton:hover { background-color: #262e42; border-color: #3b82f6; color: #ffffff; }
+        QPushButton:disabled { color: #475569; background-color: #11141d; border-color: #1e2433; }
         QPushButton#primaryBtn {
-            background-color: #1a3a5c; color: #8ad7ff; border: 1px solid #4ecdc4;
+            background-color: #10b981; color: #ffffff; border: 1px solid #059669;
             font-weight: 700;
         }
-        QPushButton#primaryBtn:hover { background-color: #224a6e; }
+        QPushButton#primaryBtn:hover { background-color: #059669; }
+        QScrollBar:vertical {
+            border: none;
+            background: #0e1118;
+            width: 8px;
+            margin: 0px;
+        }
+        QScrollBar::handle:vertical {
+            background: #252b3d;
+            min-height: 24px;
+            border-radius: 4px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background: #38425d;
+        }
     """)
 
     layout = QVBoxLayout(dialog)
@@ -201,16 +220,37 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         button_row.setSpacing(8)
         button_row.addStretch(1)
 
-        download_url = str(item.get("download_url", "")).strip()
-        download_btn = QPushButton("Open Download Page", dialog)
-        download_btn.setObjectName("primaryBtn")
-        download_btn.setEnabled(bool(download_url))
-        if download_url:
-            download_btn.setToolTip(download_url)
-        download_btn.clicked.connect(
-            lambda _checked=False, url=download_url: _open_url(url)
-        )
-        button_row.addWidget(download_btn)
+        # Most resources have one archive/download page.  SenseVoice is
+        # intentionally represented as two direct files, so let resource
+        # definitions expose separate buttons instead of making users find
+        # the required pair themselves on Hugging Face.
+        download_links = item.get("download_links") or []
+        if download_links:
+            for link in download_links:
+                if not isinstance(link, dict):
+                    continue
+                label = str(link.get("label", "Download")).strip() or "Download"
+                url = str(link.get("url", "")).strip()
+                download_btn = QPushButton(label, dialog)
+                download_btn.setObjectName("primaryBtn")
+                download_btn.setEnabled(bool(url))
+                if url:
+                    download_btn.setToolTip(url)
+                download_btn.clicked.connect(
+                    lambda _checked=False, target_url=url: _open_url(target_url)
+                )
+                button_row.addWidget(download_btn)
+        else:
+            download_url = str(item.get("download_url", "")).strip()
+            download_btn = QPushButton("Open Download Page", dialog)
+            download_btn.setObjectName("primaryBtn")
+            download_btn.setEnabled(bool(download_url))
+            if download_url:
+                download_btn.setToolTip(download_url)
+            download_btn.clicked.connect(
+                lambda _checked=False, url=download_url: _open_url(url)
+            )
+            button_row.addWidget(download_btn)
 
         open_folder_btn = QPushButton("Open Storage Folder", dialog)
         open_folder_btn.setEnabled(bool(target_dir))

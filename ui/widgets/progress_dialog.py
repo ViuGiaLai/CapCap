@@ -30,34 +30,34 @@ class StepWidget(QFrame):
         self.status = "pending"
         self.setStyleSheet("""
             #stepWidget {
-                background-color: rgba(30, 30, 30, 180);
-                border: 1px solid rgba(255, 255, 255, 10);
-                border-radius: 12px;
-                padding: 10px;
-                margin-bottom: 6px;
+                background-color: #11141d;
+                border: 1px solid #1e2433;
+                border-radius: 8px;
+                padding: 6px;
+                margin-bottom: 4px;
             }
             QLabel {
-                color: #e0e0e0;
-                font-family: 'Segoe UI', system-ui, sans-serif;
+                color: #e2e8f0;
+                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Inter', Roboto, sans-serif;
             }
             #stepName {
-                font-size: 14px;
+                font-size: 13px;
                 font-weight: 600;
             }
             #stepStatus {
-                font-size: 12px;
-                font-weight: 500;
+                font-size: 11px;
+                font-weight: 600;
             }
         """)
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 12, 15, 12)
+        layout.setContentsMargins(12, 10, 12, 10)
         
         self.indicator = QWidget()
-        self.indicator.setFixedSize(10, 10)
-        self.indicator.setStyleSheet("background-color: #444; border-radius: 5px;")
+        self.indicator.setFixedSize(8, 8)
+        self.indicator.setStyleSheet("background-color: #334155; border-radius: 4px;")
         layout.addWidget(self.indicator)
-        layout.addSpacing(10)
+        layout.addSpacing(8)
         
         self.name_label = QLabel(name)
         self.name_label.setObjectName("stepName")
@@ -67,8 +67,9 @@ class StepWidget(QFrame):
         
         self.status_label = QLabel("Pending")
         self.status_label.setObjectName("stepStatus")
-        self.status_label.setFixedWidth(90)
+        self.status_label.setFixedWidth(80)
         self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.status_label.setStyleSheet("color: #64748b;")
         layout.addWidget(self.status_label)
         
         # Pulse animation for running state
@@ -80,37 +81,82 @@ class StepWidget(QFrame):
     def set_status(self, status):
         self.status = status
         if status == "running":
-            self.status_label.setText("Processing")
-            self.status_label.setStyleSheet("color: #00E5FF;")
-            self.indicator.setStyleSheet("background-color: #00E5FF; border: 2px solid rgba(0, 229, 255, 50);")
-            self.setStyleSheet(self.styleSheet() + "#stepWidget { border: 1px solid rgba(0, 229, 255, 80); background-color: rgba(0, 229, 255, 15); }")
+            self.status_label.setText("Running")
+            self.status_label.setStyleSheet("color: #60a5fa;")
+            self.indicator.setStyleSheet("background-color: #3b82f6; border-radius: 4px;")
+            self.setStyleSheet("""
+                #stepWidget {
+                    background-color: #162035;
+                    border: 1px solid #3b82f6;
+                    border-radius: 8px;
+                    padding: 6px;
+                    margin-bottom: 4px;
+                }
+                QLabel { color: #f8fafc; }
+                #stepName { font-size: 13px; font-weight: 600; }
+                #stepStatus { font-size: 11px; font-weight: 600; }
+            """)
             self.pulse_timer.start()
         elif status == "done":
             self.status_label.setText("Completed")
-            self.status_label.setStyleSheet("color: #00FF88;")
-            self.indicator.setStyleSheet("background-color: #00FF88;")
-            self.setStyleSheet(self.styleSheet().replace("rgba(0, 229, 255, 80)", "rgba(0, 255, 136, 40)").replace("rgba(0, 229, 255, 15)", "rgba(0, 0, 0, 180)"))
+            self.status_label.setStyleSheet("color: #6ee7b7;")
+            self.indicator.setStyleSheet("background-color: #10b981; border-radius: 4px;")
+            self.setStyleSheet("""
+                #stepWidget {
+                    background-color: #0d291e;
+                    border: 1px solid #165b40;
+                    border-radius: 8px;
+                    padding: 6px;
+                    margin-bottom: 4px;
+                }
+                QLabel { color: #f8fafc; }
+                #stepName { font-size: 13px; font-weight: 600; }
+                #stepStatus { font-size: 11px; font-weight: 600; }
+            """)
             self.pulse_timer.stop()
         elif status == "failed":
             self.status_label.setText("Failed")
-            self.status_label.setStyleSheet("color: #FF4444;")
-            self.indicator.setStyleSheet("background-color: #FF4444;")
-            self.setStyleSheet(self.styleSheet() + "#stepWidget { border: 1px solid rgba(255, 68, 68, 80); background-color: rgba(255, 68, 68, 15); }")
+            self.status_label.setStyleSheet("color: #fca5a5;")
+            self.indicator.setStyleSheet("background-color: #ef4444; border-radius: 4px;")
+            self.setStyleSheet("""
+                #stepWidget {
+                    background-color: #2a181e;
+                    border: 1px solid #4f202a;
+                    border-radius: 8px;
+                    padding: 6px;
+                    margin-bottom: 4px;
+                }
+                QLabel { color: #f8fafc; }
+                #stepName { font-size: 13px; font-weight: 600; }
+                #stepStatus { font-size: 11px; font-weight: 600; }
+            """)
             self.pulse_timer.stop()
         elif status == "skipped":
             self.status_label.setText("Skipped")
-            self.status_label.setStyleSheet("color: #f5c86a;")
-            self.indicator.setStyleSheet("background-color: #f5c86a;")
+            self.status_label.setStyleSheet("color: #fde047;")
+            self.indicator.setStyleSheet("background-color: #f59e0b; border-radius: 4px;")
             self.pulse_timer.stop()
         else:
             self.status_label.setText("Pending")
-            self.status_label.setStyleSheet("color: #666;")
-            self.indicator.setStyleSheet("background-color: #444; border-radius: 5px;")
+            self.status_label.setStyleSheet("color: #64748b;")
+            self.indicator.setStyleSheet("background-color: #334155; border-radius: 4px;")
+            self.setStyleSheet("""
+                #stepWidget {
+                    background-color: #11141d;
+                    border: 1px solid #1e2433;
+                    border-radius: 8px;
+                    padding: 6px;
+                    margin-bottom: 4px;
+                }
+                QLabel { color: #94a3b8; }
+                #stepName { font-size: 13px; font-weight: 600; }
+                #stepStatus { font-size: 11px; font-weight: 600; }
+            """)
         
     def _toggle_pulse(self):
         self._pulse_state = not self._pulse_state
-        alpha = 255 if self._pulse_state else 150
-        self.indicator.setStyleSheet(f"background-color: rgba(0, 229, 255, {alpha}); border-radius: 5px;")
+        alpha = 255 if self._pulse_state else 120
+        self.indicator.setStyleSheet(f"background-color: rgba(59, 130, 246, {alpha}); border-radius: 4px;")
 
 class PipelineProgressDialog(QDialog):
     stop_requested = Signal()
@@ -120,8 +166,7 @@ class PipelineProgressDialog(QDialog):
         self._stopped = False
         self._drag_pos = None
         self.setWindowTitle("CapCap AI Pipeline")
-        self.setFixedSize(580, 700)
-        # Do not force the progress dialog above QMessageBox/other dialogs.
+        self.setFixedSize(580, 680)
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
         self.setWindowModality(Qt.NonModal)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -132,13 +177,13 @@ class PipelineProgressDialog(QDialog):
         
         self.main_frame = QFrame(self)
         self.main_frame.setObjectName("mainFrame")
-        self.main_frame.setFixedSize(560, 680)
+        self.main_frame.setFixedSize(560, 660)
         self.main_frame.move(10, 10)
         self.main_frame.setStyleSheet("""
             #mainFrame {
-                background-color: #0f1724;
-                border: 1px solid #28364c;
-                border-radius: 20px;
+                background-color: #141824;
+                border: 1px solid #23293a;
+                border-radius: 12px;
             }
         """)
         
@@ -150,24 +195,27 @@ class PipelineProgressDialog(QDialog):
         self.main_frame.setGraphicsEffect(shadow)
 
         layout = QVBoxLayout(self.main_frame)
-        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(10)
         
         header_layout = QHBoxLayout()
         self.title_label = QLabel("AI Production Pipeline")
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 800; color: white;")
+        self.title_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
         header_layout.addWidget(self.title_label)
         
         self.close_btn = QPushButton("✕", self)
-        self.close_btn.setFixedSize(30, 30)
+        self.close_btn.setFixedSize(28, 28)
         self.close_btn.setStyleSheet("""
             QPushButton {
                 background: none;
-                color: #666;
-                font-size: 18px;
+                color: #94a3b8;
+                font-size: 14px;
                 border: none;
+                border-radius: 4px;
             }
             QPushButton:hover {
-                color: white;
+                background-color: #1e2433;
+                color: #f8fafc;
             }
         """)
         self.close_btn.clicked.connect(self.hide)
@@ -176,62 +224,63 @@ class PipelineProgressDialog(QDialog):
         layout.addLayout(header_layout)
         
         self.overall_progress = QProgressBar()
-        self.overall_progress.setFixedHeight(8)
+        self.overall_progress.setFixedHeight(6)
         self.overall_progress.setRange(0, 100)
         self.overall_progress.setValue(0)
         self.overall_progress.setTextVisible(False)
         self.overall_progress.setStyleSheet("""
             QProgressBar {
-                background: #222;
-                border: none;
-                border-radius: 4px;
+                background: #11141d;
+                border: 1px solid #1e2433;
+                border-radius: 3px;
             }
             QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00E5FF, stop:1 #00FF88);
-                border-radius: 4px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3b82f6, stop:1 #10b981);
+                border-radius: 2px;
             }
         """)
-        layout.addSpacing(10)
         layout.addWidget(self.overall_progress)
-        
-        layout.addSpacing(20)
         
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll_content = QWidget()
         self.scroll_layout = QVBoxLayout(self.scroll_content)
-        self.scroll_layout.setContentsMargins(0, 10, 5, 0)
-        self.scroll_layout.setSpacing(2)
+        self.scroll_layout.setContentsMargins(0, 6, 4, 0)
+        self.scroll_layout.setSpacing(4)
         self.scroll_layout.addStretch()
         
         self.scroll.setWidget(self.scroll_content)
         self.scroll.setStyleSheet("background: transparent;")
-        layout.addWidget(self.scroll)
+        layout.addWidget(self.scroll, 1)
         
         self.steps = {}
         self.step_order = []
         
         self.footer = QLabel("Initializing workflow engine...")
-        self.footer.setStyleSheet("color: #888; font-size: 13px; margin-top: 15px;")
+        self.footer.setStyleSheet("color: #94a3b8; font-size: 12px;")
         layout.addWidget(self.footer)
 
         self.total_time_label = QLabel("Total time: 00:00")
-        self.total_time_label.setStyleSheet("color: #d7e3f4; font-size: 12px; margin-top: 6px;")
+        self.total_time_label.setStyleSheet("color: #cbd5e1; font-size: 12px;")
         layout.addWidget(self.total_time_label)
 
         self.dismiss_btn = QPushButton("Close")
         self.dismiss_btn.setFixedHeight(34)
         self.dismiss_btn.setStyleSheet("""
             QPushButton {
-                background-color: #162133;
-                color: #dbe5f3;
-                border: 1px solid #31445d;
-                border-radius: 10px;
-                font-weight: 700;
+                background-color: #1c2230;
+                color: #e2e8f0;
+                border: 1px solid #2b354a;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 12px;
                 padding: 6px 16px;
             }
             QPushButton:hover {
-                background-color: #1f2b3d;
+                background-color: #262e42;
+                border-color: #3b82f6;
+                color: #ffffff;
             }
         """)
         self.dismiss_btn.clicked.connect(self.hide)
@@ -240,24 +289,25 @@ class PipelineProgressDialog(QDialog):
         self.stop_btn.setFixedHeight(34)
         self.stop_btn.setStyleSheet("""
             QPushButton {
-                background-color: #5a1a1a;
-                color: #ff6b6b;
-                border: 1px solid #8b2a2a;
-                border-radius: 10px;
-                font-weight: 700;
+                background-color: #24141a;
+                color: #fca5a5;
+                border: 1px solid #4a2028;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 12px;
                 padding: 6px 16px;
             }
             QPushButton:hover {
-                background-color: #7a2828;
-                color: #ff8888;
+                background-color: #361a24;
+                border-color: #ef4444;
             }
         """)
         self.stop_btn.clicked.connect(self._on_stop)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        self.stop_btn.setMinimumWidth(200)
-        self.dismiss_btn.setMinimumWidth(200)
+        self.stop_btn.setMinimumWidth(160)
+        self.dismiss_btn.setMinimumWidth(160)
         btn_row.addWidget(self.stop_btn)
         btn_row.addWidget(self.dismiss_btn)
         layout.addLayout(btn_row)
@@ -275,10 +325,16 @@ class PipelineProgressDialog(QDialog):
         subtitle = getattr(video_view, "subtitle_item", None)
         text_overlay = getattr(video_view, "text_overlay", None)
         if subtitle is not None:
-            subtitle.set_suppressed(suppressed)
+            if hasattr(subtitle, "set_suppressed"):
+                subtitle.set_suppressed(suppressed)
+            elif hasattr(subtitle, "setVisible"):
+                subtitle.setVisible(not suppressed)
         if text_overlay is not None:
-            text_overlay.set_suppressed(suppressed)
-        if not suppressed:
+            if hasattr(text_overlay, "set_suppressed"):
+                text_overlay.set_suppressed(suppressed)
+            elif hasattr(text_overlay, "setVisible"):
+                text_overlay.setVisible(not suppressed)
+        if not suppressed and hasattr(video_view, "_restore_subtitle_overlay"):
             QTimer.singleShot(0, video_view._restore_subtitle_overlay)
 
     def showEvent(self, event):

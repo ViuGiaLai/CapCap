@@ -511,10 +511,20 @@ class MpvMediaPlayerBackend(QObject):
                 self.log(f"[Preview] Native MPV LUT unavailable: {exc}")
         self.log(f"[Preview] MPV video output: {'gpu-next' if gpu_next_enabled else 'gpu'}")
 
-        @self._player.event_callback("file-loaded")
-        def _on_file_loaded(event):
+        def _apply_loaded_state_main_thread():
             self._apply_current_subtitle()
             self._apply_blur_filter()
+
+        def _apply_eof_state_main_thread():
+            self._state = QMediaPlayer.PausedState
+            try:
+                self.stateChanged.emit(int(QMediaPlayer.PausedState.value))
+            except Exception:
+                pass
+
+        @self._player.event_callback("file-loaded")
+        def _on_file_loaded(event):
+            QTimer.singleShot(0, _apply_loaded_state_main_thread)
 
         @self._player.event_callback("end-file")
         def _on_end_file(event):
@@ -523,17 +533,9 @@ class MpvMediaPlayerBackend(QObject):
             # quitting, but the event still fires. Surface it as a
             # PausedState so the timeline stops running (Bug 2).
             try:
-                reason = None
-                if isinstance(event, dict):
-                    reason = event.get("reason")
-                else:
-                    reason = getattr(event, "reason", None)
+                reason = event.get("reason") if isinstance(event, dict) else getattr(event, "reason", None)
                 if reason == "eof":
-                    self._state = QMediaPlayer.PausedState
-                    try:
-                        self.stateChanged.emit(int(QMediaPlayer.PausedState.value))
-                    except Exception:
-                        pass
+                    QTimer.singleShot(0, _apply_eof_state_main_thread)
             except Exception:
                 pass
 

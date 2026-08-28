@@ -322,26 +322,37 @@ def _measure_libass_cue_bounds(
         )
         frame_size = max(1, int(video_width) * int(video_height))
         bounds: list[tuple[int, int, int, int] | None] = []
-        for _index in range(len(missing_cues)):
-            frame = b""
-            while len(frame) < frame_size:
-                chunk = process.stdout.read(frame_size - len(frame)) if process.stdout else b""
-                if not chunk:
-                    break
-                frame += chunk
-            if len(frame) != frame_size:
-                raise RuntimeError("libass probe returned an incomplete frame")
-            left, top, right, bottom = video_width, video_height, -1, -1
-            for pixel_index, value in enumerate(frame):
-                if value <= 8:
-                    continue
-                y, x = divmod(pixel_index, video_width)
-                left, right = min(left, x), max(right, x)
-                top, bottom = min(top, y), max(bottom, y)
-            bounds.append((left, top, right + 1, bottom + 1) if right >= left else None)
-        process.wait(timeout=20)
-        if process.returncode != 0:
-            raise RuntimeError("libass probe failed")
+        try:
+            for _index in range(len(missing_cues)):
+                frame = b""
+                while len(frame) < frame_size:
+                    chunk = process.stdout.read(frame_size - len(frame)) if process.stdout else b""
+                    if not chunk:
+                        break
+                    frame += chunk
+                if len(frame) != frame_size:
+                    raise RuntimeError("libass probe returned an incomplete frame")
+                left, top, right, bottom = video_width, video_height, -1, -1
+                for pixel_index, value in enumerate(frame):
+                    if value <= 8:
+                        continue
+                    y, x = divmod(pixel_index, video_width)
+                    left, right = min(left, x), max(right, x)
+                    top, bottom = min(top, y), max(bottom, y)
+                bounds.append((left, top, right + 1, bottom + 1) if right >= left else None)
+            process.wait(timeout=20)
+            if process.returncode != 0:
+                raise RuntimeError("libass probe failed")
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            try:
+                process.wait(timeout=5)
+            except Exception:
+                pass
+            raise
         with _LIBASS_LAYOUT_CACHE_LOCK:
             _LIBASS_LAYOUT_BOUNDS_CACHE[cache_key] = bounds
             _LIBASS_CUE_BOUNDS_CACHE.update(zip(missing_keys, bounds))

@@ -220,22 +220,23 @@ class TranslationOrchestrator:
         return mapping.get(key, src_lang)
 
     def _resolve_ai_provider(self):
-        # All selectable API providers use the same compatible client.  The
-        # provider definition here is the only place needed to add another
-        # OpenAI-compatible service in the future.
-        configured_provider = (os.getenv("OPENAI_PROVIDER") or os.getenv("AI_POLISHER_PROVIDER") or "gemini").strip().lower()
+        # All selectable API providers use the same compatible client.
+        configured_provider = (os.getenv("OPENAI_PROVIDER") or os.getenv("AI_POLISHER_PROVIDER") or "google_ai_studio").strip().lower()
         provider_type = configured_provider
-        if provider_type == "gemini":  # backward compatibility for saved settings
+        if provider_type in {"gemini", "google"}:  # backward compatibility
             provider_type = "google_ai_studio"
         definitions = {
-            "google_ai_studio": ("Google AI Studio", "GOOGLE_AI_STUDIO", "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-flash"),
+            "google_ai_studio": ("Google AI Studio (Gemini)", "GOOGLE_AI_STUDIO", "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-flash"),
+            "deepseek": ("DeepSeek AI", "DEEPSEEK", "https://api.deepseek.com/v1", "deepseek-chat"),
             "openai": ("OpenAI", "OPENAI", "https://api.openai.com/v1/", "gpt-4o-mini"),
-            "ollama": ("Ollama", "OPENAI", "http://localhost:11434/v1", "gemma4:31b-cloud"),
+            "ollama": ("Ollama (Local)", "OLLAMA", "http://localhost:11434/v1", "qwen2.5:7b"),
+            "custom": ("Custom OpenAI API", "CUSTOM_AI", "https://api.openai.com/v1/", "gpt-4o-mini"),
         }
         if provider_type not in definitions:
             provider_type = "google_ai_studio"
         display_name, env_prefix, base_url, default_model = definitions[provider_type]
-        if configured_provider == "gemini":
+        # Legacy fallback if user has OPENAI_API_KEY set for gemini
+        if configured_provider == "gemini" and not os.getenv("GOOGLE_AI_STUDIO_API_KEY"):
             env_prefix = "OPENAI"
         return provider_type, OpenAICompatiblePolisherProvider(
             provider_id=provider_type,
@@ -246,7 +247,13 @@ class TranslationOrchestrator:
         )
 
     def _describe_ai_provider(self, provider_type: str) -> str:
-        names = {"google_ai_studio": "Google AI Studio", "openai": "OpenAI", "ollama": "Ollama"}
+        names = {
+            "google_ai_studio": "Google Gemini",
+            "deepseek": "DeepSeek AI",
+            "openai": "OpenAI",
+            "ollama": "Ollama",
+            "custom": "Custom AI",
+        }
         return f"{names.get(provider_type, 'AI')} ({getattr(self._resolve_ai_provider()[1], 'model_name', '')})"
 
     def _run_ai_batches(

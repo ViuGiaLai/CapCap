@@ -30,14 +30,31 @@ def _resolve_piper_model_path(provider_voice: str) -> str:
     if not raw:
         return ""
     normalized = os.path.normpath(raw)
-    if os.path.isabs(normalized):
+    if os.path.isabs(normalized) and os.path.exists(normalized):
         return normalized
     if normalized.startswith(f"models{os.sep}"):
         candidate = os.path.join(bundle_root(), normalized)
         if os.path.exists(candidate):
             return candidate
-        return os.path.join(os.path.dirname(bundle_root()), normalized)
-    return models_path(normalized)
+        candidate2 = os.path.join(os.path.dirname(bundle_root()), normalized)
+        if os.path.exists(candidate2):
+            return candidate2
+    candidate3 = models_path(normalized)
+    if os.path.exists(candidate3):
+        return candidate3
+    filename = os.path.basename(normalized)
+    candidate_nested = models_path("piper", "piper", filename)
+    if os.path.exists(candidate_nested):
+        return candidate_nested
+    candidate_flat = models_path("piper", filename)
+    if os.path.exists(candidate_flat):
+        return candidate_flat
+    piper_root = models_path("piper")
+    if os.path.isdir(piper_root):
+        for root, _dirs, files in os.walk(piper_root):
+            if filename in files:
+                return os.path.join(root, filename)
+    return candidate3
 
 
 def _get_cached_piper_voice(*, model_path: str, on_progress: callable = None):
@@ -321,7 +338,19 @@ def edge_tts_to_wav_16k_mono(
     last_error = None
     for attempt in range(1, 4):
         try:
-            asyncio.run(_edge_tts_to_mp3_async(text, mp3_path, voice, rate, volume))
+            try:
+                # asyncio.run() creates a new event loop each call.
+                # If the thread already has a running loop (e.g. Jupyter, nested),
+                # this raises RuntimeError. Fall back to a dedicated thread loop.
+                asyncio.run(_edge_tts_to_mp3_async(text, mp3_path, voice, rate, volume))
+            except RuntimeError as loop_err:
+                if "cannot be called from a running event loop" in str(loop_err):
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(asyncio.run, _edge_tts_to_mp3_async(text, mp3_path, voice, rate, volume))
+                        future.result(timeout=120)
+                else:
+                    raise
             last_error = None
             break
         except Exception as exc:

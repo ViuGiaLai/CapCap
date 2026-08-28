@@ -226,8 +226,9 @@ class PipelineController:
         if hasattr(self.gui, "run_all_btn"):
             self.gui.run_all_btn.setEnabled(True)
             self.gui.run_all_btn.setText("Generate")
-        self.gui.progress_bar.setRange(0, 100)
-        self.gui.progress_bar.setValue(0)
+        if hasattr(self.gui, "progress_bar") and self.gui.progress_bar is not None:
+            self.gui.progress_bar.setRange(0, 100)
+            self.gui.progress_bar.setValue(0)
         self.gui.refresh_ui_state()
         self.gui.log("[Pipeline] Stop requested. Local worker process killed.")
 
@@ -556,8 +557,9 @@ class PipelineController:
             self.gui.run_all_btn.setEnabled(True)
             self.gui.run_all_btn.setText("Generate")
         
-        self.gui.progress_bar.setRange(0, 100)
-        self.gui.progress_bar.setValue(0)
+        if hasattr(self.gui, "progress_bar") and self.gui.progress_bar is not None:
+            self.gui.progress_bar.setRange(0, 100)
+            self.gui.progress_bar.setValue(0)
         self.gui.refresh_ui_state()
 
     def pipeline_done(self):
@@ -571,6 +573,7 @@ class PipelineController:
             self.gui.run_all_btn.setEnabled(True)
             self.gui.run_all_btn.setText("Generate")
             
-        self.gui.progress_bar.setRange(0, 100)
-        self.gui.progress_bar.setValue(100)
+        if hasattr(self.gui, "progress_bar") and self.gui.progress_bar is not None:
+            self.gui.progress_bar.setRange(0, 100)
+            self.gui.progress_bar.setValue(100)
         self.gui.refresh_ui_state()

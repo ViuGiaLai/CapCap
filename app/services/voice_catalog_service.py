@@ -46,11 +46,10 @@ class VoiceCatalogService:
             if not os.path.isdir(models_dir):
                 continue
             try:
-                model_ids.update(
-                    os.path.splitext(name)[0]
-                    for name in os.listdir(models_dir)
-                    if name.lower().endswith(".onnx")
-                )
+                for root, _dirs, files in os.walk(models_dir):
+                    for name in files:
+                        if name.lower().endswith(".onnx"):
+                            model_ids.add(os.path.splitext(name)[0])
             except Exception:
                 continue
         return model_ids

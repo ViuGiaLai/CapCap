@@ -45,20 +45,20 @@ def _build_collapsible_section(title: str, start_expanded: bool = True):
     wrapper = QFrame()
     wrapper.setObjectName("statusCard")
     wrapper_layout = QVBoxLayout(wrapper)
-    wrapper_layout.setContentsMargins(12, 11, 12, 11)
-    wrapper_layout.setSpacing(8)
+    wrapper_layout.setContentsMargins(10, 8, 10, 8)
+    wrapper_layout.setSpacing(6)
 
     toggle_btn = QToolButton()
     toggle_btn.setText(("▼ " if start_expanded else "▶ ") + title)
     toggle_btn.setCheckable(True)
     toggle_btn.setChecked(start_expanded)
     toggle_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
-    toggle_btn.setStyleSheet("QToolButton { text-align: left; font-weight: 700; color: #8ad7ff; border: none; padding: 0; }")
+    toggle_btn.setStyleSheet("QToolButton { text-align: left; font-weight: 600; font-size: 12px; color: #93c5fd; border: none; padding: 2px 0; }")
 
     content = QWidget()
     content_layout = QVBoxLayout(content)
     content_layout.setContentsMargins(0, 0, 0, 0)
-    content_layout.setSpacing(10)
+    content_layout.setSpacing(8)
     content.setVisible(start_expanded)
 
     def _toggle_section(checked: bool):
@@ -85,8 +85,8 @@ def _build_style_preset_card(title: str, line_one: str, line_two: str, radio: QR
     card.setObjectName("statusCard")
     card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
     card.setStyleSheet(
-        "QFrame#statusCard { background-color: #132132; border: 1px solid #35506f; border-radius: 14px; }"
-        "QFrame#statusCard:hover { border-color: #5aa6d9; }"
+        "QFrame#statusCard { background-color: #141824; border: 1px solid #23293a; border-radius: 10px; }"
+        "QFrame#statusCard:hover { border-color: #3b82f6; }"
     )
     layout = QVBoxLayout(card)
     layout.setContentsMargins(10, 10, 10, 10)
@@ -102,8 +102,8 @@ def _build_style_preset_card(title: str, line_one: str, line_two: str, radio: QR
     preview_frame.setFixedHeight(88)
     preview_frame.setStyleSheet(
         "QFrame {"
-        "background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #1d2940, stop:1 #0d1522);"
-        "border:1px solid #2d425d; border-radius: 12px; }"
+        "background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #1a2030, stop:1 #0e1118);"
+        "border:1px solid #252b3d; border-radius: 8px; }"
     )
     preview_layout = QVBoxLayout(preview_frame)
     preview_layout.setContentsMargins(10, 10, 10, 10)
@@ -120,20 +120,20 @@ def _build_style_preset_card(title: str, line_one: str, line_two: str, radio: QR
     elif style_key == "youtube":
         preview_top.setStyleSheet(
             "font-size: 14px; font-weight: 700; color: #ffffff; "
-            "background-color: rgba(0, 0, 0, 255); padding: 4px 8px; border-radius: 7px;"
+            "background-color: rgba(0, 0, 0, 255); padding: 4px 8px; border-radius: 6px;"
         )
         preview_bottom.setStyleSheet(
             "font-size: 14px; font-weight: 700; color: #ffffff; "
-            "background-color: rgba(0, 0, 0, 255); padding: 4px 8px; border-radius: 7px;"
+            "background-color: rgba(0, 0, 0, 255); padding: 4px 8px; border-radius: 6px;"
         )
     elif style_key == "short":
         preview_top.setStyleSheet("font-size: 15px; font-weight: 800; color: #ffffff; letter-spacing: 1px;")
-        preview_bottom.setStyleSheet("font-size: 13px; color: #dbe5f3;")
+        preview_bottom.setStyleSheet("font-size: 13px; color: #cbd5e1;")
     else:
         preview_top.setStyleSheet("font-size: 15px; font-weight: 800; color: #ffffff;")
         preview_bottom.setStyleSheet(
             "font-size: 13px; color: #ffffff; background-color: rgba(0, 0, 0, 120); "
-            "padding: 3px 8px; border-radius: 7px;"
+            "padding: 3px 8px; border-radius: 6px;"
         )
 
     preview_layout.addStretch(1)
@@ -150,7 +150,7 @@ def _build_filter_preset_button(label: str):
     btn = QPushButton(label)
     btn.setCheckable(True)
     btn.setObjectName("workflowTabBtn")
-    btn.setMinimumHeight(32)
+    btn.setMinimumHeight(28)
     btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     return btn
 
@@ -180,15 +180,15 @@ def _update_device_label(gui):
     import os
     cpu_mode = os.getenv("CAPCAP_DEVICE", "cuda").strip().lower() == "cpu"
     if cpu_mode:
-        gui.device_mode_label.setText("CPU mode")
-        gui.device_mode_label.setStyleSheet("font-size: 11px; color: #ffa500;")
+        gui.device_mode_label.setText("⚙ CPU Mode")
+        gui.device_mode_label.setStyleSheet("font-size: 11px; font-weight: 600; color: #f59e0b;")
     else:
         gpu_name = os.getenv("CAPCAP_GPU_NAME", "").strip()
         if gpu_name:
-            gui.device_mode_label.setText(gpu_name)
+            gui.device_mode_label.setText(f"⚡ {gpu_name}")
         else:
-            gui.device_mode_label.setText("GPU mode")
-        gui.device_mode_label.setStyleSheet("font-size: 11px; color: #4ecdc4;")
+            gui.device_mode_label.setText("⚡ GPU Accelerated")
+        gui.device_mode_label.setStyleSheet("font-size: 11px; font-weight: 600; color: #10b981;")
 
 
 def build_start_group(gui, left_layout):
@@ -225,30 +225,43 @@ def build_start_group(gui, left_layout):
     gui.stabilize_button(gui.export_btn, min_width=180)
 
     workflow_shell, workflow_shell_layout = _section_card()
-    workflow_shell_layout.setSpacing(12)
+    workflow_shell_layout.setContentsMargins(12, 10, 12, 10)
+    workflow_shell_layout.setSpacing(8)
 
+    workflow_header_row = QHBoxLayout()
     workflow_title = QLabel("Workflow")
     workflow_title.setObjectName("statusHeadline")
-    workflow_shell_layout.addWidget(workflow_title)
+    workflow_title.setStyleSheet("font-weight: 700; font-size: 13px; color: #f8fafc;")
+    workflow_header_row.addWidget(workflow_title)
+    workflow_header_row.addStretch(1)
+
+    gui.device_mode_label = QLabel()
+    gui.device_mode_label.setObjectName("helperLabel")
+    _update_device_label(gui)
+    workflow_header_row.addWidget(gui.device_mode_label)
+    workflow_shell_layout.addLayout(workflow_header_row)
 
     # Generation milestones remain visible while users work through the
     # configuration pages below.
     gui.workflow_stage_badges = {}
-    # Keep the label widgets too: the Translate label is updated with the
-    # provider that actually completed the most recent translation.
     gui.workflow_stage_labels = {}
     stage_box = QFrame()
     stage_box.setObjectName("statusCard")
+    stage_box.setStyleSheet(
+        "QFrame#statusCard { background-color: #11141d; border: 1px solid #1e2433; border-radius: 8px; }"
+    )
     stage_layout = QVBoxLayout(stage_box)
-    stage_layout.setContentsMargins(10, 8, 10, 8)
+    stage_layout.setContentsMargins(8, 6, 8, 6)
     stage_layout.setSpacing(4)
     for key, title in (("prepare", "Prepare"), ("transcript", "Transcript"),
-                       ("translate", "Translate"), ("tts", "Generate Voice / TTS (Optional)"),
+                       ("translate", "Translate"), ("tts", "Voice / TTS (Optional)"),
                        ("export", "Export")):
         row = QHBoxLayout()
         label = QLabel(title)
+        label.setStyleSheet("font-size: 11px; color: #cbd5e1;")
         status = QLabel("Not started")
         status.setObjectName("helperLabel")
+        status.setStyleSheet("font-size: 11px; color: #64748b;")
         row.addWidget(label)
         row.addStretch(1)
         row.addWidget(status)
@@ -257,16 +270,11 @@ def build_start_group(gui, left_layout):
         gui.workflow_stage_labels[key] = label
     workflow_shell_layout.addWidget(stage_box)
 
-    gui.device_mode_label = QLabel()
-    gui.device_mode_label.setObjectName("helperLabel")
-    _update_device_label(gui)
-    workflow_shell_layout.addWidget(gui.device_mode_label)
-
     tab_bar = QWidget()
     tab_bar_layout = QGridLayout(tab_bar)
     tab_bar_layout.setContentsMargins(0, 0, 0, 0)
-    tab_bar_layout.setHorizontalSpacing(8)
-    tab_bar_layout.setVerticalSpacing(8)
+    tab_bar_layout.setHorizontalSpacing(6)
+    tab_bar_layout.setVerticalSpacing(6)
     tab_bar_layout.setColumnStretch(0, 1)
     tab_bar_layout.setColumnStretch(1, 1)
     tab_group = QButtonGroup(gui)
@@ -303,8 +311,6 @@ def build_start_group(gui, left_layout):
     pages = []
     media_page, media_layout = _make_page("media")
     audio_page, audio_layout = _make_page("audio")
-    # Advanced controls that belong to the Audio workflow are attached here
-    # after their shared runtime widgets have been created.
     gui.workflow_audio_layout = audio_layout
     language_page, language_layout = _make_page("language")
     voice_page, voice_layout = _make_page("voice")
@@ -317,7 +323,7 @@ def build_start_group(gui, left_layout):
         btn = QPushButton(label)
         btn.setCheckable(True)
         btn.setChecked(checked)
-        btn.setMinimumHeight(34)
+        btn.setMinimumHeight(28)
         btn.setMinimumWidth(0)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         btn.setObjectName("workflowTabBtn")
@@ -341,7 +347,7 @@ def build_start_group(gui, left_layout):
     gui.show_progress_btn.setVisible(False)
     gui.show_progress_btn.setEnabled(False)
     gui.show_progress_btn.setObjectName("workflowTabBtn")
-    gui.show_progress_btn.setMinimumHeight(34)
+    gui.show_progress_btn.setMinimumHeight(28)
     gui.show_progress_btn.setMinimumWidth(0)
     gui.show_progress_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     tab_bar_layout.addWidget(gui.show_progress_btn, 3, 0, 1, 2)
@@ -482,6 +488,81 @@ def build_start_group(gui, left_layout):
 
     language_layout.addWidget(language_pair_card)
     gui.lang_target_combo.currentIndexChanged.connect(gui.on_target_language_changed)
+
+    # --- Translation Engine Section ---
+    trans_engine_card, trans_engine_layout = _section_card()
+    trans_engine_title = QLabel("Translation Engine (AI Dịch)")
+    trans_engine_title.setObjectName("sectionTitle")
+    trans_engine_layout.addWidget(trans_engine_title)
+
+    gui.translation_engine_combo = QComboBox()
+    gui.translation_engine_combo.addItem("🌐 Google Translate (Free, không cần Key)", "google")
+    gui.translation_engine_combo.addItem("⚡ Google Gemini (Khuyên dùng, Free Key)", "google_ai_studio")
+    gui.translation_engine_combo.addItem("🐉 DeepSeek AI (Chuyên dịch Tu Tiên / Phim)", "deepseek")
+    gui.translation_engine_combo.addItem("🤖 ChatGPT / OpenAI", "openai")
+    gui.translation_engine_combo.addItem("💻 Ollama (Local Offline)", "ollama")
+    gui.translation_engine_combo.addItem("⚙️ Custom API (OpenAI Compatible)", "custom")
+
+    trans_engine_layout.addWidget(QLabel("AI Provider / Dịch thuật"))
+    trans_engine_layout.addWidget(gui.translation_engine_combo)
+
+    # Config panel for API Key & Model
+    gui.translation_config_panel = QWidget()
+    trans_config_layout = QVBoxLayout(gui.translation_config_panel)
+    trans_config_layout.setContentsMargins(0, 4, 0, 0)
+    trans_config_layout.setSpacing(6)
+
+    gui.translation_key_label = QLabel("API Key:")
+    gui.translation_api_key_edit = QLineEdit()
+    gui.translation_api_key_edit.setEchoMode(QLineEdit.Password)
+    gui.translation_api_key_edit.setPlaceholderText("Nhập API key tại đây...")
+
+    gui.translation_model_label = QLabel("AI Model:")
+    gui.translation_model_edit = QLineEdit()
+    gui.translation_model_edit.setPlaceholderText("Ví dụ: gemini-2.5-flash")
+
+    gui.translation_base_url_label = QLabel("API URL:")
+    gui.translation_base_url_edit = QLineEdit()
+    gui.translation_base_url_edit.setPlaceholderText("https://...")
+
+    gui.translation_link_label = QLabel("")
+    gui.translation_link_label.setObjectName("helperLabel")
+    gui.translation_link_label.setWordWrap(True)
+    gui.translation_link_label.setOpenExternalLinks(True)
+
+    test_action_layout = QHBoxLayout()
+    test_action_layout.setSpacing(8)
+    gui.translation_test_btn = QPushButton("Kiểm tra kết nối")
+    gui.translation_test_btn.setFixedHeight(26)
+    gui.translation_test_status = QLabel("")
+    gui.translation_test_status.setObjectName("helperLabel")
+    test_action_layout.addWidget(gui.translation_test_btn)
+    test_action_layout.addWidget(gui.translation_test_status, 1)
+
+    trans_config_layout.addWidget(gui.translation_key_label)
+    trans_config_layout.addWidget(gui.translation_api_key_edit)
+    trans_config_layout.addWidget(gui.translation_model_label)
+    trans_config_layout.addWidget(gui.translation_model_edit)
+    trans_config_layout.addWidget(gui.translation_base_url_label)
+    trans_config_layout.addWidget(gui.translation_base_url_edit)
+    trans_config_layout.addWidget(gui.translation_link_label)
+    trans_config_layout.addLayout(test_action_layout)
+
+    trans_engine_layout.addWidget(gui.translation_config_panel)
+
+    # Style Preset for Tu Tien / Recap
+    trans_style_row = QVBoxLayout()
+    trans_style_row.setSpacing(4)
+    trans_style_row.addWidget(QLabel("Phong cách dịch (Style Preset)"))
+    gui.translation_style_preset_combo = QComboBox()
+    gui.translation_style_preset_combo.addItem("Tiêu chuẩn / Tự nhiên (Standard)", "standard")
+    gui.translation_style_preset_combo.addItem("Recap Tu Tiên / Kiếm Hiệp (Ngắn gọn, xưng hô chuẩn)", "tutien_recap")
+    gui.translation_style_preset_combo.addItem("Anime / Manga (Trẻ trung, sinh động)", "anime")
+    gui.translation_style_preset_combo.addItem("Phim Điện Ảnh / Kịch Tính (Drama)", "drama")
+    trans_style_row.addWidget(gui.translation_style_preset_combo)
+    trans_engine_layout.addLayout(trans_style_row)
+
+    language_layout.addWidget(trans_engine_card)
 
     language_page.layout().addWidget(language_card)
 

@@ -63,7 +63,7 @@ class TrackLabelBar(QFrame):
         super().__init__(parent)
         self.setFixedWidth(self.TRACK_HEADER_W)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self.setStyleSheet("background-color: #142030; border: none;")
+        self.setStyleSheet("background-color: #11141d; border: none;")
         self._track_names: list[str] = []
         self._track_heights: list[int] = []
         self._track_locked: list[bool] = []
@@ -504,14 +504,20 @@ class TrackLabelBar(QFrame):
 
         def _color(name: str) -> QColor:
             prefix = name.split(" ")[0] if name else ""
-            palette = {"V1": QColor("#2a6bcf"), "B1": QColor("#6b5b7b"),
-                       "A1": QColor("#2a9d3f"), "A2": QColor("#2a9d3f"),
-                       "TS1": QColor("#c96b2a"),
-                       "S1": QColor("#c96b2a"),
-                       "M1": QColor("#8c5a2a")}
-            return palette.get(prefix, QColor("#6b8cb8"))
+            palette = {
+                "V1": QColor("#3b82f6"),
+                "B1": QColor("#8b5cf6"),
+                "L1": QColor("#06b6d4"),
+                "M1": QColor("#ec4899"),
+                "T1": QColor("#a855f7"),
+                "A1": QColor("#10b981"),
+                "A2": QColor("#10b981"),
+                "TS1": QColor("#f59e0b"),
+                "S1": QColor("#f59e0b"),
+            }
+            return palette.get(prefix, QColor("#64748b"))
 
-        font = QFont("Segoe UI", 9, QFont.Bold)
+        font = QFont("Segoe UI", 9, QFont.DemiBold)
         painter.setFont(font)
         fm = QFontMetrics(font)
         # Reserve compact cells on every track. Audio uses mute + lock;
@@ -541,13 +547,13 @@ class TrackLabelBar(QFrame):
                                and i < len(self._track_subtitle_shown)
                                and not self._track_subtitle_shown[i])
             if muted or logo_hidden or mask_hidden or text_hidden or subtitle_hidden:
-                bg = QColor("#1a1a2e")
+                bg = QColor("#0e1017")
             elif prefix in BLUR_PREFIXES and not blur_on:
-                bg = QColor("#1a1a2e")  # dimmed when blur is off
+                bg = QColor("#0e1017")  # dimmed when blur is off
             else:
-                bg = QColor("#142030")
+                bg = QColor("#141824")
             painter.fillRect(0, y, self.TRACK_HEADER_W, h, bg)
-            painter.setPen(QPen(QColor("#1e2d42"), 1))
+            painter.setPen(QPen(QColor("#1e2433"), 1))
             painter.drawRect(0, y, self.TRACK_HEADER_W - 1, h - 1)
 
             painter.setPen(QPen(c, 0))
@@ -555,7 +561,7 @@ class TrackLabelBar(QFrame):
 
             dim_text = (muted or logo_hidden or mask_hidden or text_hidden or subtitle_hidden
                         or (prefix in BLUR_PREFIXES and not blur_on))
-            text_color = QColor("#555") if dim_text else QColor("#ffffff")
+            text_color = QColor("#64748b") if dim_text else QColor("#f1f5f9")
             painter.setPen(text_color)
             lines = self._label_lines(name, text_w, fm)
             if not lines:

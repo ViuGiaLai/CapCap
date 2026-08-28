@@ -3,9 +3,9 @@
   "voices": [
     {
       "id": "banmai",
-      "name": "Ban Mai",
+      "name": "Ban Mai (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/banmai.onnx",
+      "provider_voice": "models/piper/piper/banmai.onnx",
       "language": "vi",
       "gender": "female",
       "tier": "free",
@@ -21,11 +21,11 @@
     },
     {
       "id": "chieuthanh",
-      "name": "Chiêu Thanh",
+      "name": "Chiêu Thanh (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/chieuthanh.onnx",
+      "provider_voice": "models/piper/piper/chieuthanh.onnx",
       "language": "vi",
-      "gender": "Male",
+      "gender": "male",
       "tier": "free",
       "preview_video_url": "",
       "preview_video_path": "",
@@ -39,9 +39,9 @@
     },
     {
       "id": "cuc",
-      "name": "Cúc",
+      "name": "Cúc (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/cuc.onnx",
+      "provider_voice": "models/piper/piper/cuc.onnx",
       "language": "vi",
       "gender": "female",
       "tier": "free",
@@ -57,9 +57,9 @@
     },
     {
       "id": "duyoryx3175",
-      "name": "Duy",
+      "name": "Duy (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/duyoryx3175.onnx",
+      "provider_voice": "models/piper/piper/duyoryx3175.onnx",
       "language": "vi",
       "gender": "male",
       "tier": "free",
@@ -75,9 +75,9 @@
     },
     {
       "id": "lacphi",
-      "name": "Lạc Phi",
+      "name": "Lạc Phi (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/lacphi.onnx",
+      "provider_voice": "models/piper/piper/lacphi.onnx",
       "language": "vi",
       "gender": "male",
       "tier": "free",
@@ -93,9 +93,9 @@
     },
     {
       "id": "maiphuong",
-      "name": "Mai Phương",
+      "name": "Mai Phương (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/maiphuong.onnx",
+      "provider_voice": "models/piper/piper/maiphuong.onnx",
       "language": "vi",
       "gender": "female",
       "tier": "free",
@@ -111,9 +111,9 @@
     },
     {
       "id": "manhdung",
-      "name": "Mạng Dũng",
+      "name": "Mạng Dũng (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/manhdung.onnx",
+      "provider_voice": "models/piper/piper/manhdung.onnx",
       "language": "vi",
       "gender": "male",
       "tier": "free",
@@ -129,9 +129,9 @@
     },
     {
       "id": "minhkhang",
-      "name": "Minh Khang",
+      "name": "Minh Khang (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/minhkhang.onnx",
+      "provider_voice": "models/piper/piper/minhkhang.onnx",
       "language": "vi",
       "gender": "male",
       "tier": "free",
@@ -147,9 +147,9 @@
     },
     {
       "id": "minhquang",
-      "name": "Minh Quang",
+      "name": "Minh Quang (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/minhquang.onnx",
+      "provider_voice": "models/piper/piper/minhquang.onnx",
       "language": "vi",
       "gender": "male",
       "tier": "free",
@@ -165,9 +165,9 @@
     },
     {
       "id": "ngochuyen",
-      "name": "Ngọc Huyền",
+      "name": "Ngọc Huyền (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/ngochuyen.onnx",
+      "provider_voice": "models/piper/piper/ngochuyen.onnx",
       "language": "vi",
       "gender": "female",
       "tier": "free",
@@ -183,9 +183,9 @@
     },
     {
       "id": "ngochuyennew",
-      "name": "Ngọc Huyền (New)",
+      "name": "Ngọc Huyền (New) (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/ngochuyennew.onnx",
+      "provider_voice": "models/piper/piper/ngochuyennew.onnx",
       "language": "vi",
       "gender": "female",
       "tier": "free",
@@ -201,9 +201,9 @@
     },
     {
       "id": "phuongtrang",
-      "name": "Phương Trang",
+      "name": "Phương Trang (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/phuongtrang.onnx",
+      "provider_voice": "models/piper/piper/phuongtrang.onnx",
       "language": "vi",
       "gender": "female",
       "tier": "free",
@@ -219,29 +219,11 @@
     },
     {
       "id": "taian2",
-      "name": "Tài An",
+      "name": "Tài An (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper/taian2.onnx",
+      "provider_voice": "models/piper/piper/taian2.onnx",
       "language": "vi",
       "gender": "male",
-      "tier": "free",
-      "enabled": true,
-      "tags": [
-        "local",
-        "piper"
-      ],
-      "preview_audio_url": "",
-      "preview_audio_path": "",
-      "preview_video_url": "",
-      "preview_video_path": ""
-    },
-    {
-      "id": "vi_VN-vais1000-medium",
-      "name": "Vàng",
-      "provider": "piper",
-      "provider_voice": "models/piper/vi_VN-vais1000-medium.onnx",
-      "language": "vi",
-      "gender": "female",
       "tier": "free",
       "preview_video_url": "",
       "preview_video_path": "",
@@ -254,40 +236,22 @@
       ]
     },
     {
-      "id": "en_US-amy-medium",
-      "name": "Amy (English)",
+      "id": "vi_VN-vais1000-medium",
+      "name": "Vàng (Local)",
       "provider": "piper",
-      "provider_voice": "models/piper-en/en_US-amy-medium.onnx",
-      "language": "en",
-      "gender": "female",
-      "tier": "free",
-      "enabled": true,
-      "tags": [
-        "local",
-        "piper"
-      ],
-      "preview_audio_url": "",
-      "preview_audio_path": "",
-      "preview_video_url": "",
-      "preview_video_path": ""
-    },
-    {
-      "id": "en_US-arctic-medium",
-      "name": "Arctic (English)",
-      "provider": "piper",
-      "provider_voice": "models/piper-en/en_US-arctic-medium.onnx",
-      "language": "en",
+      "provider_voice": "models/piper/piper/vi_VN-vais1000-medium.onnx",
+      "language": "vi",
       "gender": "male",
       "tier": "free",
+      "preview_video_url": "",
+      "preview_video_path": "",
+      "preview_audio_url": "",
+      "preview_audio_path": "",
       "enabled": true,
       "tags": [
         "local",
         "piper"
-      ],
-      "preview_audio_url": "",
-      "preview_audio_path": "",
-      "preview_video_url": "",
-      "preview_video_path": ""
+      ]
     }
   ]
 }

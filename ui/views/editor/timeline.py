@@ -2,7 +2,7 @@ import os
 from bisect import bisect_right
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QFrame, QGraphicsScene, QGraphicsView, QPushButton
+from PySide6.QtWidgets import QApplication, QFrame, QGraphicsScene, QGraphicsView, QMenu, QPushButton
 
 
 from app.layers.base import BaseLayer, LayerType
@@ -29,6 +29,11 @@ class EditorTimeline(QGraphicsView):
     zoomChanged = Signal(int)
     layoutChanged = Signal()
     addLayerRequested = Signal()
+    deleteRequested = Signal()
+    splitRequested = Signal()
+    regenerateVoiceRequested = Signal()
+    openSubtitleEditorRequested = Signal()
+    addSubtitleAtRequested = Signal(float)
     selectionRangeChanged = Signal(float, float)
     selectionRangeCleared = Signal()
     selectionModeChanged = Signal(bool)
@@ -55,7 +60,7 @@ class EditorTimeline(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.NoFrame)
-        self.setStyleSheet("background-color: #0d1220; border: none;")
+        self.setStyleSheet("background-color: #0c0e14; border: none;")
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
@@ -112,9 +117,9 @@ class EditorTimeline(QGraphicsView):
         self._return_to_playhead_button = QPushButton("Return to Playhead", self.viewport())
         self._return_to_playhead_button.setCursor(Qt.PointingHandCursor)
         self._return_to_playhead_button.setStyleSheet(
-            "QPushButton { background:#1b3852; color:#d9f3ff; border:1px solid #4a8cff; "
-            "border-radius:9px; padding:4px 9px; font:600 10px 'Segoe UI'; }"
-            "QPushButton:hover { background:#244b6d; }"
+            "QPushButton { background:#182030; color:#60a5fa; border:1px solid #3b82f6; "
+            "border-radius:6px; padding:4px 8px; font-weight:600; font-size:10px; }"
+            "QPushButton:hover { background:#242c42; color:#93c5fd; }"
         )
         self._return_to_playhead_button.clicked.connect(self._return_to_playhead)
         self._return_to_playhead_button.hide()
@@ -1716,7 +1721,77 @@ class EditorTimeline(QGraphicsView):
                 event.accept()
                 return
 
+        elif event.button() == Qt.RightButton:
+            pos = event.position()
+            scroll_x = self.horizontalScrollBar().value()
+            scroll_y = self.verticalScrollBar().value()
+            _edge, lid = self._hit_test_edge(pos, scroll_x, scroll_y)
+            if lid:
+                track, layer = self._find_layer_by_id(lid)
+                if not bool(getattr(track, "locked", False)):
+                    self._selected_layer_id = lid
+                    self.layerSelected.emit(lid)
+                    idx = self.segment_index_for_layer_id(lid)
+                    if idx >= 0:
+                        self._manual_subtitle_selection = True
+                        self.segmentSelected.emit(idx)
+                    self.viewport().update()
+
         super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        pos = event.pos()
+        scroll_x = self.horizontalScrollBar().value()
+        scroll_y = self.verticalScrollBar().value()
+        _edge, lid = self._hit_test_edge(pos, scroll_x, scroll_y)
+
+        target_lid = lid or self._selected_layer_id
+        track = None
+        layer = None
+        if target_lid:
+            track, layer = self._find_layer_by_id(target_lid)
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: #141824; color: #e2e8f0; border: 1px solid #2a3347; padding: 4px; border-radius: 6px; }"
+            "QMenu::item { padding: 6px 20px 6px 12px; border-radius: 4px; font-size: 12px; }"
+            "QMenu::item:selected { background: #2563eb; color: #ffffff; }"
+            "QMenu::item:disabled { color: #475569; }"
+            "QMenu::separator { height: 1px; background: #2a3347; margin: 4px 8px; }"
+        )
+
+        if layer is not None and track is not None:
+            is_sub = self._is_subtitle_track(track)
+            seg_idx = self.segment_index_for_layer_id(target_lid) if is_sub else -1
+
+            menu.addAction("🗑️ Xóa đoạn này (Delete)", self.deleteRequested.emit)
+            menu.addAction("✂️ Cắt tại con trỏ (Split)", self.splitRequested.emit)
+
+            if is_sub and seg_idx >= 0:
+                menu.addSeparator()
+                menu.addAction("🎙️ Đọc lại giọng AI (Regenerate Voice)", self.regenerateVoiceRequested.emit)
+                menu.addAction("✏️ Mở trong Subtitle Editor", self.openSubtitleEditorRequested.emit)
+                
+                # Copy text helper
+                def _copy_text():
+                    text = ""
+                    if isinstance(layer.metadata, dict):
+                        text = str(layer.metadata.get("text", "") or "").strip()
+                    if not text:
+                        text = str(getattr(layer, "name", "") or "").strip()
+                    if text:
+                        clipboard = QApplication.clipboard()
+                        if clipboard:
+                            clipboard.setText(text)
+
+                menu.addAction("📋 Sao chép nội dung phụ đề", _copy_text)
+        else:
+            click_time = self._pos_to_time(pos.x(), scroll_x)
+            menu.addAction("➕ Thêm phụ đề tại vị trí này", lambda t=click_time: self.addSubtitleAtRequested.emit(t))
+            if self._selection_range:
+                menu.addAction("❌ Bỏ vùng chọn (Clear Range)", self.clear_selection_range)
+
+        menu.exec(event.globalPos())
 
     def mouseReleaseEvent(self, event) -> None:
         if self._selection_drag is not None and event.button() == Qt.LeftButton:

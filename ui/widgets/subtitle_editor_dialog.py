@@ -49,19 +49,101 @@ class SubtitleEditorDialog(QDialog):
         self.setMinimumSize(860, 520)
         self.setStyleSheet(
             """
-            QDialog { background: #0f1724; color: #e8f0fa; }
-            QLabel { color: #c8d7e8; background: transparent; }
-            QLineEdit, QTableWidget {
-                background: #132033; color: #eff6ff; border: 1px solid #34506f;
-                border-radius: 7px; padding: 6px;
+            QDialog {
+                background: #0c0e14;
+                color: #e2e8f0;
+                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Inter', Roboto, Arial, sans-serif;
             }
-            QHeaderView::section { background: #1b2b41; color: #dcecff; padding: 7px; border: 0; }
-            QTableWidget::item { background: #132033; color: #eff6ff; }
-            QTableWidget::item:selected { background: #244d70; color: #ffffff; }
-            QPushButton { background: #223a55; color: #f6fbff; border: 1px solid #3b5b7c; border-radius: 7px; padding: 7px 12px; font-weight: 600; }
-            QPushButton:hover { background: #2b4a6b; }
-            QPushButton#primary { background: #1871b7; border-color: #4caaf1; }
-            QPushButton#danger { background: #5d2c37; border-color: #9c5061; }
+            QLabel {
+                color: #94a3b8;
+                background: transparent;
+                font-size: 12px;
+            }
+            QLineEdit {
+                background: #11141d;
+                color: #f8fafc;
+                border: 1px solid #252b3d;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3b82f6;
+                background: #131722;
+            }
+            QTableWidget {
+                background: #11141d;
+                color: #f1f5f9;
+                border: 1px solid #252b3d;
+                border-radius: 8px;
+                gridline-color: #1e2433;
+                selection-background-color: #2563eb;
+                selection-color: #ffffff;
+                font-size: 12px;
+            }
+            QHeaderView::section {
+                background: #161a26;
+                color: #cbd5e1;
+                padding: 8px;
+                font-weight: 600;
+                font-size: 11px;
+                border: none;
+                border-bottom: 1px solid #252b3d;
+            }
+            QTableWidget::item {
+                padding: 4px 6px;
+                border-bottom: 1px solid #181d28;
+            }
+            QTableWidget::item:selected {
+                background: #1e2a40;
+                color: #ffffff;
+            }
+            QPushButton {
+                background: #1c2230;
+                color: #e2e8f0;
+                border: 1px solid #2b354a;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 600;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background: #262e42;
+                border-color: #3b82f6;
+                color: #ffffff;
+            }
+            QPushButton#primary {
+                background: #10b981;
+                border: 1px solid #059669;
+                color: #ffffff;
+                font-weight: 700;
+            }
+            QPushButton#primary:hover {
+                background: #059669;
+            }
+            QPushButton#danger {
+                background: #24141a;
+                color: #fca5a5;
+                border: 1px solid #4a2028;
+            }
+            QPushButton#danger:hover {
+                background: #361a24;
+                border-color: #ef4444;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #0e1118;
+                width: 8px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #252b3d;
+                min-height: 24px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #38425d;
+            }
             """
         )
 
@@ -70,7 +152,7 @@ class SubtitleEditorDialog(QDialog):
         root.setSpacing(10)
 
         title = QLabel("Subtitle Editor")
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #f5f9ff;")
+        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
         root.addWidget(title)
         hint = QLabel(
             "Review translated subtitles in one place. Update preserves timing, speakers, styles, and other metadata. "

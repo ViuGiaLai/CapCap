@@ -4,7 +4,6 @@ import os
 import json
 import time
 import shutil
-import hashlib
 import re
 
 from PySide6.QtCore import Qt, QTimer
@@ -115,11 +114,11 @@ def _get_video_duration(video_path: str) -> float:
 
 
 MSG_STYLE = """
-    QMessageBox { background-color: #0f1724; }
-    QLabel { color: #ffffff; }
-    QPushButton { background-color: #22344d; color: #f8fbff; border: 1px solid #34506f;
-        border-radius: 8px; padding: 6px 16px; font-weight: 600; }
-    QPushButton:hover { background-color: #29405d; }
+    QMessageBox { background-color: #141824; }
+    QLabel { color: #f1f5f9; font-size: 12px; }
+    QPushButton { background-color: #1c2230; color: #f8fbff; border: 1px solid #2b354a;
+        border-radius: 6px; padding: 6px 16px; font-weight: 600; font-size: 11px; }
+    QPushButton:hover { background-color: #262e42; border-color: #3b82f6; }
 """
 
 
@@ -132,16 +131,19 @@ class ProjectCard(QFrame):
         self.setMinimumSize(180, 184)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet("ProjectCard:hover { border: 2px solid #4ecdc4; }")
+        self.setStyleSheet(
+            "QFrame#statusCard { background-color: #141824; border: 1px solid #23293a; border-radius: 10px; }"
+            "QFrame#statusCard:hover { border: 1px solid #3b82f6; background-color: #181d2c; }"
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
         self.thumb_label = QLabel()
-        self.thumb_label.setMinimumSize(160, 120)
+        self.thumb_label.setMinimumSize(160, 110)
         self.thumb_label.setAlignment(Qt.AlignCenter)
-        self.thumb_label.setStyleSheet("background-color: #0d1220; border-radius: 6px;")
+        self.thumb_label.setStyleSheet("background-color: #0c0e14; border-radius: 6px;")
         self.thumb_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         layout.addWidget(self.thumb_label)
@@ -149,15 +151,15 @@ class ProjectCard(QFrame):
         self.name_label = QLabel(os.path.basename(video_path))
         self.name_label.setWordWrap(True)
         self.name_label.setMaximumHeight(36)
-        self.name_label.setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: 600;")
+        self.name_label.setStyleSheet("color: #f1f5f9; font-size: 11px; font-weight: 600;")
         layout.addWidget(self.name_label)
 
         stage_text, stage_color = _project_pipeline_status(video_path)
         self.stage_badge = QLabel(stage_text)
         self.stage_badge.setAlignment(Qt.AlignCenter)
         self.stage_badge.setStyleSheet(
-            f"background-color: #142437; color: {stage_color}; border: 1px solid #2e4b68; "
-            "border-radius: 7px; padding: 3px 7px; font-size: 10px; font-weight: 700;"
+            f"background-color: #11141d; color: {stage_color}; border: 1px solid #1e2433; "
+            "border-radius: 6px; padding: 3px 6px; font-size: 10px; font-weight: 600;"
         )
         layout.addWidget(self.stage_badge)
 
@@ -346,13 +348,32 @@ class LauncherWindow(QDialog):
         self.setMinimumSize(840, 540)
         self.setStyleSheet("""
             QDialog {
-                background-color: #0a101e;
-                color: #cfe6ff;
+                background-color: #0c0e14;
+                color: #e2e8f0;
+                font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Inter', Roboto, Arial, sans-serif;
             }
             #statusCard {
-                background-color: #0f1928;
-                border: 1px solid #1e3045;
-                border-radius: 8px;
+                background-color: #141824;
+                border: 1px solid #23293a;
+                border-radius: 10px;
+            }
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #0e1118;
+                width: 8px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #252b3d;
+                min-height: 24px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #38425d;
             }
         """)
 
@@ -362,17 +383,17 @@ class LauncherWindow(QDialog):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 24, 24, 24)
+        root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(16)
 
         header = QHBoxLayout()
-        title = QLabel("CapCap V7")
-        title.setStyleSheet("font-size: 26px; font-weight: 800; color: #ffffff;")
+        title = QLabel("CapCap")
+        title.setStyleSheet("font-size: 24px; font-weight: 700; color: #f8fafc;")
         subtitle = QLabel("Video Translation & Voiceover Studio")
-        subtitle.setStyleSheet("font-size: 12px; color: #6ee7d6;")
-
+        subtitle.setStyleSheet("font-size: 12px; color: #94a3b8;")
 
         header_text = QVBoxLayout()
+        header_text.setSpacing(2)
         header_text.addWidget(title)
         header_text.addWidget(subtitle)
 
@@ -388,8 +409,8 @@ class LauncherWindow(QDialog):
         self._missing_label = QLabel("", self)
         self._missing_label.setWordWrap(True)
         self._missing_label.setStyleSheet(
-            "font-size: 11px; color: #ff6b6b; padding: 4px 8px;"
-            " background-color: #3b1a1a; border: 1px solid #ff6b6b55; border-radius: 6px;"
+            "font-size: 11px; color: #fca5a5; padding: 4px 8px;"
+            " background-color: #2a181e; border: 1px solid #4f202a; border-radius: 6px;"
         )
         self._missing_label.hide()
         header_text.addWidget(self._missing_label)
@@ -400,26 +421,29 @@ class LauncherWindow(QDialog):
         self.cpu_btn.setCheckable(True)
         self.cpu_btn.setChecked(not gpu_usable)
         self.cpu_btn.setEnabled(True)
-        self.gpu_btn = QPushButton("GPU (Recommended)" if gpu_usable else "GPU (N/A)")
+        self.gpu_btn = QPushButton("GPU (Accelerated)" if gpu_usable else "GPU (N/A)")
         self.gpu_btn.setCheckable(True)
         self.gpu_btn.setChecked(gpu_usable)
         self.gpu_btn.setEnabled(gpu_usable)
 
         btn_style = """
             QPushButton {
-                color: #8ea3bb; border: 1px solid #2f4868; padding: 3px 10px;
+                color: #94a3b8; border: 1px solid #252b3d; padding: 4px 12px;
                 font-size: 11px; font-weight: 600; border-radius: 0;
-                background-color: transparent;
+                background-color: #11141d;
+            }
+            QPushButton:hover {
+                background-color: #1a1e2b; color: #f1f5f9;
             }
             QPushButton:checked {
-                background-color: #1a3a5c; color: #8ad7ff; border-color: #4ecdc4;
+                background-color: #1e2a40; color: #60a5fa; border-color: #3b82f6;
             }
             QPushButton:disabled {
-                color: #445566; border-color: #1e3045;
+                color: #475569; border-color: #1a1e2b; background-color: #0e1017;
             }
         """
         self.cpu_btn.setStyleSheet(btn_style + "QPushButton { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }")
-        self.gpu_btn.setStyleSheet(btn_style + "QPushButton { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }")
+        self.gpu_btn.setStyleSheet(btn_style + "QPushButton { border-top-right-radius: 6px; border-bottom-right-radius: 6px; border-left: none; }")
 
         def _select_cpu(checked):
             if checked:
@@ -454,111 +478,131 @@ class LauncherWindow(QDialog):
         action_row_two.setSpacing(6)
 
         self.new_btn = QPushButton("+ New Project")
-        self.new_btn.setMinimumHeight(44)
-        self.new_btn.setMinimumWidth(150)
+        self.new_btn.setMinimumHeight(40)
+        self.new_btn.setMinimumWidth(140)
         self.new_btn.setStyleSheet("""
             QPushButton {
-                background-color: #4ecdc4;
-                color: #0a101e;
+                background-color: #10b981;
+                color: #ffffff;
                 font-weight: 700;
-                font-size: 14px;
-                border-radius: 8px;
-                border: none;
+                font-size: 13px;
+                border-radius: 6px;
+                border: 1px solid #059669;
             }
             QPushButton:hover {
-                background-color: #6ee7d6;
+                background-color: #059669;
+            }
+            QPushButton:disabled {
+                background-color: #141722;
+                color: #4b5563;
+                border-color: #1e2433;
             }
         """)
         self.new_btn.clicked.connect(self._on_new_project)
         action_row_one.addWidget(self.new_btn)
 
         self.split_btn = QPushButton("Split Video")
-        self.split_btn.setMinimumHeight(44)
-        self.split_btn.setMinimumWidth(120)
+        self.split_btn.setMinimumHeight(40)
+        self.split_btn.setMinimumWidth(110)
         self.split_btn.setStyleSheet("""
             QPushButton {
-                background-color: #22344d;
-                color: #8ad7ff;
+                background-color: #1c2230;
+                color: #e2e8f0;
                 font-weight: 600;
-                font-size: 13px;
-                border-radius: 8px;
-                border: 1px solid #34506f;
+                font-size: 12px;
+                border-radius: 6px;
+                border: 1px solid #2b354a;
             }
             QPushButton:hover {
-                background-color: #29405d;
+                background-color: #262e42;
+                border-color: #3b82f6;
+                color: #ffffff;
             }
         """)
         self.split_btn.clicked.connect(self._on_split_video)
         action_row_one.addWidget(self.split_btn)
 
         self.resource_btn = QPushButton("Manage Resources")
-        self.resource_btn.setMinimumHeight(44)
-        self.resource_btn.setMinimumWidth(150)
+        self.resource_btn.setMinimumHeight(40)
+        self.resource_btn.setMinimumWidth(140)
         self.resource_btn.setStyleSheet("""
             QPushButton {
-                background-color: #22344d;
-                color: #8ad7ff;
+                background-color: #1c2230;
+                color: #e2e8f0;
                 font-weight: 600;
-                font-size: 13px;
-                border-radius: 8px;
-                border: 1px solid #34506f;
+                font-size: 12px;
+                border-radius: 6px;
+                border: 1px solid #2b354a;
             }
             QPushButton:hover {
-                background-color: #29405d;
+                background-color: #262e42;
+                border-color: #3b82f6;
+                color: #ffffff;
             }
         """)
         self.resource_btn.clicked.connect(self._on_manage_resources)
         action_row_one.addWidget(self.resource_btn)
 
-        self.clean_video_btn = QPushButton("Clean Video Data")
-        self.clean_video_btn.setMinimumHeight(44)
-        self.clean_video_btn.setMinimumWidth(145)
+        self.clean_video_btn = QPushButton("Clean Data")
+        self.clean_video_btn.setMinimumHeight(40)
+        self.clean_video_btn.setMinimumWidth(110)
         self.clean_video_btn.setStyleSheet("""
             QPushButton {
-                background-color: #3a2630;
-                color: #ffb3bd;
+                background-color: #24141a;
+                color: #fca5a5;
                 font-weight: 600;
-                font-size: 13px;
-                border-radius: 8px;
-                border: 1px solid #70404e;
+                font-size: 12px;
+                border-radius: 6px;
+                border: 1px solid #4a2028;
             }
-            QPushButton:hover { background-color: #52303c; }
+            QPushButton:hover {
+                background-color: #361a24;
+                border-color: #ef4444;
+            }
         """)
         self.clean_video_btn.setToolTip("Remove generated project data and video preview caches")
         self.clean_video_btn.clicked.connect(self._on_clean_video_data)
         action_row_two.addWidget(self.clean_video_btn)
 
-        self.open_project_btn = QPushButton("Open Project Folder")
-        self.open_project_btn.setMinimumHeight(44)
-        self.open_project_btn.setMinimumWidth(165)
+        self.open_project_btn = QPushButton("Open Projects Folder")
+        self.open_project_btn.setMinimumHeight(40)
+        self.open_project_btn.setMinimumWidth(150)
         self.open_project_btn.setStyleSheet("""
             QPushButton {
-                background-color: #22344d;
-                color: #8ad7ff;
+                background-color: #1c2230;
+                color: #e2e8f0;
                 font-weight: 600;
-                font-size: 13px;
-                border-radius: 8px;
-                border: 1px solid #34506f;
+                font-size: 12px;
+                border-radius: 6px;
+                border: 1px solid #2b354a;
             }
-            QPushButton:hover { background-color: #29405d; }
+            QPushButton:hover {
+                background-color: #262e42;
+                border-color: #3b82f6;
+                color: #ffffff;
+            }
         """)
         self.open_project_btn.setToolTip("Open the CapCap projects folder")
         self.open_project_btn.clicked.connect(self._on_open_project_folder)
         action_row_two.insertWidget(0, self.open_project_btn)
 
         self.about_btn = QPushButton("About / Help")
-        self.about_btn.setMinimumHeight(44)
-        self.about_btn.setMinimumWidth(145)
+        self.about_btn.setMinimumHeight(40)
+        self.about_btn.setMinimumWidth(110)
         self.about_btn.setStyleSheet("""
             QPushButton {
-                background-color: #22344d;
-                color: #8ad7ff;
+                background-color: #1c2230;
+                color: #e2e8f0;
                 font-weight: 600;
-                font-size: 13px;
-                border-radius: 8px;
-                border: 1px solid #34506f;
+                font-size: 12px;
+                border-radius: 6px;
+                border: 1px solid #2b354a;
             }
-            QPushButton:hover { background-color: #29405d; }
+            QPushButton:hover {
+                background-color: #262e42;
+                border-color: #3b82f6;
+                color: #ffffff;
+            }
         """)
         self.about_btn.clicked.connect(self._on_about)
         action_row_two.addWidget(self.about_btn)
@@ -634,13 +678,16 @@ class LauncherWindow(QDialog):
             h = int(duration // 3600)
             m = int((duration % 3600) // 60)
             from PySide6.QtWidgets import QMessageBox
-            reply = QMessageBox.warning(
-                self, "Video Too Long",
+            mb = QMessageBox(
+                QMessageBox.Warning,
+                "Video Too Long",
                 f"This video is {h}h {m}m long.\nCapCap works best with videos under 2 hours.\n\n"
                 "Use 'Split Video' to cut it into 2-hour segments first.",
                 QMessageBox.Ok,
+                self,
             )
-            reply.setStyleSheet(MSG_STYLE)
+            mb.setStyleSheet(MSG_STYLE)
+            mb.exec()
             return
 
         self._set_selected_device(self.selected_device)
@@ -1096,9 +1143,9 @@ class LauncherWindow(QDialog):
                      "-reset_timestamps", "1", out_pattern],
                     capture_output=True, timeout=3600, **subprocess_hidden_kwargs(),
                 )
-                progress.accept()
+                QMetaObject.invokeMethod(progress, "accept", Qt.QueuedConnection)
             except Exception as e:
-                progress.accept()
+                QMetaObject.invokeMethod(progress, "accept", Qt.QueuedConnection)
                 print(f"[Split] Error: {e}")
 
         threading.Thread(target=_do_split, daemon=True).start()

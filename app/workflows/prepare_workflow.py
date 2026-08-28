@@ -75,7 +75,7 @@ class PrepareWorkflow:
             probe = subprocess.run(
                 [ffmpeg, "-hide_banner", "-i", source, "-af", "volumedetect", "-f", "null", "-"],
                 capture_output=True,
-                check=False, **subprocess_text_kwargs(),
+                check=False, timeout=30, **subprocess_text_kwargs(),
             )
             output = f"{probe.stdout}\n{probe.stderr}"
             mean_match = re.search(r"mean_volume:\s*([-+]?\d+(?:\.\d+)?)\s*dB", output)
@@ -119,7 +119,7 @@ class PrepareWorkflow:
                         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", normalized_path,
                     ],
                     capture_output=True,
-                    check=True, **subprocess_text_kwargs(),
+                    check=True, timeout=300, **subprocess_text_kwargs(),
                 )
                 profile["path"] = normalized_path
                 print(
@@ -407,7 +407,7 @@ class PrepareWorkflow:
             subprocess.run(
                 [ffmpeg_bin, "-y", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
                  "-ar", "16000", "-ac", "1", audio_output_path],
-                capture_output=True, **subprocess_hidden_kwargs(),
+                capture_output=True, timeout=300, **subprocess_hidden_kwargs(),
             )
             project_state.set_artifact("extracted_audio", audio_output_path)
             project_state.set_step_status("extract_audio", "completed")
@@ -568,7 +568,7 @@ class PrepareWorkflow:
                         processed_vocal_path,
                     ]
                     subprocess.run(
-                        ffmpeg_cmd, check=True, capture_output=True,
+                        ffmpeg_cmd, check=True, capture_output=True, timeout=300,
                         **subprocess_hidden_kwargs(),
                     )
                     working_audio_path = processed_vocal_path

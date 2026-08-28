@@ -1,4 +1,4 @@
-﻿import os
+import os
 import hashlib
 import json
 import re
@@ -949,6 +949,11 @@ class PreviewController:
         ):
             return
 
+        # Check if an export is already running
+        if hasattr(self.gui, 'export_thread') and self.gui.export_thread.isRunning():
+            self.gui.log("[Export] Export already running, ignoring request")
+            return
+
         # Persist timeline data before export so mask/logo layers are available
         if hasattr(self.gui, "persist_current_timeline_project_data"):
             self.gui.persist_current_timeline_project_data()
@@ -962,11 +967,6 @@ class PreviewController:
 
         project_state_path = self.gui.project_service.project_file(self.gui.current_project_state.project_root) if self.gui.current_project_state else ""
         fill_focus_x, fill_focus_y = self.gui.get_output_fill_focus()
-        
-        # Check if an export is already running
-        if hasattr(self.gui, 'export_thread') and self.gui.export_thread.isRunning():
-            self.gui.log("[Export] Export already running, ignoring request")
-            return
         
         self.gui.export_thread = FinalExportWorker(
             workspace_root=self.gui.workspace_root,
@@ -985,11 +985,12 @@ class PreviewController:
             output_fill_focus_y=fill_focus_y,
             video_filter_state=self.gui.get_video_filter_state() if hasattr(self.gui, "get_video_filter_state") else {},
             original_audio_gain_db=original_audio_gain_db,
-            project_state_path=project_state_path,
+            project_file=project_state_path,
             project_temp_dir=self.gui.get_project_temp_dir("export"),
         )
         self.gui.export_thread.progress.connect(self.gui.on_export_progress)
         self.gui.export_thread.finished.connect(self.gui.on_export_finished)
+        self.gui.export_thread.finished.connect(self.gui.export_thread.deleteLater)
         self.gui.export_thread.start()
 
     def preview_five_seconds(self):
@@ -1000,63 +1001,24 @@ class PreviewController:
             QMessageBox.warning(self.gui, "Error", "Please choose a video first.")
             return
 
-        mode = self._effective_render_mode_without_tts(self.gui.get_output_mode_key())
-        original_audio_gain_db = self._original_audio_gain_db_for_render(mode)
-        default_dir = self.gui.final_output_folder_edit.text().strip() or os.path.join(self.gui.workspace_root, "output")
-        out_dir = QFileDialog.getExistingDirectory(
-            self.gui,
-            "Choose Fast Preview Output Folder",
-            default_dir,
-        )
-        if not out_dir:
-            return
-        os.makedirs(out_dir, exist_ok=True)
-
-        translated_srt_path = self.gui.last_translated_srt_path
-        chosen_audio = ""
-        if mode in ("voice", "both"):
-            chosen_audio = self._regenerate_mixed_audio_with_current_volumes()
-            if not chosen_audio:
-                chosen_audio = self.gui.resolve_selected_audio_path()
-        else:
-            chosen_audio = self.gui.resolve_selected_audio_path()
-
-        if mode in ("subtitle", "both"):
-            translated_srt_path = self._prepare_current_export_srt()
-        if mode in ("subtitle", "both") and (not translated_srt_path or not os.path.exists(translated_srt_path)):
-            QMessageBox.warning(self.gui, "Error", "Translated subtitle file not found. Translate or import an SRT first.")
-            return
-
-        if mode in ("voice", "both") and (not chosen_audio or not os.path.exists(chosen_audio)):
-            QMessageBox.warning(
-                self.gui,
-                "Error",
-                "Selected audio source is not ready. Generate voice/mix first, or switch to 'Use existing mixed audio' and choose a valid file.",
-            )
+        # Check if a quick preview is already running
+        if hasattr(self.gui, 'quick_preview_thread') and self.gui.quick_preview_thread.isRunning():
+            self.gui.log("[Preview] 5s preview already running, ignoring request")
             return
 
         start_seconds = max(0.0, self.gui.media_player.position() / 1000.0)
         duration_seconds = 5.0
-        target_width, target_height = self._resolve_output_canvas_dimensions(video_path)
-        text_canvas_width, text_canvas_height = target_width, target_height
-        if not text_canvas_width or not text_canvas_height:
-            try:
-                from video_processor import get_video_dimensions
-                text_canvas_width, text_canvas_height = get_video_dimensions(video_path)
-            except Exception:
-                text_canvas_width, text_canvas_height = 1920, 1080
-        fill_focus_x, fill_focus_y = self.gui.get_output_fill_focus()
-        mask_regions, logo_layers, text_layers = self._extract_overlay_layers()
-        blur_regions = self._extract_fast_preview_blur_regions(start_seconds, duration_seconds)
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
-        preview_output = os.path.join(out_dir, f"{video_name}_preview5s_{int(time.time())}.mp4")
+        mode = self.gui.get_output_mode_key()
+        preview_output = os.path.join(self.gui.get_project_temp_dir("preview"), f"preview_5s_{int(start_seconds)}.mp4")
+
+        chosen_audio = self.gui.get_final_dub_audio_path()
+        if mode in ("audio", "both") and not chosen_audio:
+            QMessageBox.warning(self.gui, "Error", "Please generate dubbed voice or choose existing audio first.")
+            return
+
         preview_srt_path = ""
-        preview_ass_path = ""
         preview_segments = []
-        text_image_layers = self._build_fast_preview_text_images(
-            text_layers, start_seconds, duration_seconds, text_canvas_width, text_canvas_height,
-            self.gui.get_project_temp_dir("preview"),
-        )
+        preview_ass_path = ""
 
         if mode in ("subtitle", "both"):
             preview_srt_path, preview_segments = self.build_subtitle_preview_srt(start_seconds, duration_seconds)
@@ -1074,10 +1036,13 @@ class PreviewController:
         except Exception:
             pass
 
-        # Check if a quick preview is already running
-        if hasattr(self.gui, 'quick_preview_thread') and self.gui.quick_preview_thread.isRunning():
-            self.gui.log("[Preview] 5s preview already running, ignoring request")
-            return
+        target_width, target_height = self._resolve_output_canvas_dimensions(video_path)
+        fill_focus_x, fill_focus_y = self.gui.get_output_fill_focus()
+        original_audio_gain_db = self.gui.get_effective_original_audio_gain_db()
+        mask_regions = self.gui.get_mask_filter_regions() if hasattr(self.gui, "get_mask_filter_regions") else []
+        blur_regions = self.gui.get_blur_filter_regions() if hasattr(self.gui, "get_blur_filter_regions") else []
+        logo_layers = self.gui.get_logo_filter_layers() if hasattr(self.gui, "get_logo_filter_layers") else []
+        text_image_layers = self.gui.get_text_image_filter_layers() if hasattr(self.gui, "get_text_image_filter_layers") else []
 
         self.gui.quick_preview_thread = QuickPreviewWorker(
             video_path=video_path,
@@ -1103,6 +1068,7 @@ class PreviewController:
             temp_dir=self.gui.get_project_temp_dir("preview"),
         )
         self.gui.quick_preview_thread.finished.connect(self.gui.on_quick_preview_ready)
+        self.gui.quick_preview_thread.finished.connect(self.gui.quick_preview_thread.deleteLater)
         self.gui.quick_preview_thread.start()
 
     def start_exact_frame_preview(self, show_dialog: bool = True):
@@ -1112,6 +1078,11 @@ class PreviewController:
         if not video_path or not os.path.exists(video_path):
             if show_dialog:
                 QMessageBox.warning(self.gui, "Error", "Please choose a video first.")
+            return
+
+        # Check if a frame preview is already running
+        if hasattr(self.gui, 'frame_preview_thread') and self.gui.frame_preview_thread.isRunning():
+            self.gui.log("[Preview] Frame preview already running, ignoring request")
             return
 
         mode = self._effective_render_mode_without_tts(self.gui.get_output_mode_key())
@@ -1148,11 +1119,6 @@ class PreviewController:
         target_width, target_height = ((None, None) if not use_output_canvas else self._resolve_output_canvas_dimensions(video_path))
         fill_focus_x, fill_focus_y = self.gui.get_output_fill_focus()
 
-        # Check if a frame preview is already running
-        if hasattr(self.gui, 'frame_preview_thread') and self.gui.frame_preview_thread.isRunning():
-            self.gui.log("[Preview] Frame preview already running, ignoring request")
-            return
-
         self.gui.frame_preview_thread = ExactFramePreviewWorker(
             video_path=video_path,
             output_path=frame_output,
@@ -1167,6 +1133,7 @@ class PreviewController:
             video_filter_state=self.gui.get_video_filter_state() if hasattr(self.gui, "get_video_filter_state") else {},
         )
         self.gui.frame_preview_thread.finished.connect(self.gui.on_exact_frame_ready)
+        self.gui.frame_preview_thread.finished.connect(self.gui.frame_preview_thread.deleteLater)
         self.gui.frame_preview_thread.start()
 
     def on_exact_frame_ready(self, output_path, error):

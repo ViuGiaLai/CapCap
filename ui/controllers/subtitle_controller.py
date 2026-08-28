@@ -83,6 +83,7 @@ class SubtitleController:
 
         self.gui.transcription_thread = TranscriptionWorker(audio_src, model_path, lang)
         self.gui.transcription_thread.finished.connect(self.gui.on_transcription_finished)
+        self.gui.transcription_thread.finished.connect(self.gui.transcription_thread.deleteLater)
         self.gui.transcription_thread.start()
 
     def on_transcription_finished(self, segments, error=""):
@@ -177,6 +178,7 @@ class SubtitleController:
             srt_source, model_path, src_lang, self.gui.get_target_language_code(), enable_polish
         )
         self.gui.translation_thread.finished.connect(self.gui.on_translation_finished)
+        self.gui.translation_thread.finished.connect(self.gui.translation_thread.deleteLater)
         self.gui.translation_thread.start()
 
     def on_translation_finished(self, translated_srt, error, fallback_notice=""):
@@ -768,6 +770,7 @@ class SubtitleController:
                 style_instruction=style_instruction,
             )
             self.gui.rewrite_translation_thread.finished.connect(self.gui.on_rewrite_translation_finished)
+            self.gui.rewrite_translation_thread.finished.connect(self.gui.rewrite_translation_thread.deleteLater)
             self.gui.rewrite_translation_thread.start()
 
         def _cleanup_dialog():

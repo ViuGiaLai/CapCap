@@ -23,8 +23,22 @@ class ResourceDownloadService:
     HF_RESOURCE_REVISION = os.getenv("CAPCAP_RESOURCE_REVISION", "main").strip() or "main"
     SENSEVOICE_REPO = os.getenv(
         "SENSEVOICE_MODEL_REPO",
-        "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
-    ).strip() or "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+        "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
+    ).strip() or "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09"
+    SENSEVOICE_MODEL_URL = (
+        "https://huggingface.co/csukuangfj/"
+        "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/"
+        "resolve/main/model.int8.onnx?download=true"
+    )
+    SENSEVOICE_TOKENS_URL = (
+        "https://huggingface.co/csukuangfj/"
+        "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/"
+        "resolve/main/tokens.txt?download=true"
+    )
+    SILERO_VAD_URL = (
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+        "asr-models/silero_vad.onnx"
+    )
 
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root
@@ -56,16 +70,15 @@ class ResourceDownloadService:
     def _voice_local_paths(self, voice_entry: dict) -> tuple[str, str]:
         provider_voice = str(voice_entry.get("provider_voice", "")).strip().replace("/", os.sep)
         normalized = os.path.normpath(provider_voice)
+        filename = os.path.basename(normalized)
+        candidate_nested = models_path("piper", "piper", filename)
+        if os.path.exists(candidate_nested):
+            return (candidate_nested, f"{candidate_nested}.json")
         if normalized.startswith(f"models{os.sep}"):
-            # Resolve bundled resources through models_path(), which checks
-            # both the writable project directory and PyInstaller's
-            # _internal/models directory.  join_root() only points at the
-            # executable directory in a frozen build and therefore made the
-            # bundled default voice look missing.
             relative = normalized[len("models" + os.sep):]
             model_path = models_path(*Path(relative).parts)
         else:
-            model_path = models_path("piper", os.path.basename(normalized))
+            model_path = models_path("piper", filename)
         config_path = f"{model_path}.json"
         return (
             model_path,
@@ -494,6 +507,41 @@ class ResourceDownloadService:
     def list_resources(self) -> list[dict]:
         resources: list[dict] = [
             {
+                "id": "sensevoice:model",
+                "name": "SenseVoice (Required)",
+                "kind": "sensevoice",
+                "required_for": "CPU Mode",
+                "status": "installed" if self.is_resource_installed("sensevoice:model") else "missing",
+                "target_dir": models_path("sensevoice"),
+                "expected_filename": "model.int8.onnx and tokens.txt",
+                "download_links": [
+                    {"label": "Download model (237 MB)", "url": self.SENSEVOICE_MODEL_URL},
+                    {"label": "Download tokens.txt", "url": self.SENSEVOICE_TOKENS_URL},
+                ],
+                "auto_download_supported": False,
+                "description": (
+                    "Required to create a project in CPU Mode. Download both files, "
+                    "save them directly in the target folder, then click Refresh."
+                ),
+            },
+            {
+                "id": "sensevoice:vad",
+                "name": "Silero VAD (Required)",
+                "kind": "sensevoice",
+                "required_for": "SenseVoice transcription",
+                "status": "installed" if self.is_resource_installed("sensevoice:vad") else "missing",
+                "target_dir": bin_path(),
+                "expected_filename": "silero_vad.onnx",
+                "download_links": [
+                    {"label": "Download silero_vad.onnx", "url": self.SILERO_VAD_URL},
+                ],
+                "auto_download_supported": False,
+                "description": (
+                    "Detects speech segments before SenseVoice transcription. "
+                    "Download this file directly into the target folder, then click Refresh."
+                ),
+            },
+            {
                 "id": "whisper:base",
                 "name": "Whisper Base",
                 "kind": "whisper_cpu",
@@ -607,7 +655,13 @@ class ResourceDownloadService:
             fw_dir = join_root("bin", "cuda12_fw")
             return os.path.exists(os.path.join(fw_dir, "cublas64_12.dll"))
         if resource_id == "sensevoice:model":
-            return os.path.isfile(os.path.join(models_path("sensevoice"), "model.int8.onnx"))
+            sensevoice_dir = models_path("sensevoice")
+            return (
+                os.path.isfile(os.path.join(sensevoice_dir, "model.int8.onnx"))
+                and os.path.isfile(os.path.join(sensevoice_dir, "tokens.txt"))
+            )
+        if resource_id == "sensevoice:vad":
+            return os.path.isfile(bin_path("silero_vad.onnx"))
         if resource_id == "diarization:segmentation":
             return os.path.isfile(self._speaker_diarization_segmentation_path())
         if resource_id == "diarization:embedding":

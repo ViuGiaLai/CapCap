@@ -25,7 +25,7 @@ if APP_PATH not in sys.path:
     sys.path.append(APP_PATH)
 
 from services import GUIProjectBridge, ProjectService, ResourceDownloadService, VoiceCatalogService
-from controllers import PipelineController, PreviewController, SubtitleController
+from controllers import OcrController, PipelineController, PreviewController, ProjectController, SubtitleController, VideoFilterController
 from helpers import (
     build_guidance_state,
     build_preview_context_text,
@@ -626,6 +626,9 @@ class VideoTranslatorGUI(QMainWindow):
         self.subtitle_controller = SubtitleController(self)
         self.pipeline_controller = PipelineController(self)
         self.preview_controller = PreviewController(self)
+        self.project_controller = ProjectController(self)
+        self.video_filter_controller = VideoFilterController(self)
+        self.ocr_controller = OcrController(self)
         self.current_project_state = None
         # Do not inherit a legacy global Subtitle Source from .env.  Opening
         # a project below will replace this with that project's own setting.
@@ -1591,6 +1594,196 @@ class VideoTranslatorGUI(QMainWindow):
         self._voiceover_force_refresh = True
         if getattr(self, "voice_catalog_entries_all", None):
             self.refresh_voice_catalog_combos()
+
+    def on_translation_engine_changed(self, _index: int = -1):
+        """Update Translation Engine UI fields based on selected provider."""
+        import os
+        engine_combo = getattr(self, "translation_engine_combo", None)
+        if engine_combo is None:
+            return
+        provider = engine_combo.currentData() or "google"
+        config_panel = getattr(self, "translation_config_panel", None)
+        key_edit = getattr(self, "translation_api_key_edit", None)
+        model_edit = getattr(self, "translation_model_edit", None)
+        url_edit = getattr(self, "translation_base_url_edit", None)
+        link_label = getattr(self, "translation_link_label", None)
+        key_label = getattr(self, "translation_key_label", None)
+        test_btn = getattr(self, "translation_test_btn", None)
+        status_lbl = getattr(self, "translation_test_status", None)
+
+        show_config = provider != "google"
+        if config_panel:
+            config_panel.setVisible(show_config)
+        if status_lbl:
+            status_lbl.setText("")
+
+        PRESETS = {
+            "google_ai_studio": {
+                "key_env": "GOOGLE_AI_STUDIO_API_KEY", "model_env": "GOOGLE_AI_STUDIO_MODEL",
+                "url_env": "GOOGLE_AI_STUDIO_BASE_URL",
+                "default_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                "default_model": "gemini-2.5-flash",
+                "link": "Lấy API Key miễn phí: <a href='https://aistudio.google.com/apikey'>Google AI Studio</a>",
+            },
+            "deepseek": {
+                "key_env": "DEEPSEEK_API_KEY", "model_env": "DEEPSEEK_MODEL",
+                "url_env": "DEEPSEEK_BASE_URL",
+                "default_url": "https://api.deepseek.com/v1",
+                "default_model": "deepseek-chat",
+                "link": "Lấy API Key: <a href='https://platform.deepseek.com/api_keys'>DeepSeek Platform</a>",
+            },
+            "openai": {
+                "key_env": "OPENAI_API_KEY", "model_env": "OPENAI_MODEL",
+                "url_env": "OPENAI_BASE_URL",
+                "default_url": "https://api.openai.com/v1/",
+                "default_model": "gpt-4o-mini",
+                "link": "Lấy API Key: <a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>",
+            },
+            "ollama": {
+                "key_env": "", "model_env": "OLLAMA_MODEL",
+                "url_env": "OLLAMA_BASE_URL",
+                "default_url": "http://localhost:11434/v1",
+                "default_model": "qwen2.5:7b",
+                "link": "Cài Ollama: <a href='https://ollama.com/download'>ollama.com/download</a>. Model gợi ý: <b>qwen2.5:7b</b> hoặc <b>llama3.1:8b</b>",
+            },
+            "custom": {
+                "key_env": "CUSTOM_AI_API_KEY", "model_env": "CUSTOM_AI_MODEL",
+                "url_env": "CUSTOM_AI_BASE_URL",
+                "default_url": "https://api.openai.com/v1/",
+                "default_model": "gpt-4o-mini",
+                "link": "Nhập URL của bất kỳ API tương thích OpenAI nào",
+            },
+        }
+        if provider not in PRESETS:
+            return
+        p = PRESETS[provider]
+        if key_edit:
+            key_visible = bool(p["key_env"])
+            if key_label:
+                key_label.setVisible(key_visible)
+            key_edit.setVisible(key_visible)
+            if key_visible:
+                key_edit.setText(os.getenv(p["key_env"], ""))
+            else:
+                key_edit.clear()
+        if model_edit:
+            model_edit.setText(os.getenv(p["model_env"], "") or p["default_model"])
+        if url_edit:
+            url_edit.setText(os.getenv(p["url_env"], "") or p["default_url"])
+        if link_label:
+            link_label.setText(p["link"])
+
+        # Save provider selection to env
+        self._save_translation_engine_env(provider, "", "", "")
+
+    def _save_translation_engine_env(self, provider: str, api_key: str, model: str, base_url: str):
+        """Persist the selected provider to .env (provider only, not credentials yet — saved on Save)."""
+        import re
+        env_path = ".env"
+        env_lines = []
+        try:
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    env_lines = f.readlines()
+        except Exception:
+            pass
+        updates = {"OPENAI_PROVIDER": provider, "AI_POLISHER_PROVIDER": provider}
+        new_lines = []
+        handled = set()
+        for line in env_lines:
+            m = re.match(r"^([^=\s]+)=", line)
+            if m and m.group(1) in updates:
+                new_lines.append(f"{m.group(1)}={updates[m.group(1)]}\n")
+                handled.add(m.group(1))
+            else:
+                new_lines.append(line)
+        for k, v in updates.items():
+            if k not in handled:
+                new_lines.append(f"{k}={v}\n")
+        try:
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+            os.environ[list(updates.keys())[0]] = provider
+            os.environ[list(updates.keys())[1]] = provider
+        except Exception:
+            pass
+
+    def on_translation_engine_test_connection(self):
+        """Test the AI translation connection from the sidebar."""
+        status_lbl = getattr(self, "translation_test_status", None)
+        engine_combo = getattr(self, "translation_engine_combo", None)
+        key_edit = getattr(self, "translation_api_key_edit", None)
+        model_edit = getattr(self, "translation_model_edit", None)
+        url_edit = getattr(self, "translation_base_url_edit", None)
+        if not engine_combo:
+            return
+        provider = engine_combo.currentData() or "google"
+        if provider == "google":
+            if status_lbl:
+                status_lbl.setText("Google Translate không cần kết nối — sẵn sàng ✓")
+            return
+        url = (url_edit.text().strip() if url_edit else "") or "https://api.openai.com/v1/"
+        key = (key_edit.text().strip() if key_edit else "") or ("ollama" if provider == "ollama" else "")
+        model = (model_edit.text().strip() if model_edit else "") or "gpt-4o-mini"
+        if status_lbl:
+            status_lbl.setText("Đang kiểm tra...")
+            status_lbl.repaint()
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=key, base_url=url, timeout=15.0)
+            client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "Reply with OK."}],
+                max_tokens=8,
+            )
+            if status_lbl:
+                status_lbl.setText(f"Kết nối thành công: {model} ✓")
+            # Save credentials on success
+            import re
+            env_path = ".env"
+            env_lines = []
+            try:
+                if os.path.exists(env_path):
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        env_lines = f.readlines()
+            except Exception:
+                pass
+            PRESETS = {
+                "google_ai_studio": ("GOOGLE_AI_STUDIO_API_KEY", "GOOGLE_AI_STUDIO_MODEL", "GOOGLE_AI_STUDIO_BASE_URL"),
+                "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL"),
+                "openai": ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"),
+                "ollama": ("", "OLLAMA_MODEL", "OLLAMA_BASE_URL"),
+                "custom": ("CUSTOM_AI_API_KEY", "CUSTOM_AI_MODEL", "CUSTOM_AI_BASE_URL"),
+            }
+            k_env, m_env, u_env = PRESETS.get(provider, ("", "", ""))
+            updates = {"OPENAI_PROVIDER": provider, "AI_POLISHER_PROVIDER": provider}
+            if k_env and key:
+                updates[k_env] = key
+            if m_env and model:
+                updates[m_env] = model
+            if u_env and url:
+                updates[u_env] = url
+            new_lines = []
+            handled = set()
+            for line in env_lines:
+                m2 = re.match(r"^([^=\s]+)=", line)
+                if m2 and m2.group(1) in updates:
+                    new_lines.append(f"{m2.group(1)}={updates[m2.group(1)]}\n")
+                    handled.add(m2.group(1))
+                else:
+                    new_lines.append(line)
+            for k, v in updates.items():
+                if k not in handled:
+                    new_lines.append(f"{k}={v}\n")
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+            for k, v in updates.items():
+                os.environ[k] = v
+            self.log(f"[Translation] Provider saved: {provider} ({model})")
+        except Exception as exc:
+            if status_lbl:
+                status_lbl.setText(f"Thất bại: {exc}")
+
 
     def on_selected_voice_changed(self):
         self._update_voice_preview_meta()
@@ -4291,7 +4484,7 @@ class VideoTranslatorGUI(QMainWindow):
 
         if hasattr(self, "blur_area_btn"):
             self.blur_area_btn.setEnabled(False)
-        if hasattr(self, "video_view"):
+        if hasattr(self, "video_view") and hasattr(self.video_view, "set_blur_edit_enabled"):
             self.video_view.set_blur_edit_enabled(False)
         if overlay is not None:
             overlay.set_editable(False)
@@ -4542,221 +4735,61 @@ class VideoTranslatorGUI(QMainWindow):
         }
 
     def _video_filter_lut_map(self):
-        return {
-            "warm": asset_path("luts", "Portrait", "Portrait3.cube"),
-            "vivid": asset_path("luts", "Color Boost", "Earth_Tone_Boost.cube"),
-            "cool": asset_path("luts", "Cinematic", "Cinematic-2.cube"),
-        }
+        return self.video_filter_controller.video_filter_lut_map()
 
     def _video_filter_fields(self):
-        return ("brightness", "contrast", "saturation", "gamma", "hue", "temperature", "highlights", "shadows")
+        return self.video_filter_controller.video_filter_fields()
 
     def _clamp_video_filter_value(self, value):
-        try:
-            numeric = int(round(float(value)))
-        except Exception:
-            numeric = 0
-        return max(-100, min(100, numeric))
+        return self.video_filter_controller.clamp_video_filter_value(value)
 
     def _default_video_filter_overrides(self):
-        return {field: 0 for field in self._video_filter_fields()}
+        return self.video_filter_controller.default_video_filter_overrides()
 
     def _default_video_filter_modified_flags(self):
-        return {field: False for field in self._video_filter_fields()}
+        return self.video_filter_controller.default_video_filter_modified_flags()
 
     def _normalize_video_filter_preset_key(self, preset_key):
-        key = str(preset_key or "original").strip().lower()
-        return key if key in self._video_filter_presets() else "original"
+        return self.video_filter_controller.normalize_video_filter_preset_key(preset_key)
 
     def _get_video_filter_base_values(self, preset_key=None):
-        key = self._normalize_video_filter_preset_key(preset_key or self._video_filter_preset_key)
-        return dict(self._video_filter_presets().get(key, self._video_filter_presets()["original"]))
+        return self.video_filter_controller.get_video_filter_base_values(preset_key)
 
     def _get_video_filter_scaled_values(self, preset_key=None, intensity=None):
-        base_values = self._get_video_filter_base_values(preset_key)
-        scale = max(0.0, min(100.0, float(intensity if intensity is not None else self._video_filter_intensity))) / 100.0
-        return {
-            field: self._clamp_video_filter_value(base_values.get(field, 0) * scale)
-            for field in self._video_filter_fields()
-        }
+        return self.video_filter_controller.get_video_filter_scaled_values(preset_key, intensity)
 
     def _get_video_filter_effective_values(self, preset_key=None, intensity=None, overrides=None, modified_flags=None):
-        scaled_values = self._get_video_filter_scaled_values(preset_key, intensity)
-        effective = {}
-        active_overrides = overrides if overrides is not None else self._video_filter_adjust_overrides
-        active_modified = modified_flags if modified_flags is not None else self._video_filter_user_modified
-        for field in self._video_filter_fields():
-            if active_modified.get(field, False):
-                effective[field] = self._clamp_video_filter_value(active_overrides.get(field, 0))
-            else:
-                effective[field] = self._clamp_video_filter_value(scaled_values.get(field, 0))
-        return effective
+        return self.video_filter_controller.get_video_filter_effective_values(preset_key, intensity, overrides, modified_flags)
 
     def _refresh_video_filter_ui(self):
-        if not hasattr(self, "video_filter_intensity_slider"):
-            return
-        self._video_filter_ui_sync = True
-        try:
-            for preset_key, button in getattr(self, "video_filter_preset_buttons", {}).items():
-                button.setChecked(preset_key == self._normalize_video_filter_preset_key(self._video_filter_preset_key))
-
-            self.video_filter_intensity_slider.setValue(int(self._video_filter_intensity))
-            if hasattr(self, "video_filter_intensity_value_label"):
-                self.video_filter_intensity_value_label.setText(str(int(self._video_filter_intensity)))
-
-            for field, slider in getattr(self, "video_filter_adjust_sliders", {}).items():
-                slider.setValue(int(self._video_filter_adjust_overrides.get(field, 0)))
-                self._update_video_filter_slider_visual_state(field, slider)
-            for field, label in getattr(self, "video_filter_adjust_value_labels", {}).items():
-                label.setText(str(int(self._video_filter_adjust_overrides.get(field, 0))))
-                is_modified = bool(self._video_filter_user_modified.get(field, False))
-                label.setProperty("filterModified", is_modified)
-                label.style().unpolish(label)
-                label.style().polish(label)
-        finally:
-            self._video_filter_ui_sync = False
+        return self.video_filter_controller.refresh_video_filter_ui()
 
     def _update_video_filter_slider_visual_state(self, field, slider):
-        if not slider:
-            return
-        is_modified = bool(self._video_filter_user_modified.get(field, False))
-        if is_modified:
-            slider.setStyleSheet(
-                "QSlider::groove:horizontal {"
-                "background: #223248; height: 6px; border-radius: 3px; }"
-                "QSlider::sub-page:horizontal {"
-                "background: #4ea6d8; border-radius: 3px; }"
-                "QSlider::handle:horizontal {"
-                "background: #8ad7ff; width: 14px; margin: -5px 0; border-radius: 7px; }"
-            )
-        else:
-            slider.setStyleSheet("")
+        return self.video_filter_controller.update_video_filter_slider_visual_state(field, slider)
 
     def set_video_filter_state(self, preset_key="original", intensity=75, overrides=None, modified_flags=None):
-        self._video_filter_preset_key = self._normalize_video_filter_preset_key(preset_key)
-        self._video_filter_intensity = max(0, min(100, int(round(float(intensity)))))
-        base_overrides = self._default_video_filter_overrides()
-        base_modified_flags = self._default_video_filter_modified_flags()
-        for field in self._video_filter_fields():
-            if overrides and field in overrides:
-                base_overrides[field] = self._clamp_video_filter_value(overrides[field])
-            if modified_flags and field in modified_flags:
-                base_modified_flags[field] = bool(modified_flags[field])
-        self._video_filter_adjust_overrides = base_overrides
-        self._video_filter_user_modified = base_modified_flags
-        self._refresh_video_filter_ui()
-        # Keep the inspector controls in sync as well.  The inspector has a
-        # separate set of sliders from the legacy filter panel; previously a
-        # Reset changed the underlying state but left those visible sliders at
-        # their old values until the inspector was reopened.
-        try:
-            self._sync_video_inspector_ui()
-        except Exception:
-            pass
-        if hasattr(self, "media_player") and self._is_realtime_color_filter_state():
-            self._apply_realtime_color_filter_preview()
-        self.refresh_ui_state()
+        return self.video_filter_controller.set_video_filter_state(preset_key, intensity, overrides, modified_flags)
 
     def on_video_filter_preset_selected(self, preset_key):
-        if self._video_filter_ui_sync:
-            return
-        normalized_preset = self._normalize_video_filter_preset_key(preset_key)
-        seeded_overrides = self._get_video_filter_scaled_values(normalized_preset, 75)
-        self.set_video_filter_state(
-            normalized_preset,
-            75,
-            seeded_overrides,
-            self._default_video_filter_modified_flags(),
-        )
-        self._mark_video_filter_preview_dirty()
-        self.schedule_live_video_filter_preview()
-        self._persist_video_filter_settings()
+        return self.video_filter_controller.on_video_filter_preset_selected(preset_key)
 
     def on_video_filter_intensity_changed(self, value):
-        if self._video_filter_ui_sync:
-            return
-        self._video_filter_intensity = max(0, min(100, int(value)))
-        self._refresh_video_filter_ui()
-        self.refresh_ui_state()
-        self._mark_video_filter_preview_dirty()
-        if not self._is_video_filter_slider_interacting():
-            self.schedule_live_video_filter_preview()
-        self._persist_video_filter_settings()
+        return self.video_filter_controller.on_video_filter_intensity_changed(value)
 
     def on_video_filter_adjust_changed(self, field_key, value):
-        if self._video_filter_ui_sync:
-            return
-        normalized_field = str(field_key or "").strip().lower()
-        if normalized_field not in self._video_filter_fields():
-            return
-        clamped_value = self._clamp_video_filter_value(value)
-        scaled_value = self._get_video_filter_scaled_values().get(normalized_field, 0)
-        self._video_filter_adjust_overrides[normalized_field] = clamped_value
-        self._video_filter_user_modified[normalized_field] = int(clamped_value) != int(scaled_value)
-        self._refresh_video_filter_ui()
-        self.refresh_ui_state()
-        self._mark_video_filter_preview_dirty()
-        if not self._is_video_filter_slider_interacting():
-            self.schedule_live_video_filter_preview()
-        self._persist_video_filter_settings()
+        return self.video_filter_controller.on_video_filter_adjust_changed(field_key, value)
 
     def reset_video_filters(self):
-        self.set_video_filter_state(
-            "original",
-            75,
-            self._default_video_filter_overrides(),
-            self._default_video_filter_modified_flags(),
-        )
-        if self._is_realtime_color_filter_state():
-            self._apply_realtime_color_filter_preview()
-        self._video_filter_preview_dirty = False
-        self._video_filter_apply_requested = False
-        if not self._is_realtime_color_filter_state():
-            self.schedule_live_video_filter_preview()
-        self._persist_video_filter_settings()
+        return self.video_filter_controller.reset_video_filters()
 
     def reset_video_filter_adjustments(self):
-        seeded_overrides = self._get_video_filter_scaled_values(self._video_filter_preset_key, self._video_filter_intensity)
-        self.set_video_filter_state(
-            self._video_filter_preset_key,
-            self._video_filter_intensity,
-            seeded_overrides,
-            self._default_video_filter_modified_flags(),
-        )
-        self._mark_video_filter_preview_dirty()
-        self.schedule_live_video_filter_preview()
+        return self.video_filter_controller.reset_video_filter_adjustments()
 
     def get_video_filter_state(self):
-        base_values = self._get_video_filter_base_values()
-        scaled_values = self._get_video_filter_scaled_values()
-        effective_values = self._get_video_filter_effective_values()
-        preset_key = self._normalize_video_filter_preset_key(self._video_filter_preset_key)
-        lut_path = str(self._video_filter_lut_map().get(preset_key, "") or "").strip()
-        if lut_path and not os.path.exists(lut_path):
-            lut_path = ""
-        lut_strength = 0.0
-        if lut_path:
-            lut_strength = max(0.0, min(1.0, float(self._video_filter_intensity) / 100.0))
-        active = any(abs(int(value)) > 0 for value in effective_values.values()) or bool(
-            lut_path and lut_strength > 0.001
-        )
-        return {
-            "preset": preset_key,
-            "intensity": int(self._video_filter_intensity),
-            "base": base_values,
-            "scaled": scaled_values,
-            "overrides": dict(self._video_filter_adjust_overrides),
-            "modified": dict(self._video_filter_user_modified),
-            "final": effective_values,
-            "lut_path": lut_path,
-            "lut_strength": lut_strength,
-            "active": active,
-        }
+        return self.video_filter_controller.get_video_filter_state()
 
     def has_active_video_filters(self):
-        state = self.get_video_filter_state()
-        active = bool(state.get("active"))
-        return active
+        return self.video_filter_controller.has_active_video_filters()
 
     def on_output_ratio_changed(self, *_args):
         if hasattr(self, "video_view") and hasattr(self.video_view, "set_preview_aspect_ratio"):
@@ -5301,7 +5334,8 @@ class VideoTranslatorGUI(QMainWindow):
             self.sync_live_subtitle_preview()
             return
         render_w, render_h = self._subtitle_render_dimensions()
-        self.video_view.set_subtitle_render_dimensions(render_w, render_h)
+        if hasattr(self.video_view, "set_subtitle_render_dimensions"):
+            self.video_view.set_subtitle_render_dimensions(render_w, render_h)
         source_h = max(1, render_h)
         preview_rect = self.video_view.get_preview_canvas_rect() if hasattr(self.video_view, "get_preview_canvas_rect") else self.video_view.get_video_content_rect()
         preview_h = max(1.0, preview_rect.height() or float(self.video_view.height()) or 1.0)
@@ -6381,6 +6415,8 @@ class VideoTranslatorGUI(QMainWindow):
             )
         if hasattr(self, "timeline_delete_btn"):
             self.timeline_delete_btn.setEnabled(not is_review_mode and can_modify_layer)
+        if hasattr(self, "inspector_delete_segment_btn"):
+            self.inspector_delete_segment_btn.setEnabled(not is_review_mode and can_modify_layer)
         if layer_type == "subtitle":
             self._show_subtitle_inspector_for_layer(layer_id)
         elif layer_type == "dub_subtitle":
@@ -10316,7 +10352,8 @@ class VideoTranslatorGUI(QMainWindow):
             and not is_playing
             and not bool(getattr(self, "_filter_thumbnail_visible", False))
         )
-        video_view.set_blur_edit_enabled(editing_allowed)
+        if hasattr(video_view, "set_blur_edit_enabled"):
+            video_view.set_blur_edit_enabled(editing_allowed)
         if blur_add_btn is not None:
             # The "+" button must be clickable even when the blur effect
             # toggle is OFF: pressing it should both enable the effect
@@ -10391,145 +10428,22 @@ class VideoTranslatorGUI(QMainWindow):
         self.schedule_timeline_project_persist(blur_state=True)
 
     def toggle_ocr_region_editing(self, checked: bool):
-        overlay = getattr(self, "ocr_region_overlay", None)
-        if overlay is None:
-            return
-        engine = os.getenv("TRANSCRIPTION_ENGINE", _default_asr_engine())
-        if not checked or engine != "ocr":
-            overlay.hide()
-            overlay.set_editable(False)
-            self.ocr_region_btn.setStyleSheet("QPushButton { color: #6ee7d6; font-weight: bold; font-size: 10px; padding: 0; }")
-            self._sync_blur_controls()
-            return
-        if self._blur_effect_enabled():
-            self.video_view.set_blur_edit_enabled(False)
-        overlay.set_editable(True)
-        overlay.sync_to_view()
-        self.apply_preview_blur_region()
-        self.log("[OCR Region] drag inside the video preview to move or resize the OCR crop.")
+        return self.ocr_controller.toggle_ocr_region_editing(checked)
 
     def toggle_ocr_translator(self, checked: bool):
-        """Show the independent, on-demand OCR Translator selection."""
-        overlay = getattr(self, "ocr_translator_overlay", None)
-        self._ocr_translator_active = bool(checked)
-        if overlay is None:
-            return
-        if not self._ocr_translator_active:
-            overlay.hide()
-            return
-        video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
-        if not video_path or not os.path.isfile(video_path):
-            self._ocr_translator_active = False
-            button = getattr(self, "ocr_translator_btn", None)
-            if button is not None:
-                button.blockSignals(True)
-                button.setChecked(False)
-                button.blockSignals(False)
-            QMessageBox.warning(self, "OCR Translator", "Please load a video before capturing visual text.")
-            return
-        overlay.set_normalized_rect(getattr(self, "_ocr_translator_rect", (0.2, 0.2, 0.6, 0.25)))
-        overlay.sync_to_view()
-        # The preview's native mpv surface can finish its layout after the
-        # toolbar signal. Re-sync on the next event-loop pass so the tool
-        # always receives the final visible video geometry.
-        QTimer.singleShot(0, overlay.sync_to_view)
-        self.log("[OCR Translator] Selection active. Drag or resize it, then click Capture.")
+        return self.ocr_controller.toggle_ocr_translator(checked)
 
     def _on_ocr_translator_rect_changed(self, rect):
-        self._ocr_translator_rect = tuple(rect)
+        return self.ocr_controller.on_ocr_translator_rect_changed(rect)
 
     def capture_ocr_translator_region(self):
-        if getattr(self, "_ocr_translator_capture_worker", None) is not None:
-            return
-        video_path = self.video_path_edit.text().strip()
-        overlay = getattr(self, "ocr_translator_overlay", None)
-        if not video_path or overlay is None:
-            return
-        position_ms = int(self.media_player.position()) if hasattr(self, "media_player") else 0
-        self._ocr_translator_rect = overlay.normalized_rect()
-        overlay.set_capturing(True)
-        worker = OcrTranslatorCaptureWorker(video_path, position_ms / 1000.0, self._ocr_translator_rect)
-        self._ocr_translator_capture_worker = worker
-        worker.finished.connect(self._on_ocr_translator_capture_finished)
-        worker.finished.connect(worker.deleteLater)
-        worker.start()
-        self.log(f"[OCR Translator] Capturing visual text at {position_ms / 1000.0:.2f}s.")
+        return self.ocr_controller.capture_ocr_translator_region()
 
     def _on_ocr_translator_capture_finished(self, text, error):
-        self._ocr_translator_capture_worker = None
-        overlay = getattr(self, "ocr_translator_overlay", None)
-        if overlay is not None:
-            overlay.set_capturing(False)
-        if error:
-            QMessageBox.warning(self, "OCR Translator", f"Could not capture text.\n\n{error}")
-            return
-        if not str(text or "").strip():
-            QMessageBox.information(self, "OCR Translator", "No text was detected in the selected region.")
-            return
-        self.log("[OCR Translator] Capture complete.")
-        self._show_ocr_translator_dialog(str(text).strip())
+        return self.ocr_controller.on_ocr_translator_capture_finished(text, error)
 
     def _show_ocr_translator_dialog(self, original_text):
-        overlay = getattr(self, "ocr_translator_overlay", None)
-        if overlay is not None:
-            overlay.hide()
-        dialog = QDialog(self)
-        dialog.setWindowTitle("OCR Translator")
-        dialog.setWindowModality(Qt.WindowModal)
-        dialog.setMinimumSize(520, 390)
-        dialog.setStyleSheet(
-            "QDialog { background: #101826; color: #e6eef9; }"
-            "QLabel { color: #b9c8dc; font-weight: 700; }"
-            "QTextEdit { background: #0b1220; color: #edf4ff; border: 1px solid #2b3b52; border-radius: 7px; padding: 7px; }"
-            "QPushButton { background: #24364f; color: #ffffff; border: 1px solid #355271; border-radius: 7px; padding: 7px 12px; font-weight: 700; }"
-            "QPushButton:hover { background: #315070; } QPushButton:disabled { color: #718198; background: #182334; }"
-        )
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(8)
-        layout.addWidget(QLabel("Original OCR Text"))
-        original_edit = QTextEdit(); original_edit.setPlainText(original_text); original_edit.setReadOnly(True)
-        layout.addWidget(original_edit, 1)
-        layout.addWidget(QLabel("Translated Text"))
-        translated_edit = QTextEdit(); translated_edit.setReadOnly(True); translated_edit.setPlaceholderText("Click Translate to translate the captured text.")
-        layout.addWidget(translated_edit, 1)
-        actions = QHBoxLayout()
-        translate_btn = QPushButton("Translate")
-        copy_original_btn = QPushButton("Copy Original")
-        copy_translation_btn = QPushButton("Copy Translation")
-        close_btn = QPushButton("Close")
-        actions.addWidget(translate_btn); actions.addWidget(copy_original_btn); actions.addWidget(copy_translation_btn); actions.addStretch(1); actions.addWidget(close_btn)
-        layout.addLayout(actions)
-
-        def copy_text(edit):
-            QApplication.clipboard().setText(edit.toPlainText())
-
-        def translate():
-            if getattr(self, "_ocr_translator_translation_worker", None) is not None:
-                return
-            translate_btn.setEnabled(False); translate_btn.setText("Translating...")
-            worker = OcrTranslatorTranslationWorker(
-                original_text, self.get_source_language_code(), self.get_target_language_code()
-            )
-            self._ocr_translator_translation_worker = worker
-            def finished(translated, error):
-                self._ocr_translator_translation_worker = None
-                translate_btn.setEnabled(True); translate_btn.setText("Translate")
-                if error:
-                    QMessageBox.warning(dialog, "OCR Translator", f"Translation failed.\n\n{error}")
-                    return
-                translated_edit.setPlainText(translated)
-                self.log("[OCR Translator] Translation complete.")
-            worker.finished.connect(finished)
-            worker.finished.connect(worker.deleteLater)
-            worker.start()
-
-        translate_btn.clicked.connect(translate)
-        copy_original_btn.clicked.connect(lambda: copy_text(original_edit))
-        copy_translation_btn.clicked.connect(lambda: copy_text(translated_edit))
-        close_btn.clicked.connect(dialog.accept)
-        dialog.finished.connect(lambda _result: overlay.sync_to_view() if overlay is not None and self._ocr_translator_active else None)
-        dialog.exec()
+        return self.ocr_controller.show_ocr_translator_dialog(original_text)
 
     def on_preview_blur_region_changed(self):
         if self._preview_is_playing():
@@ -12519,6 +12433,11 @@ class VideoTranslatorGUI(QMainWindow):
                 has_timeline_segments and (not has_selected_timeline_layer or not selected_layer_locked)
                 and not review_mode
             )
+        if hasattr(self, "inspector_delete_segment_btn"):
+            self.inspector_delete_segment_btn.setEnabled(
+                has_timeline_segments and (not has_selected_timeline_layer or not selected_layer_locked)
+                and not review_mode
+            )
 
         # Keep the timeline readable and fully seekable during playback, but
         # make every state-changing control unavailable in Review Mode.
@@ -14175,142 +14094,16 @@ class VideoTranslatorGUI(QMainWindow):
         cleanup_temp_preview_files_impl(self)
 
     def _path_within_root(self, path: str, root: str) -> bool:
-        try:
-            normalized_path = os.path.normcase(os.path.abspath(path))
-            normalized_root = os.path.normcase(os.path.abspath(root))
-            return os.path.commonpath([normalized_path, normalized_root]) == normalized_root
-        except Exception:
-            return False
+        return self.project_controller.path_within_root(path, root)
 
     def _remove_path_if_safe(self, path: str, *, allowed_roots: list[str], removed: list[str]) -> None:
-        normalized = self._normalize_local_file_path(path)
-        if not normalized or not os.path.exists(normalized):
-            return
-        if not any(self._path_within_root(normalized, root) for root in allowed_roots if root):
-            return
-
-        def _on_remove_error(func, target, exc_info):
-            try:
-                os.chmod(target, 0o777)
-                func(target)
-            except OSError:
-                return
-
-        try:
-            if os.path.isdir(normalized):
-                shutil.rmtree(normalized, onerror=_on_remove_error)
-            else:
-                os.remove(normalized)
-        except OSError:
-            return
-        if not os.path.exists(normalized):
-            removed.append(normalized)
+        return self.project_controller.remove_path_if_safe(path, allowed_roots=allowed_roots, removed=removed)
 
     def _reset_project_runtime_state(self) -> None:
-        self.current_project_state = None
-        self.current_segment_models = []
-        self.current_translated_segment_models = []
-        self.current_segments = []
-        self.current_translated_segments = []
-        self.processed_artifacts = {}
-        self.last_extracted_audio = ""
-        self.last_vocals_path = ""
-        self.last_music_path = ""
-        self.last_original_srt_path = ""
-        self.last_translated_srt_path = ""
-        self.last_voice_vi_path = ""
-        self.last_mixed_vi_path = ""
-        self.last_preview_video_path = ""
-        self.last_styled_preview_path = ""
-        self.last_styled_preview_signature = ""
-        self.last_exported_video_path = ""
-        self.last_exact_preview_5s_path = ""
-        self.last_exact_preview_frame_path = ""
-        self.live_preview_subtitle_path = ""
-        self.live_preview_ass_path = ""
-        self.live_preview_segments = []
-        self.live_preview_editor_name = ""
-        self._live_preview_signature = None
-        self._timeline_waveform_cache_key = None
-        self._timeline_waveform_samples = []
-        self._timeline_waveform_duration_s = 0.0
-        self._desired_timeline_waveform_request = None
-        self._timeline_video_thumb_cache_key = None
-        self._timeline_video_thumbnails = []
-        self._desired_timeline_thumbnail_request = None
-        self._allow_post_pipeline_preview_assets = False
-        self._pending_timeline_waveform_refresh = False
-        self._pending_timeline_thumbnail_refresh = False
-        if hasattr(self, "transcript_text"):
-            self.transcript_text.clear()
-        if hasattr(self, "translated_text"):
-            self.translated_text.clear()
-        if hasattr(self, "audio_source_edit"):
-            self.audio_source_edit.clear()
-        if hasattr(self, "bg_music_edit"):
-            self.bg_music_edit.clear()
-        if hasattr(self, "mixed_audio_edit"):
-            self.mixed_audio_edit.clear()
-        if hasattr(self, "video_path_edit"):
-            self.video_path_edit.clear()
-        if hasattr(self, "timeline"):
-            self.timeline.set_segments([])
-            self.timeline.set_duration(0)
-            self.timeline.set_waveform_data([], 0.0)
-            self.timeline.set_video_thumbnails([])
-            self.timeline.set_playing(False)
-        if hasattr(self, "media_player"):
-            try:
-                self.media_player.clear_subtitle()
-                self.media_player.stop()
-                from PySide6.QtCore import QUrl
-                self.media_player.setSource(QUrl())
-            except Exception:
-                pass
-        if hasattr(self, "video_view"):
-            try:
-                self.video_view.clear_blur_region()
-            except Exception:
-                pass
-        if hasattr(self, "progress_bar"):
-            self.progress_bar.setValue(0)
-        # Force-clear segment editor directly
-        self._clear_segment_editor_rows()
-        self._segment_editor_rows = []
-        self._selected_segment_index = -1
-        self.sync_segment_editor_rows()
-        self.update_progress_checklist()
-        self.refresh_ui_state()
-        from PySide6.QtWidgets import QApplication
-        QApplication.processEvents()
+        return self.project_controller.reset_project_runtime_state()
 
     def _has_cleanable_project_data(self) -> bool:
-        project_root = str(getattr(getattr(self, "current_project_state", None), "project_root", "") or "").strip()
-        candidates = [
-            self.last_extracted_audio,
-            self.last_vocals_path,
-            self.last_music_path,
-            self.last_voice_vi_path,
-            self.last_mixed_vi_path,
-            self.live_preview_subtitle_path,
-            self.live_preview_ass_path,
-            self.last_preview_video_path,
-            self.last_styled_preview_path,
-            self.last_exact_preview_5s_path,
-            self.last_exact_preview_frame_path,
-            self.get_project_temp_path("tts"),
-            self.get_project_temp_path("segment_audio_preview"),
-            self.get_project_temp_path("voice_sample_preview"),
-            self.get_project_temp_path("htdemucs"),
-            self.get_project_temp_path("timeline_video_thumbs"),
-            self.get_project_temp_root(),
-            project_root,
-        ]
-        for candidate in candidates:
-            normalized = self._normalize_local_file_path(candidate)
-            if normalized and os.path.exists(normalized):
-                return True
-        return False
+        return self.project_controller.has_cleanable_project_data()
 
     def exit_to_launcher(self):
         self._return_to_launcher(project_removed_from_recent=False)
@@ -14559,6 +14352,12 @@ class VideoTranslatorGUI(QMainWindow):
             "quick_preview_thread",
             "frame_preview_thread",
             "preview_thread",
+            "_timeline_waveform_worker",
+            "_timeline_thumbnail_worker",
+            "_resource_worker",
+            "_ocr_translator_capture_worker",
+            "_ocr_translator_translation_worker",
+            "_ocr_region_worker",
         ]
         for name in attrs:
             worker = getattr(self, name, None)
