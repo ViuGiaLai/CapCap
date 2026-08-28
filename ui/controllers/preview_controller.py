@@ -687,44 +687,77 @@ class PreviewController:
     
     def _regenerate_mixed_audio_with_current_volumes(self) -> str:
         """Regenerate the mixed audio file using current volume settings from Audio tab.
-        
+
         Returns the path to the newly generated mixed audio file, or empty string if failed.
         """
-        if not hasattr(self.gui, 'last_voice_vi_path') or not self.gui.last_voice_vi_path:
-            print("[Export] No voice file path available")
-            return ""
-        
-        voice_path = self.gui.last_voice_vi_path
-        if not os.path.exists(voice_path):
-            print(f"[Export] Voice file not found at: {voice_path}")
-            return ""
-        
         # Get current volume settings from Audio tab
-        original_volume = int(self.gui.audio_a1_volume_slider.value()) if hasattr(self.gui, 'audio_a1_volume_slider') else 50
+        original_volume = int(self.gui.audio_a1_volume_slider.value()) if hasattr(self.gui, 'audio_a1_volume_slider') else 100
         dub_volume = int(self.gui.audio_a2_volume_slider.value()) if hasattr(self.gui, 'audio_a2_volume_slider') else 100
-        
-        # Get background audio path
+
+        # Resolve voice (dub) track
+        voice_path = ""
+        if hasattr(self.gui, 'last_voice_vi_path') and self.gui.last_voice_vi_path:
+            voice_path = self.gui.last_voice_vi_path
+            if not os.path.exists(voice_path):
+                voice_path = ""
+
+        # Resolve background / original audio from video or extracted file
         bg_path = self.gui._resolve_preview_background_audio_path() if hasattr(self.gui, '_resolve_preview_background_audio_path') else ""
-        
+
         if not bg_path or not os.path.exists(bg_path):
-            # No background, just use voice with dub volume
-            print(f"[Export] No background audio, using voice only: {voice_path}")
+            # Try to extract audio from the original video on-the-fly
+            video_path = self.gui.video_path_edit.text().strip() if hasattr(self.gui, 'video_path_edit') else ""
+            if video_path and os.path.exists(video_path) and original_volume > 0:
+                try:
+                    temp_dir = os.path.join(self.gui.workspace_root, "temp")
+                    os.makedirs(temp_dir, exist_ok=True)
+                    extracted_path = os.path.join(temp_dir, "original_audio_extracted.wav")
+                    from audio_mixer import extract_audio_from_video
+                    extract_audio_from_video(video_path, extracted_path)
+                    if os.path.exists(extracted_path):
+                        bg_path = extracted_path
+                        print(f"[Export] Extracted original audio from video: {extracted_path}")
+                except Exception as e:
+                    print(f"[Export] Could not extract original audio: {e}")
+
+        temp_dir = os.path.join(self.gui.workspace_root, "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        output_path = os.path.join(temp_dir, "export_mixed_temp.wav")
+
+        # --- Case 1: Original Only (dub_volume == 0) ---
+        if dub_volume <= 0:
+            if bg_path and os.path.exists(bg_path):
+                print(f"[Export] Dub volume=0, using original audio only: {bg_path}")
+                return bg_path
+            print("[Export] Dub volume=0 but no original audio found, returning empty")
+            return ""
+
+        # --- Case 2: Dub Only (original_volume == 0) ---
+        if original_volume <= 0:
+            if voice_path and os.path.exists(voice_path):
+                print(f"[Export] Original volume=0, using voice only: {voice_path}")
+                return voice_path
+            print("[Export] Original volume=0 but no voice file found, returning empty")
+            return ""
+
+        # --- Case 3: No voice track generated yet ---
+        if not voice_path:
+            if bg_path and os.path.exists(bg_path):
+                print(f"[Export] No voice file, using original audio only: {bg_path}")
+                return bg_path
+            print("[Export] No voice file and no original audio, returning empty")
+            return ""
+
+        # --- Case 4: Mix both tracks ---
+        if not bg_path or not os.path.exists(bg_path):
+            # Still no original audio — fall back to voice only
+            print(f"[Export] No original audio available, using voice only: {voice_path}")
             return voice_path
-        
-        # Generate new mixed audio with current volumes
+
         try:
             from audio_mixer import mix_original_with_dub
-            
-            # Create output path in temp directory
-            temp_dir = os.path.join(self.gui.workspace_root, "temp")
-            os.makedirs(temp_dir, exist_ok=True)
-            output_path = os.path.join(temp_dir, "export_mixed_temp.wav")
-            
-            # Convert percentages to dB
             original_gain_db = self.gui._percent_to_db(original_volume) if hasattr(self.gui, '_percent_to_db') else 0.0
             dub_gain_db = self.gui._percent_to_db(dub_volume) if hasattr(self.gui, '_percent_to_db') else 0.0
-            
-            # Mix the audio
             mix_original_with_dub(
                 original_wav_path=bg_path,
                 dub_wav_path=voice_path,
@@ -732,7 +765,6 @@ class PreviewController:
                 original_gain_db=original_gain_db,
                 dub_gain_db=dub_gain_db,
             )
-            
             print(f"[Export] Mixed audio created: {output_path}")
             return output_path
         except Exception as e:

@@ -13,6 +13,38 @@ def _ffprobe_path():
     return bin_path("ffmpeg", "ffprobe.exe")
 
 
+def extract_audio_from_video(video_path: str, output_wav_path: str, sample_rate: int = 44100) -> str:
+    """Extract audio track from a video file to a WAV file using ffmpeg.
+
+    Args:
+        video_path: Path to the source video file.
+        output_wav_path: Destination WAV path.
+        sample_rate: Output sample rate (default 44100 to preserve quality).
+
+    Returns:
+        output_wav_path on success, raises RuntimeError on failure.
+    """
+    ffmpeg = _ffmpeg_path()
+    if not os.path.exists(ffmpeg):
+        raise FileNotFoundError(f"FFmpeg not found at {ffmpeg}")
+    os.makedirs(os.path.dirname(output_wav_path) or ".", exist_ok=True)
+    cmd = [
+        ffmpeg, "-y",
+        "-i", video_path,
+        "-vn",               # strip video
+        "-ar", str(sample_rate),
+        "-ac", "2",          # stereo
+        "-sample_fmt", "s16",
+        output_wav_path,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, **subprocess_text_kwargs())
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"FFmpeg audio extraction failed:\n{proc.stderr or proc.stdout}"
+        )
+    return output_wav_path
+
+
 def _subprocess_run_kwargs() -> dict:
     kwargs = {}
     if os.name == "nt":
