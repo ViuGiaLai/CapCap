@@ -1,0 +1,558 @@
+import os
+from PySide6.QtWidgets import (
+    QToolButton, QMessageBox)
+from PySide6.QtCore import Qt, QUrl
+
+from widgets.progress_dialog import BackgroundableProgressDialog
+from worker_adapters import (
+    ExtractionWorker,
+    VocalSeparationWorker,
+)
+
+
+
+class WorkflowActionsMixin:
+    def refresh_ui_state(self):
+        """Basic enable/disable rules to guide user flow."""
+        review_mode = self._preview_is_playing()
+        v_ok = bool(self.video_path_edit.text().strip()) and os.path.exists(self.video_path_edit.text().strip())
+        a_ok = bool(self.audio_source_edit.text().strip()) and os.path.exists(self.audio_source_edit.text().strip())
+        has_translated_text = bool(self.translated_text.toPlainText().strip())
+        translation_ready = self._translation_phase_complete()
+        selected_audio_path = self.resolve_selected_audio_path()
+        has_voice_audio = bool(selected_audio_path and os.path.exists(selected_audio_path))
+        has_subtitle_track = bool(self.last_translated_srt_path and os.path.exists(self.last_translated_srt_path))
+        mode = self.get_output_mode_key()
+        steps = getattr(getattr(self, "current_project_state", None), "steps", {}) or {}
+        voice_running = steps.get("generate_tts") == "running" or steps.get("mix_audio") == "running"
+        # Translation is sufficient for a final subtitle-only export.  TTS
+        # remains optional: if it has not been generated, Export and Fast
+        # Preview retain the source audio and burn the translated subtitles.
+        # Voice-only projects without subtitles keep their historical rule.
+        can_export = v_ok and (
+            has_subtitle_track
+            or (mode == "voice" and has_voice_audio)
+        )
+
+        self.extract_btn.setEnabled(v_ok)
+        self.vocal_sep_btn.setEnabled(a_ok)
+        if hasattr(self, "voice_timing_sync_combo") and hasattr(self, "voice_speed_spin"):
+            mode = self.voice_timing_sync_combo.currentText().strip().lower()
+            self.voice_speed_spin.setEnabled(mode != "off")
+        self.transcribe_btn.setEnabled(a_ok)
+        self.translate_btn.setEnabled(bool(self.transcript_text.toPlainText().strip()))
+        self.apply_translated_btn.setEnabled(translation_ready and has_translated_text)
+        if hasattr(self, "rewrite_translation_btn"):
+            self.rewrite_translation_btn.setEnabled(
+                translation_ready and bool(self.transcript_text.toPlainText().strip()) and has_translated_text
+            )
+        if hasattr(self, "subtitle_editor_btn"):
+            self.subtitle_editor_btn.setEnabled(translation_ready and not review_mode)
+        if hasattr(self, "rewrite_selected_segment_btn"):
+            has_selected_segment = 0 <= int(getattr(self, "_selected_segment_index", -1)) < len(self.current_translated_segments or [])
+            self.rewrite_selected_segment_btn.setEnabled(
+                translation_ready and bool(self.transcript_text.toPlainText().strip()) and has_translated_text and has_selected_segment
+            )
+        if hasattr(self, "_refresh_audio_inspector_dub_voice_buttons"):
+            self._refresh_audio_inspector_dub_voice_buttons()
+        generated_mode = not self.using_existing_audio_source()
+        if hasattr(self, "voiceover_btn"):
+            self.voiceover_btn.setEnabled(translation_ready and has_translated_text and generated_mode and mode in ("voice", "both"))
+        preview_enabled = v_ok and not voice_running
+        if hasattr(self, "quick_preview_btn"):
+            self.quick_preview_btn.setEnabled(preview_enabled)
+        if hasattr(self, "styled_preview_btn"):
+            self.styled_preview_btn.setEnabled(preview_enabled)
+        if hasattr(self, "preview_btn"):
+            self.preview_btn.setVisible(True)
+            self.preview_btn.setEnabled(preview_enabled and not getattr(self, "_styled_preview_running", False))
+        if hasattr(self, "video_filter_apply_btn"):
+            has_active_filters = self.has_active_video_filters() if hasattr(self, "has_active_video_filters") else False
+            self.video_filter_apply_btn.setVisible(True)
+            self.video_filter_apply_btn.setEnabled(
+                self.is_filter_workflow_active()
+                and v_ok
+                and has_active_filters
+                and not getattr(self, "_styled_preview_running", False)
+            )
+            self.video_filter_apply_btn.setText("Applying..." if getattr(self, "_video_filter_apply_requested", False) and getattr(self, "_styled_preview_running", False) else "Apply Filter")
+        is_rendering_filter_preview = bool(getattr(self, "_video_filter_apply_requested", False) and getattr(self, "_styled_preview_running", False))
+        if hasattr(self, "video_filter_render_status_label"):
+            status_text = ""
+            if not self.is_filter_workflow_active():
+                status_text = ""
+            elif getattr(self, "_video_filter_apply_requested", False) and getattr(self, "_styled_preview_running", False):
+                status_text = "Rendering filtered preview video..."
+            elif getattr(self, "_video_filter_preview_dirty", False):
+                status_text = "Filter changes pending. Click Apply Filter to render motion preview."
+            elif self._is_realtime_color_filter_state():
+                status_text = "Realtime MPV preview active."
+            elif self.has_active_video_filters() if hasattr(self, "has_active_video_filters") else False:
+                status_text = "Filtered preview video is ready."
+            self.video_filter_render_status_label.setText(status_text)
+            self.video_filter_render_status_label.setVisible(bool(status_text))
+        if hasattr(self, "video_filter_render_progress"):
+            self.video_filter_render_progress.setVisible(self.is_filter_workflow_active() and is_rendering_filter_preview)
+        if hasattr(self, "reset_framing_btn"):
+            scale_mode = self.get_output_scale_mode_key() if hasattr(self, "get_output_scale_mode_key") else "fit"
+            focus_x, focus_y = self.get_output_fill_focus() if hasattr(self, "get_output_fill_focus") else (0.5, 0.5)
+            framing_dirty = abs(float(focus_x) - 0.5) > 0.001 or abs(float(focus_y) - 0.5) > 0.001
+            self.reset_framing_btn.setVisible(True)
+            self.reset_framing_btn.setEnabled(v_ok and scale_mode == "fill" and framing_dirty)
+        if hasattr(self, "play_btn"):
+            self.play_btn.setEnabled(v_ok and not voice_running and not getattr(self, "_styled_preview_running", False))
+        if hasattr(self, "stop_btn"):
+            self.stop_btn.setEnabled(v_ok and not voice_running)
+        if hasattr(self, "blur_area_btn"):
+            self.blur_area_btn.setEnabled(can_export and not review_mode)
+        # Overlay tracks are only meaningful once the generated output is
+        # ready. Keep their controls disabled before that point so users
+        # cannot create layers against an incomplete video workflow.
+        self._optional_layer_controls_ready = bool(can_export and not voice_running and not review_mode)
+        for button_name in ("blur_add_btn", "add_logo_btn", "add_mask_btn", "add_text_btn"):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.setEnabled(self._optional_layer_controls_ready)
+        # Subtitle segments are valid as soon as a transcript/translation is
+        # available. Keep the shared + Layer menu usable for manual fixes
+        # without unlocking the unrelated overlay-layer actions early.
+        if hasattr(self, "add_layer_btn"):
+            has_subtitle_segments = bool(self.current_segments or self.current_translated_segments)
+            self.add_layer_btn.setEnabled((self._optional_layer_controls_ready or has_subtitle_segments) and not review_mode)
+        if hasattr(self, "blur_add_btn"):
+            self.blur_add_btn.setEnabled(
+                self._optional_layer_controls_ready
+                and not bool(getattr(self, "_filter_thumbnail_visible", False))
+            )
+        if hasattr(self, "ocr_region_btn"):
+            self.ocr_region_btn.setEnabled(v_ok)
+        if hasattr(self, "ocr_translator_btn"):
+            self.ocr_translator_btn.setEnabled(v_ok)
+        self._sync_blur_controls()
+        if hasattr(self, "free_voice_combo"):
+            self.free_voice_combo.setEnabled(
+                generated_mode
+                and mode in ("voice", "both")
+            )
+        if hasattr(self, "voice_engine_combo"):
+            self.voice_engine_combo.setEnabled(generated_mode and mode in ("voice", "both"))
+        if hasattr(self, "premium_voice_combo"):
+            self.premium_voice_combo.setEnabled(False)
+        if hasattr(self, "bg_music_edit"):
+            self.bg_music_edit.setEnabled(generated_mode and mode in ("voice", "both"))
+        if hasattr(self, "mixed_audio_edit"):
+            self.mixed_audio_edit.setEnabled(mode in ("voice", "both") and bool(hasattr(self, "use_existing_audio_radio") and self.use_existing_audio_radio.isChecked()))
+        if hasattr(self, "preview_voice_btn"):
+            self.preview_voice_btn.setVisible(mode in ("voice", "both"))
+            self.preview_voice_btn.setEnabled(bool(self.voice_catalog_entries_all))
+        has_timeline_segments = bool(self.get_active_segments())
+        selected_overlay_is_splittable = False
+        selected_layer_locked = False
+        has_selected_timeline_layer = False
+        selected_layer_id = str(getattr(getattr(self, "timeline", None), "_selected_layer_id", "") or "")
+        if selected_layer_id and getattr(getattr(self, "timeline", None), "_timeline", None):
+            for track in self.timeline._timeline.tracks:
+                for layer in track.layers:
+                    if layer.id != selected_layer_id:
+                        continue
+                    has_selected_timeline_layer = True
+                    selected_layer_locked = bool(getattr(track, "locked", False)) or bool(getattr(layer, "locked", False))
+                    layer_type = str(getattr(getattr(layer, "type", ""), "value", getattr(layer, "type", ""))).lower()
+                    selected_overlay_is_splittable = layer_type in {"blur", "mask", "text"} or (
+                        layer_type == "image" and str(getattr(track, "name", "")) == "L1 Logo"
+                    )
+                    break
+                if selected_overlay_is_splittable:
+                    break
+        if hasattr(self, "timeline_split_btn"):
+            self.timeline_split_btn.setEnabled(
+                (has_timeline_segments or selected_overlay_is_splittable)
+                and (not has_selected_timeline_layer or not selected_layer_locked)
+                and not review_mode
+            )
+        if hasattr(self, "timeline_delete_btn"):
+            self.timeline_delete_btn.setEnabled(
+                has_timeline_segments and (not has_selected_timeline_layer or not selected_layer_locked)
+                and not review_mode
+            )
+        if hasattr(self, "inspector_delete_segment_btn"):
+            self.inspector_delete_segment_btn.setEnabled(
+                has_timeline_segments and (not has_selected_timeline_layer or not selected_layer_locked)
+                and not review_mode
+            )
+
+        # Keep the timeline readable and fully seekable during playback, but
+        # make every state-changing control unavailable in Review Mode.
+        if review_mode:
+            for button_name in (
+                "timeline_undo_btn", "timeline_redo_btn", "timeline_selection_mode_btn",
+                "timeline_clear_selection_btn", "timeline_alt_transcribe_btn",
+            ):
+                button = getattr(self, button_name, None)
+                if button is not None:
+                    button.setEnabled(False)
+        else:
+            self._refresh_timeline_history_buttons()
+            selection_exists = bool(getattr(self.timeline, "selection_range", lambda: None)()) if hasattr(self, "timeline") else False
+            if hasattr(self, "timeline_selection_mode_btn"):
+                self.timeline_selection_mode_btn.setEnabled(bool(v_ok))
+            if hasattr(self, "timeline_clear_selection_btn"):
+                self.timeline_clear_selection_btn.setEnabled(selection_exists)
+            if hasattr(self, "timeline_alt_transcribe_btn"):
+                self.timeline_alt_transcribe_btn.setVisible(selection_exists)
+                self.timeline_alt_transcribe_btn.setEnabled(selection_exists and not bool(getattr(self, "_alternate_range_transcription_worker", None)))
+        if hasattr(self, "inspector_stack"):
+            self.inspector_stack.setEnabled(not review_mode)
+        # Lock only the layout handle while playing.  The splitter's child
+        # widgets remain enabled so playback/seek controls still work.
+        splitter = getattr(self, "preview_timeline_splitter", None)
+        if splitter is not None:
+            try:
+                splitter.handle(1).setEnabled(not review_mode)
+            except Exception:
+                pass
+
+        self._update_generate_button_menu(has_data=has_translated_text or has_timeline_segments)
+        self.update_workflow_stage_badges()
+
+        if hasattr(self, "clean_project_action"):
+            self.clean_project_action.setEnabled(self._has_cleanable_project_data())
+        self.run_all_btn.setEnabled(v_ok and not self._pipeline_active)
+        self.preview_frame_btn.setEnabled(v_ok and bool(self.get_active_segments()))
+        self.preview_5s_btn.setEnabled(v_ok)
+        if hasattr(self, "preview_5s_action"):
+            self.preview_5s_action.setEnabled(v_ok)
+        self.export_btn.setEnabled(can_export)
+        if hasattr(self, "download_subtitle_action"):
+            self.download_subtitle_action.setEnabled(bool(self.translated_text.toPlainText().strip()))
+        if hasattr(self, "download_original_action"):
+            self.download_original_action.setEnabled(bool(self.transcript_text.toPlainText().strip()))
+        if hasattr(self, "tabs"):
+            self.tabs.setTabEnabled(1, v_ok)
+            self.tabs.setTabEnabled(2, v_ok and mode in ("voice", "both"))
+        # Audio Source and related controls are needed before Transcript, so
+        # the workflow Audio tab must be available as soon as a video is
+        # selected—not only after the optional TTS stage completes.
+        if hasattr(self, "audio_tab_btn"):
+            self.audio_tab_btn.setEnabled(v_ok)
+        self.update_workflow_availability()
+        self.update_guidance_panel()
+        self._update_ocr_overlay()
+
+    def _update_generate_button_menu(self, has_data: bool):
+        if not hasattr(self, "run_all_btn"):
+            return
+        btn = self.run_all_btn
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction
+        if btn.menu() is None:
+            menu = QMenu(btn)
+            menu.setObjectName("generateMenu")
+            # The parent menu renders the Step-by-Step / Full Pipeline
+            # submenu titles, so it needs its own width—not just the child
+            # popup menus.
+            menu.setMinimumWidth(220)
+            step_menu = menu.addMenu("Step-by-Step")
+            step_menu.setObjectName("generateStepMenu")
+            step_menu.setMinimumWidth(220)
+            transcript_action = QAction("Run to Transcript", step_menu)
+            transcript_action.triggered.connect(lambda: self.run_pipeline_to_stage("transcript"))
+            translate_menu = step_menu.addMenu("Run to Translate")
+            translate_menu.setObjectName("generateStepMenu")
+            translate_menu.setMinimumWidth(220)
+            translate_action = QAction("Auto Translate", translate_menu)
+            translate_action.triggered.connect(lambda: self.run_pipeline_to_stage("translate"))
+            import_translation_action = QAction("Import Translated File…", translate_menu)
+            import_translation_action.triggered.connect(self.import_translated_srt)
+            translate_menu.addActions([translate_action, import_translation_action])
+            tts_menu = step_menu.addMenu("Generate Voice / TTS")
+            tts_menu.setObjectName("generateStepMenu")
+            tts_menu.setMinimumWidth(220)
+            tts_action = QAction("TTS", tts_menu)
+            tts_action.triggered.connect(lambda: self.run_pipeline_to_stage("tts"))
+            tts_skip_action = QAction("Skip", tts_menu)
+            tts_skip_action.triggered.connect(self.skip_tts_stage)
+            tts_menu.addActions([tts_action, tts_skip_action])
+            step_menu.insertAction(translate_menu.menuAction(), transcript_action)
+            step_menu.addAction(tts_menu.menuAction())
+            full_menu = menu.addMenu("Full Pipeline")
+            full_menu.setObjectName("generateStepMenu")
+            full_menu.setMinimumWidth(220)
+            full_action = QAction("Run full pipeline", full_menu)
+            full_action.triggered.connect(self.run_all_pipeline)
+            full_menu.addAction(full_action)
+            btn.setMenu(menu)
+            btn.setPopupMode(QToolButton.InstantPopup)
+            btn.setText("Generate")
+            self._generate_transcript_action = transcript_action
+            self._generate_translate_action = translate_action
+            self._generate_import_translated_srt_action = import_translation_action
+            self._generate_tts_action = tts_action
+            self._generate_tts_skip_action = tts_skip_action
+        self.update_workflow_stage_badges()
+
+    def dragEnterEvent(self, event):
+        mime_data = event.mimeData()
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                local_path = url.toLocalFile()
+                if local_path and os.path.splitext(local_path)[1].lower() in {".mp4", ".mkv", ".avi", ".mov"}:
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event):
+        mime_data = event.mimeData()
+        if not mime_data.hasUrls():
+            event.ignore()
+            return
+        for url in mime_data.urls():
+            local_path = url.toLocalFile()
+            if local_path and os.path.splitext(local_path)[1].lower() in {".mp4", ".mkv", ".avi", ".mov"}:
+                self.ensure_media_backend_ready()
+                self.video_path_edit.setText(local_path)
+                self.media_player.setSource(QUrl.fromLocalFile(local_path))
+                self.refresh_video_dimensions(local_path)
+                self.play_btn.setText("Play")
+                self.timeline.set_segments([])
+                self.timeline.set_playing(False)
+                self.current_segments = []
+                self.current_translated_segments = []
+                self.current_segment_models = []
+                self.current_translated_segment_models = []
+                self.current_project_state = self.ensure_current_project()
+                self._allow_post_pipeline_preview_assets = False
+                self.load_project_context(self.current_project_state)
+                self.media_player.pause()
+                self.media_player.setPosition(0)
+                self.refresh_ui_state()
+                self.sync_live_subtitle_preview()
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def run_extraction(self):
+        v_path = self.video_path_edit.text()
+        if not v_path: return
+
+        target_dir = self.audio_folder_edit.text()
+        file_basename = os.path.splitext(os.path.basename(v_path))[0]
+        a_path = os.path.join(target_dir, file_basename + ".wav")
+
+        print(f"[Extraction] start: video={v_path} audio={a_path}")
+        self.progress_bar.setValue(10)
+        self.update_project_step("extract_audio", "running")
+        self.extraction_thread = ExtractionWorker(v_path, a_path)
+        self.extraction_thread.finished.connect(self.on_extraction_finished)
+        self.extraction_thread.start()
+
+    def on_extraction_finished(self, success, path):
+        print(f"[Extraction] finished: success={success} path={path}")
+        self.progress_bar.setValue(30)
+        self.extract_btn.setEnabled(True)
+        if success:
+            self.last_extracted_audio = path
+            self.audio_source_edit.setText(path)
+            self.processed_artifacts["audio_extracted"] = path
+            self.update_project_artifact("extracted_audio", path)
+            self.update_project_step("extract_audio", "done")
+            self.log(f"[Audio] Original audio extracted: {path}")
+            self.schedule_timeline_visual_refresh(waveform=True, thumbnails=False)
+        else:
+            self.update_project_step("extract_audio", "failed")
+            self.show_error("Error", "Extraction failed.", str(path))
+            self._pipeline_fail("Extraction failed.")
+            return
+
+        self.refresh_ui_state()
+        self._pipeline_advance("extraction")
+
+    def run_vocal_separation(self):
+        audio_src = self.audio_source_edit.text()
+        if not audio_src or not os.path.exists(audio_src):
+            QMessageBox.warning(self, "Error", "Please extract audio or select a source first!")
+            return
+
+        target_dir = self.audio_folder_edit.text()
+        self.progress_bar.setValue(35)
+        self.vocal_sep_btn.setEnabled(False)
+        self.vocal_sep_btn.setText("Separating... (AI Processing)")
+        self.update_project_step("separate_audio", "running")
+
+        self.vocal_thread = VocalSeparationWorker(audio_src, target_dir)
+        self.vocal_thread.finished.connect(self.on_vocal_separation_finished)
+        self.vocal_thread.start()
+
+    def on_vocal_separation_finished(self, vocal, music, error):
+        self.vocal_sep_btn.setEnabled(True)
+        self.vocal_sep_btn.setText("Separate Voice and Background")
+        self.progress_bar.setValue(50)
+
+        if error:
+            self.update_project_step("separate_audio", "failed")
+            err_lower = error.lower()
+            missing_demucs = (
+                "no module named" in err_lower and "demucs" in err_lower
+            ) or (
+                "demucs is not installed" in err_lower
+            ) or (
+                "requires the 'demucs' library" in err_lower
+            )
+            if missing_demucs:
+                QMessageBox.warning(
+                    self,
+                    "Dependency Missing",
+                    "Vocal Separation requires the 'demucs' library.\n\n"
+                    "Please run (using the same Python you run this app with):\n"
+                    "python -m pip install demucs\n\n"
+                    f"Details:\n{error}",
+                )
+            else:
+                QMessageBox.critical(self, "Error", f"Separation failed:\n\n{error}")
+            self.log(error)
+            self.refresh_ui_state()
+            return
+
+        if vocal and os.path.exists(vocal):
+            self.audio_source_edit.setText(vocal)
+            self.last_extracted_audio = vocal
+            self.last_vocals_path = vocal
+            self.last_music_path = music
+            self.processed_artifacts["vocals"] = vocal
+            self.update_project_artifact("vocals", vocal)
+            if music:
+                self.processed_artifacts["music"] = music
+                self.update_project_artifact("music", music)
+            self.update_project_step("separate_audio", "done")
+            QMessageBox.information(self, "Success",
+                f"Audio stems separated!\n\nVocals: {os.path.basename(vocal)}\nBackground: {os.path.basename(music)}\n\nVocals are now selected for transcription.")
+            self._pipeline_advance("separation")
+        else:
+            self.update_project_step("separate_audio", "failed")
+            self._pipeline_fail("Separation did not produce output.")
+        self.refresh_ui_state()
+
+    def run_transcription(self):
+        is_ocr = self.get_transcription_engine() == "ocr"
+        if not self.ensure_required_resources(
+            "Transcription",
+            include_whisper=not is_ocr,
+            include_ocr=is_ocr,
+            validate_pipeline_runtime=True,
+        ):
+            return
+        self.subtitle_controller.run_transcription()
+
+    def on_transcription_finished(self, segments, error=""):
+        self.subtitle_controller.on_transcription_finished(segments, error)
+
+    def run_translation(self):
+        self.subtitle_controller.run_translation()
+
+    def on_translation_finished(self, translated_srt, error, fallback_notice=""):
+        self.subtitle_controller.on_translation_finished(translated_srt, error, fallback_notice)
+
+    def run_rewrite_translation(self):
+        self.subtitle_controller.run_rewrite_translation()
+
+    def run_rewrite_selected_segment(self):
+        self.subtitle_controller.run_rewrite_selected_segment()
+
+    def on_rewrite_translation_finished(self, translated_srt, error):
+        self.subtitle_controller.on_rewrite_translation_finished(translated_srt, error)
+
+    def on_rewrite_selected_segment_finished(self, translated_srt, error):
+        self.subtitle_controller.on_rewrite_selected_segment_finished(translated_srt, error)
+
+    def _close_export_progress_dialog(self):
+        try:
+            dlg = getattr(self, "export_progress_dialog", None)
+            if dlg is not None:
+                self._unregister_progress_dialog(dlg)
+                dlg.hide()
+                dlg.deleteLater()
+        finally:
+            self.export_progress_dialog = None
+
+    def _ensure_export_progress_dialog(self):
+        dlg = getattr(self, "export_progress_dialog", None)
+        if dlg is not None:
+            return dlg
+        dlg = BackgroundableProgressDialog("Preparing final export...", "Hide", 0, 100, self)
+        dlg.setWindowTitle("Exporting Video")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoReset(False)
+        dlg.setAutoClose(False)
+        dlg.setMinimumWidth(520)
+        dlg.setValue(0)
+        dlg.setLabelText("Exporting final video...\n\nWaiting to start...")
+        dlg.setStyleSheet(
+            "QProgressDialog { background-color: #101826; color: #e6eef9; }"
+            "QLabel { color: #e6eef9; background: transparent; }"
+            "QPushButton { background-color: #24364f; color: #ffffff; border: 1px solid #335171; border-radius: 10px; padding: 8px 14px; font-weight: 700; }"
+            "QPushButton:hover { background-color: #2d4665; border-color: #4575a8; }"
+            "QProgressBar { border: 1px solid #2a3a50; border-radius: 10px; text-align: center; background-color: #111927; color: white; min-height: 16px; }"
+            "QProgressBar::chunk { background-color: #4ed0b3; border-radius: 10px; }"
+        )
+        try:
+            dlg.setCancelButtonText("Run in background")
+            dlg.canceled.connect(dlg.hide)
+        except Exception:
+            pass
+        self.export_progress_dialog = dlg
+        self._register_progress_dialog(dlg)
+        dlg.show()
+        return dlg
+
+    def on_export_progress(self, percent: int, message: str):
+        dlg = self._ensure_export_progress_dialog()
+        if dlg is None:
+            return
+        message_text = str(message or "Exporting final video...").strip() or "Exporting final video..."
+        history = list(getattr(self, "_export_progress_messages", []) or [])
+        if not history or history[-1] != message_text:
+            history.append(message_text)
+        self._export_progress_messages = history[-4:]
+        dlg.setLabelText("Exporting final video...\n\n" + "\n".join(self._export_progress_messages))
+        if percent is None or int(percent) < 0:
+            dlg.setRange(0, 0)
+        else:
+            if dlg.maximum() == 0:
+                dlg.setRange(0, 100)
+            value = max(0, min(100, int(percent)))
+            dlg.setValue(value)
+            try:
+                self.progress_bar.setValue(value)
+            except Exception:
+                pass
+        dlg.show()
+
+    def get_whisper_model_name(self) -> str:
+        selected = str(getattr(self, "selected_whisper_model_name", "auto") or "auto").strip().lower()
+        is_gpu_mode = os.environ.get("CAPCAP_DEVICE", "cuda").strip().lower() == "cuda"
+        if not is_gpu_mode and selected == "medium":
+            selected = "auto"
+        if selected and selected != "auto":
+            return selected
+        model_root = os.path.join(self.workspace_root, "models", "faster_whisper")
+        preferred_models = ("medium", "small", "base", "tiny") if is_gpu_mode else ("small", "base", "tiny")
+        for candidate in preferred_models:
+            model_dir = os.path.join(model_root, candidate)
+            if os.path.isdir(model_dir) and any(
+                name.endswith(".bin") for name in os.listdir(model_dir)
+            ):
+                return candidate
+            snapshots_dir = os.path.join(
+                model_root,
+                f"models--Systran--faster-whisper-{candidate}",
+                "snapshots",
+            )
+            if os.path.isdir(snapshots_dir):
+                for snapshot_name in os.listdir(snapshots_dir):
+                    if os.path.isfile(os.path.join(snapshots_dir, snapshot_name, "model.bin")):
+                        return candidate
+        return "medium"
+
+    def get_whisper_model_path(self) -> str:
+        return os.path.join(self.workspace_root, "models", "ggml-medium.bin")
