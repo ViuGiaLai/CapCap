@@ -622,38 +622,48 @@ class TranslationOrchestrator:
         if single_line:
             compact = ' '.join(existing_lines).strip()
             return self._shorten_single_line_text(compact, duration)
-        single = ' '.join(existing_lines).strip() if len(existing_lines) > 1 else existing_lines[0]
         max_line_chars = self._target_max_chars(duration, single_line=False)
-        cps_limit = self._target_max_cps(duration, single_line=False)
-        compact_single = ' '.join(single.split()).strip()
-        if compact_single:
-            compact_cps = len(compact_single.replace(' ', '')) / max(duration, 0.6)
-            if len(compact_single) <= max_line_chars + 6 and compact_cps <= cps_limit + 0.8:
-                return compact_single
-        if len(existing_lines) > 1:
-            if len(existing_lines) <= 2 and all(len(line) <= max_line_chars + 6 for line in existing_lines):
-                return '\n'.join(existing_lines[:2])
-        if len(single) <= max_line_chars or len(single.split()) < 3:
+        # Hard cap: max 2 lines, each at most max_line_chars
+        single = ' '.join(existing_lines).strip()
+        if len(single) <= max_line_chars:
             return single
+        # Split into at most 2 lines, strictly capping each at max_line_chars
         words = single.split()
-        target = len(single) / 2
-        best_index = 1
+        best_index = max(1, len(words) // 2)
         best_score = float('inf')
         for idx in range(1, len(words)):
             left = ' '.join(words[:idx]).strip()
             right = ' '.join(words[idx:]).strip()
             if not left or not right:
                 continue
-            score = abs(len(left) - target) + abs(len(right) - target)
-            if len(left) > max_line_chars + 4 or len(right) > max_line_chars + 4:
-                score += 12
+            # Heavy penalty for exceeding hard cap
+            penalty = (max(0, len(left) - max_line_chars) + max(0, len(right) - max_line_chars)) * 100
+            balance_score = abs(len(left) - len(right))
+            score = balance_score + penalty
             if score < best_score:
                 best_score = score
                 best_index = idx
         left = ' '.join(words[:best_index]).strip()
         right = ' '.join(words[best_index:]).strip()
         if not left or not right:
-            return single
+            return single[:max_line_chars]
+        # Enforce hard cap on both sides by trimming at word boundary
+        def _trim_to_limit(s: str, limit: int) -> str:
+            if len(s) <= limit:
+                return s
+            toks = s.split()
+            kept = []
+            for w in toks:
+                cand = ' '.join(kept + [w])
+                if len(cand) <= limit:
+                    kept.append(w)
+                else:
+                    break
+            return ' '.join(kept).strip() if kept else toks[0][:limit]
+        left = _trim_to_limit(left, max_line_chars)
+        right = _trim_to_limit(right, max_line_chars)
+        if not right:
+            return left
         return f'{left}\n{right}'
 
     def _shorten_single_line_text(self, text: str, duration: float) -> str:
@@ -687,23 +697,25 @@ class TranslationOrchestrator:
         return candidate or compact
 
     def _target_max_chars(self, duration: float, *, single_line: bool) -> int:
+        # User requirement: max 20 chars per line, max 2 lines
         if single_line:
             if duration <= 1.2:
-                return 12
+                return 10
             if duration <= 1.8:
-                return 16
+                return 13
             if duration <= 2.6:
-                return 20
+                return 16
             if duration <= 3.4:
-                return 24
-            return 28
+                return 18
+            return 20
+        # dual-line mode: same 20 char hard cap per line
         if duration <= 1.4:
-            return 18
+            return 15
         if duration <= 2.6:
-            return 22
+            return 18
         if duration <= 4.0:
-            return 26
-        return 30
+            return 20
+        return 20
 
     def _target_max_cps(self, duration: float, *, single_line: bool) -> int:
         if single_line:

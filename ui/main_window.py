@@ -7,6 +7,7 @@ import glob
 import hashlib
 import shutil
 import threading
+from typing import Any
 from uuid import uuid4
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -1841,8 +1842,13 @@ class VideoTranslatorGUI(QMainWindow):
         checkbox = getattr(self, "subtitle_speaker_colors_cb", None)
         return bool(checkbox and checkbox.isChecked())
 
-    def _subtitle_color_for_segment(self, segment: dict | None) -> QColor:
-        speaker = str((segment or {}).get("speaker", "") or "").strip()
+    def _subtitle_color_for_segment(self, segment: Any | None) -> QColor:
+        if segment is None:
+            speaker = ""
+        elif isinstance(segment, dict):
+            speaker = str(segment.get("speaker", "") or "").strip()
+        else:
+            speaker = str(getattr(segment, "metadata", {}).get("speaker", "") if isinstance(getattr(segment, "metadata", None), dict) else getattr(segment, "speaker", "") or "").strip()
         if self._uses_speaker_subtitle_colors() and speaker:
             return QColor(self._speaker_color_hex(speaker))
         return QColor(self.subtitle_color_hex)
@@ -5396,17 +5402,33 @@ class VideoTranslatorGUI(QMainWindow):
         item = self.video_view.subtitle_item
         segment = segment or {}
         preset = self.get_subtitle_preset_config()
-        text = str(segment.get("text", "") or "")
+        if isinstance(segment, dict):
+            text = str(segment.get("text", "") or segment.get("final_text", "") or "")
+            auto_h = list(segment.get("auto_highlights", []) or [])
+            manual_h = list(segment.get("manual_highlights", []) or [])
+            start = float(segment.get("start", 0.0) or 0.0)
+            end = max(start + 0.01, float(segment.get("end", start + 0.01) or start + 0.01))
+        elif segment is not None:
+            text = str(getattr(segment, "final_text", "") or getattr(segment, "original_text", "") or getattr(segment, "text", "") or "")
+            meta = getattr(segment, "metadata", {}) if isinstance(getattr(segment, "metadata", None), dict) else {}
+            auto_h = list(meta.get("auto_highlights", []) or getattr(segment, "auto_highlights", []) or [])
+            manual_h = list(meta.get("manual_highlights", []) or getattr(segment, "manual_highlights", []) or [])
+            start = float(getattr(segment, "start", 0.0) or 0.0)
+            end = max(start + 0.01, float(getattr(segment, "end", start + 0.01) or start + 0.01))
+        else:
+            text = ""
+            auto_h = []
+            manual_h = []
+            start = 0.0
+            end = 0.01
         mode = self.subtitle_highlight_mode_combo.currentText().strip() if hasattr(self, "subtitle_highlight_mode_combo") else "Auto"
         phrases = []
         if mode in ("Auto", "Auto + Manual"):
-            phrases.extend(segment.get("auto_highlights", []) or [])
+            phrases.extend(auto_h)
         if mode in ("Manual", "Auto + Manual"):
-            phrases.extend(segment.get("manual_highlights", []) or [])
+            phrases.extend(manual_h)
         animation = self.subtitle_animation_combo.currentText().strip().lower() if hasattr(self, "subtitle_animation_combo") else ""
         animation_duration = max(0.01, float(self.subtitle_animation_time_spin.value())) if hasattr(self, "subtitle_animation_time_spin") else 0.22
-        start = float(segment.get("start", 0.0) or 0.0)
-        end = max(start + 0.01, float(segment.get("end", start + 0.01) or start + 0.01))
         elapsed = max(0.0, float(position_ms) / 1000.0 - start)
         animation_progress = min(1.0, elapsed / animation_duration)
         if animation == "fade out":
@@ -12020,13 +12042,18 @@ class VideoTranslatorGUI(QMainWindow):
         previous_boundary = 0.0
         next_boundary = None
         for idx, seg in enumerate(source):
-            if not isinstance(seg, dict):
-                continue
-            try:
-                start_s = float(seg.get("start", 0.0))
-                end_s = float(seg.get("end", 0.0))
-            except (TypeError, ValueError):
-                continue
+            if isinstance(seg, dict):
+                try:
+                    start_s = float(seg.get("start", 0.0))
+                    end_s = float(seg.get("end", 0.0))
+                except (TypeError, ValueError):
+                    continue
+            else:
+                try:
+                    start_s = float(getattr(seg, "start", 0.0))
+                    end_s = float(getattr(seg, "end", 0.0))
+                except (TypeError, ValueError):
+                    continue
             for boundary in (start_s, end_s):
                 if boundary <= position_seconds:
                     previous_boundary = max(previous_boundary, boundary)
@@ -12155,7 +12182,11 @@ class VideoTranslatorGUI(QMainWindow):
                 else:
                     active_indices = self._find_active_segment_indices(position_ms, segments)
                     if active_indices:
-                        active_lines = [segments[i].get("text", "") for i in active_indices]
+                        active_lines = []
+                        for i in active_indices:
+                            s = segments[i]
+                            t = s.get("text", "") if isinstance(s, dict) else (getattr(s, "final_text", "") or getattr(s, "original_text", "") or getattr(s, "text", ""))
+                            active_lines.append(str(t or ""))
                         if len(active_lines) == 1:
                             self.video_view.subtitle_item.set_text(active_lines[0])
                         else:
@@ -12188,7 +12219,11 @@ class VideoTranslatorGUI(QMainWindow):
         index = int(getattr(self, "_selected_segment_index", -1))
         if not (0 <= index < len(items)):
             index = 0
-        text = str(items[index].get("text", "") or "").strip()
+        target_item = items[index]
+        if isinstance(target_item, dict):
+            text = str(target_item.get("text", "") or target_item.get("final_text", "") or "").strip()
+        else:
+            text = str(getattr(target_item, "final_text", "") or getattr(target_item, "original_text", "") or getattr(target_item, "text", "") or "").strip()
         if not text:
             return
         self.video_view.subtitle_item.set_text(text)

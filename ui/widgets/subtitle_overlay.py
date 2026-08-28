@@ -24,6 +24,9 @@ class SubtitleOverlayItem(QGraphicsItem):
         self.background_box = False
         self.background_color = QColor(0, 0, 0, 170)
         self.single_line = False
+        self.bold = True
+        self.shadow_color = QColor(0, 0, 0, 160)
+        self.shadow_depth = 0.0
         self.x_offset = 0
         self.bottom_offset = 30
         self.custom_position_enabled = False
@@ -111,6 +114,10 @@ class SubtitleOverlayItem(QGraphicsItem):
         background_box=None,
         background_color=None,
         single_line=None,
+        bold=None,
+        shadow_color=None,
+        shadow_depth=None,
+        **kwargs,
     ):
         changed = False
         if font_name and font_name != self.font_name:
@@ -137,6 +144,15 @@ class SubtitleOverlayItem(QGraphicsItem):
             changed = True
         if single_line is not None and bool(single_line) != self.single_line:
             self.single_line = bool(single_line)
+            changed = True
+        if bold is not None and bool(bold) != self.bold:
+            self.bold = bool(bold)
+            changed = True
+        if shadow_color is not None and shadow_color != self.shadow_color:
+            self.shadow_color = shadow_color
+            changed = True
+        if shadow_depth is not None and float(shadow_depth) != self.shadow_depth:
+            self.shadow_depth = max(0.0, float(shadow_depth))
             changed = True
         if changed:
             self.update()
@@ -181,7 +197,7 @@ class SubtitleOverlayItem(QGraphicsItem):
         painter.setPen(self.font_color)
         font = QFont(self.font_name)
         font.setPixelSize(max(1, int(self.font_size)))
-        font.setBold(True)
+        font.setBold(bool(self.bold))
         painter.setFont(font)
         line_height = max(24, int(self.font_size * self.LINE_HEIGHT_FACTOR))
         single_line_flags = Qt.AlignCenter
@@ -213,6 +229,11 @@ class SubtitleOverlayItem(QGraphicsItem):
                     max(1, int(round(block_bottom - block_top))),
                 ).adjusted(-box_pad_x, -box_pad_y, box_pad_x, box_pad_y)
                 painter.drawRect(QRectF(text_rect))
+
+        if self.shadow_depth > 0:
+            painter.setPen(self.shadow_color)
+            for line_text, line_rect in zip(self.current_lines, line_rects):
+                painter.drawText(line_rect.translated(self.shadow_depth, self.shadow_depth), int(wrap_flags), line_text)
 
         if self.outline_width > 0:
             w = max(1.0, float(self.outline_width))

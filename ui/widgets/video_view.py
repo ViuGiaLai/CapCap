@@ -93,6 +93,20 @@ class VideoView(QGraphicsView):
     def clear_blur_region(self):
         pass
 
+    def has_blur_region(self) -> bool:
+        return False
+
+    def get_blur_region_normalized(self) -> "dict | list[dict] | None":
+        """Qt backend has no blur overlay; always returns None."""
+        return None
+
+    def set_blur_regions_normalized(self, regions) -> None:
+        pass
+
+    def set_mask_region(self, *, x: float = 0.0, y: float = 0.0,
+                        w: float = 0.0, h: float = 0.0, **kwargs) -> None:
+        pass
+
     def set_mask_regions(self, regions=None, on_change=None, active=False):
         pass
 

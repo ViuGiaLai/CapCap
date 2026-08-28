@@ -30,14 +30,26 @@ def predict_speed_ratios(segments):
     except Exception:
         _norm = lambda t, **kw: t
     for seg in (segments or []):
-        if seg.get("pre_speed_ratio") is not None:
+        is_dict = isinstance(seg, dict)
+        pre_speed = seg.get("pre_speed_ratio") if is_dict else getattr(seg, "pre_speed_ratio", None)
+        if pre_speed is not None:
             continue
-        raw_text = " ".join(str(seg.get("dubbing_vi") or seg.get("text") or "").replace("\n", " ").split()).strip()
+        if is_dict:
+            raw_text = " ".join(str(seg.get("dubbing_vi") or seg.get("text") or seg.get("final_text") or "").replace("\n", " ").split()).strip()
+            start_val = float(seg.get("start", 0.0) or 0.0)
+            end_val = float(seg.get("end", 0.0) or 0.0)
+        else:
+            raw_text = " ".join(str(getattr(seg, "tts_text", "") or getattr(seg, "final_text", "") or getattr(seg, "original_text", "") or getattr(seg, "text", "") or "").replace("\n", " ").split()).strip()
+            start_val = float(getattr(seg, "start", 0.0) or 0.0)
+            end_val = float(getattr(seg, "end", 0.0) or 0.0)
         if not raw_text:
-            seg["pre_speed_ratio"] = 1.0
+            if is_dict:
+                seg["pre_speed_ratio"] = 1.0
+            else:
+                setattr(seg, "pre_speed_ratio", 1.0)
             continue
         text = _norm(raw_text, provider="piper") or raw_text
-        duration_sec = max(0.1, float(seg.get("end", 0.0)) - float(seg.get("start", 0.0)))
+        duration_sec = max(0.1, end_val - start_val)
         words = len([t for t in re.split(r"\s+", text) if t])
         speech_cost = 0
         value = text
@@ -57,15 +69,20 @@ def predict_speed_ratios(segments):
             speech_cost += 1
         wps = 4.0 if speech_cost >= 3 else 4.5
         max_words = max(1, int(duration_sec * wps))
-        seg["pre_speed_ratio"] = round(words / max(1, max_words), 3) if max_words > 0 else 1.0
+        ratio = round(words / max(1, max_words), 3) if max_words > 0 else 1.0
+        if is_dict:
+            seg["pre_speed_ratio"] = ratio
+        else:
+            setattr(seg, "pre_speed_ratio", ratio)
     return segments
 
 
 class VoiceWorkflow:
     MAX_TTS_WORKERS = 6
-    # Piper synthesis runs in independent subprocesses, so a small bounded
-    # pool improves long projects without monopolising the CPU or disk.
-    PIPER_TTS_WORKERS = 2
+    # Piper synthesis uses the Python piper library in-process, so threads can
+    # share the loaded model without GIL contention on the ONNX inference side.
+    # 6 workers for a 12-core machine; override with CAPCAP_PIPER_TTS_WORKERS env.
+    PIPER_TTS_WORKERS = 6
     AI_REWRITE_RATIO = 1.05
     SMART_RETRY_RATIO = 1.15
     HARD_RETRY_RATIO = 1.30
@@ -1210,33 +1227,23 @@ class VoiceWorkflow:
             pending_providers = {self._voice_provider(str(job["voice_name"])) for job in pending_jobs}
             if pending_providers == {"piper"}:
                 configured_workers = int(os.getenv("CAPCAP_PIPER_TTS_WORKERS", self.PIPER_TTS_WORKERS) or self.PIPER_TTS_WORKERS)
-                # Keep the default responsive: two workers for ordinary
-                # projects, up to four for a long queue, never more than the
-                # available logical CPUs.
-                long_project_workers = 4 if len(pending_jobs) >= 160 else (3 if len(pending_jobs) >= 60 else configured_workers)
-                cpu_limit = max(1, (os.cpu_count() or 2) - 1)
-                worker_count = max(1, min(4, long_project_workers, len(pending_jobs), cpu_limit))
+                # Scale workers with queue length; cap at CPU count - 1 to keep UI responsive.
+                if len(pending_jobs) >= 120:
+                    long_project_workers = min(configured_workers, 8)
+                elif len(pending_jobs) >= 40:
+                    long_project_workers = min(configured_workers, 6)
+                else:
+                    long_project_workers = min(configured_workers, 4)
+                cpu_limit = max(1, (os.cpu_count() or 4))
+                worker_count = max(1, min(long_project_workers, len(pending_jobs), cpu_limit))
+                # Pre-load the Piper model in the main thread so all workers share
+                # the cached model object without racing on first-load I/O.
                 try:
-                    # Warm Piper once before parallel synthesis so the UI does not appear frozen during first-load.
-                    self.engine_runtime.synthesize_segment(
-                        text=pending_jobs[0]["text"],
-                        wav_path=pending_jobs[0]["wav_path"],
-                        voice=pending_jobs[0]["voice_name"],
-                        speed=provider_speed,
-                        tmp_dir=tmp_dir,
-                        on_progress=on_progress,
-                    )
-                    manifest_segments[str(pending_jobs[0]["global_idx"])] = {
-                        "cache_key": str(pending_jobs[0]["cache_key"]),
-                        "wav_path": str(pending_jobs[0]["wav_path"]),
-                        "text": str(pending_jobs[0]["text"]),
-                        "voice_name": pending_jobs[0]["voice_name"],
-                        "provider_speed": provider_speed,
-                    }
-                    manifest_by_cache_key[str(pending_jobs[0]["cache_key"])] = dict(manifest_segments[str(pending_jobs[0]["global_idx"])])
-                    wavs[int(pending_jobs[0]["idx"])] = str(pending_jobs[0]["wav_path"])
-                    pending_jobs = pending_jobs[1:]
-                    cache_hits += 1
+                    first_voice = pending_jobs[0]["voice_name"]
+                    from tts_processor import preload_tts_voice
+                    if on_progress:
+                        on_progress(f"Loading Piper voice model ({first_voice})...")
+                    preload_tts_voice(first_voice, on_progress=None)
                 except Exception:
                     pass
             elif pending_providers == {"edge"}:
