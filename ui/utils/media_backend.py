@@ -250,7 +250,10 @@ class QtMediaPlayerBackend(QObject):
             self._player.setVideoOutput(video_view.video_item)
         self._player.positionChanged.connect(self.positionChanged.emit)
         self._player.durationChanged.connect(self.durationChanged.emit)
-        self._player.stateChanged.connect(lambda s: self.stateChanged.emit(int(s.value)))
+        if hasattr(self._player, "playbackStateChanged"):
+            self._player.playbackStateChanged.connect(lambda s: self.stateChanged.emit(int(getattr(s, "value", s))))
+        elif hasattr(self._player, "stateChanged"):
+            self._player.stateChanged.connect(lambda s: self.stateChanged.emit(int(getattr(s, "value", s))))
         # When the clip reaches the end, the QMediaPlayer goes to
         # StoppedState — surface this so the timeline can stop too
         # (Bug 2: video not pausing at end, timeline keeps running).
@@ -319,6 +322,12 @@ class QtMediaPlayerBackend(QObject):
         return None
 
     def clear_blur_region(self):
+        return None
+
+    def set_mask_region(self, mask_region=None):
+        return None
+
+    def clear_mask_region(self):
         return None
 
     def set_color_filter_state(self, state=None):

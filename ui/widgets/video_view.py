@@ -93,6 +93,15 @@ class VideoView(QGraphicsView):
     def clear_blur_region(self):
         pass
 
+    def set_mask_regions(self, regions=None, on_change=None, active=False):
+        pass
+
+    def clear_mask_region(self):
+        pass
+
+    def set_mask_edit_enabled(self, enabled: bool):
+        pass
+
     def set_subtitle_render_dimensions(self, width: int, height: int):
         pass
 

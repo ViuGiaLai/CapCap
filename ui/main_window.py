@@ -1424,43 +1424,22 @@ class VideoTranslatorGUI(QMainWindow):
         for models_dir, relative_dir in model_directories:
             if not os.path.isdir(models_dir):
                 continue
-            model_paths.extend(
-                (os.path.join(models_dir, name), relative_dir)
-                for name in os.listdir(models_dir)
-                if name.lower().endswith(".onnx")
-            )
+            for root, _dirs, files in os.walk(models_dir):
+                for name in files:
+                    if name.lower().endswith(".onnx"):
+                        full_path = os.path.join(root, name)
+                        rel_path = os.path.relpath(full_path, app_path("..")).replace("\\", "/")
+                        model_paths.append((full_path, rel_path))
         model_paths.sort(key=lambda item: (item[1], os.path.basename(item[0]).lower()))
         changed = False
         model_ids = set()
         if not model_paths:
-            # No models => remove all Piper voices from catalog (keep non-piper voices like Edge).
-            new_voices = []
-            for entry in voices:
-                if not isinstance(entry, dict):
-                    continue
-                provider = str(entry.get("provider", "")).strip().lower()
-                if provider == "piper":
-                    changed = True
-                    continue
-                new_voices.append(entry)
-            if not changed:
-                return
-            payload["voices"] = new_voices
-            try:
-                with open(catalog_path, "w", encoding="utf-8") as handle:
-                    json.dump(payload, handle, ensure_ascii=False, indent=2)
-                    handle.write("\n")
-            except Exception as exc:
-                try:
-                    self.log(f"[Voice Catalog] Auto-sync Piper failed: {exc}")
-                except Exception:
-                    pass
             return
 
-        for model_path, relative_dir in model_paths:
+        for model_path, rel_pv in model_paths:
             voice_id = os.path.splitext(os.path.basename(model_path))[0]
             model_ids.add(voice_id)
-            pv = provider_voice_for_model(model_path, relative_dir)
+            pv = rel_pv
             lang = language_from_piper_config(model_path) or "vi"
 
             existing = by_id.get(voice_id)
@@ -4918,12 +4897,23 @@ class VideoTranslatorGUI(QMainWindow):
         return bool(getattr(self, "ai_dubbing_rewrite_cb", None) and self.ai_dubbing_rewrite_cb.isChecked())
 
     def get_ai_dubbing_style_instruction(self):
-        if hasattr(self, "translator_style_edit"):
-            return " ".join(self.translator_style_edit.text().split()).strip()
-        return ""
+        return self.get_ai_style_instruction()
 
     def get_ai_style_instruction(self):
         style_parts = []
+        preset_key = ""
+        if hasattr(self, "translation_style_preset_combo"):
+            preset_key = str(self.translation_style_preset_combo.currentData() or "").strip()
+        
+        preset_prompts = {
+            "tutien_recap": "Thể loại Recap Tu Tiên / Kiếm Hiệp: Dịch chuẩn xưng hô Hán Việt theo vai vế ngữ cảnh (Sư tôn/Đồ nhi, Tiền bối/Vãn bối, Huynh đệ/Tỷ muội, Đạo hữu/Tại hạ, Tông chủ/Trưởng lão). Sử dụng chính xác thuật ngữ tu chân (công pháp, linh đan, đan điền, độ kiếp, pháp bảo, tông môn, linh khí, thần thức). Câu văn ngắn gọn súc tích (khoảng 25-35 ký tự/dòng, tối đa 2 dòng), nhịp điệu nhanh dứt khoát, dễ đọc lướt theo video recap.",
+            "anime": "Thể loại Anime / Manga: Dịch trẻ trung, sinh động, giàu cảm xúc, xưng hô tự nhiên theo tình huống (cậu/tớ, anh/em, mày/tao), giữ nguyên tên nhân vật và thuật ngữ đặc trưng.",
+            "drama": "Thể loại Phim Điện Ảnh / Kịch Tính: Lời thoại sâu sắc, kịch tính, tự nhiên như phim điện ảnh chiếu rạp, giữ đúng sắc thái cảm xúc và bối cảnh nhân vật.",
+            "standard": "Dịch chuẩn xác, tự nhiên, văn phong hiện đại, lưu loát, ngắn gọn, phù hợp làm phụ đề video.",
+        }
+        if preset_key in preset_prompts:
+            style_parts.append(preset_prompts[preset_key])
+
         if hasattr(self, "translator_style_edit"):
             custom_style = self.translator_style_edit.text().strip()
             if custom_style:
