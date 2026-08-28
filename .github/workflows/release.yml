@@ -22,6 +22,10 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-base.txt
+            requirements-local.txt
 
       - name: Install build dependencies
         run: |
@@ -48,11 +52,22 @@ jobs:
           New-Item -ItemType Directory -Force -Path models/piper
 
           # Download Silero VAD
-          Invoke-WebRequest -Uri "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx" -OutFile "bin/silero_vad.onnx"
+          Invoke-WebRequest -Uri "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx" -OutFile "bin/silero_vad.onnx"
 
           # Download SenseVoice Small ONNX
-          Invoke-WebRequest -Uri "https://huggingface.co/FunAudioLLM/SenseVoiceSmall-ONNX/resolve/main/model.int8.onnx" -OutFile "models/sensevoice/model.int8.onnx"
-          Invoke-WebRequest -Uri "https://huggingface.co/FunAudioLLM/SenseVoiceSmall-ONNX/resolve/main/tokens.txt" -OutFile "models/sensevoice/tokens.txt"
+          Invoke-WebRequest -Uri "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main/model.int8.onnx" -OutFile "models/sensevoice/model.int8.onnx"
+          Invoke-WebRequest -Uri "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main/tokens.txt" -OutFile "models/sensevoice/tokens.txt"
+
+          # Download Piper base voice models
+          try {
+            $piperZip = "$env:TEMP\piper.zip"
+            Invoke-WebRequest -Uri "https://huggingface.co/Hacht/CapCapResource/resolve/main/piper.zip" -OutFile $piperZip -TimeoutSec 120
+            if (Test-Path $piperZip) {
+              Expand-Archive -Path $piperZip -DestinationPath "models/piper" -Force
+            }
+          } catch {
+            Write-Host "Piper models download optional note: $_"
+          }
 
           Write-Host "Base models setup completed."
 
