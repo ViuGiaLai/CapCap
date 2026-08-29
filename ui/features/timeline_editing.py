@@ -1398,8 +1398,16 @@ class TimelineEditingMixin:
         """
         collapsed = bool(collapsed)
         self._inspector_collapsed = collapsed
-        # The Studio inspector is a dedicated visible panel. Legacy inspector
-        # widgets remain in the controller tree but are never shown.
+        studio_inspector = getattr(self, "studio_inspector", None)
+        if studio_inspector is not None:
+            studio_inspector.setVisible(not bool(collapsed))
+        stack = getattr(self, "inspector_stack", None)
+        if stack is not None:
+            stack.setVisible(not bool(collapsed))
+        try:
+            self._sync_subtitle_inspector_shell_width(visible=not bool(collapsed))
+        except Exception:
+            pass
         if getattr(self, "_studio_uses_contextual_inspector", False):
             legacy_shell = getattr(self, "subtitle_inspector_shell", None)
             if legacy_shell is not None:

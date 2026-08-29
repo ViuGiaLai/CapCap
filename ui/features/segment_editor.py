@@ -1119,6 +1119,8 @@ class SegmentEditorMixin:
         target = idx_map.get(kind, 4)
         if self.inspector_stack.currentIndex() != target:
             self.inspector_stack.setCurrentIndex(target)
+        if hasattr(self, "set_controls_panel_visible"):
+            self.set_controls_panel_visible(True)
         # The handle/toggle button is always visible so the user can
         # The handle/toggle UI was removed - the track inspector is
         # always expanded. No need to show/hide a handle.

@@ -993,6 +993,38 @@ class LauncherWindow(QDialog):
             message.setStyleSheet(MSG_STYLE)
             message.exec()
 
+    def _on_check_updates(self):
+        from app.services.update_checker import UpdateCheckerThread
+        from app.version import get_app_version_string
+        from ui.dialogs.update_dialog import UpdateDialog
+        from PySide6.QtWidgets import QMessageBox
+
+        if hasattr(self, "_launcher_update_thread") and self._launcher_update_thread and self._launcher_update_thread.isRunning():
+            QMessageBox.information(self, "Check in Progress", "CapCap is currently checking for updates...")
+            return
+
+        self._launcher_update_thread = UpdateCheckerThread(self)
+        def _on_avail(info):
+            dlg = UpdateDialog(info, self)
+            dlg.exec()
+        def _on_no(ver):
+            QMessageBox.information(
+                self,
+                "CapCap Up to Date",
+                f"You are using the latest version of CapCap ({get_app_version_string()}).\nNo updates available at this time.",
+            )
+        def _on_err(err):
+            QMessageBox.warning(
+                self,
+                "Update Check Failed",
+                f"Could not connect to GitHub to check for updates:\n{err}\n\nPlease try again later.",
+            )
+
+        self._launcher_update_thread.update_available.connect(_on_avail)
+        self._launcher_update_thread.no_update_available.connect(_on_no)
+        self._launcher_update_thread.check_failed.connect(_on_err)
+        self._launcher_update_thread.start()
+
     def _on_about(self):
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices, QPixmap

@@ -223,7 +223,7 @@ class WindowUiMixin:
         studio_inspector = getattr(self, "studio_inspector", None)
         if studio_inspector is not None:
             studio_inspector.setFixedWidth(268 if compact_width else 290)
-            if width < 1180 and studio_inspector.isVisible():
+            if width < 1180 and getattr(self, "_inspector_collapsed", True) and studio_inspector.isVisible():
                 studio_inspector.hide()
 
         # Narrower side panels leave a meaningful preview width on 1366/1280

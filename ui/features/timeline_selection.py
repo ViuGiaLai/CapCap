@@ -381,6 +381,8 @@ class TimelineSelectionMixin:
             self.timeline_delete_btn.setEnabled(not is_review_mode and can_modify_layer)
         if hasattr(self, "inspector_delete_segment_btn"):
             self.inspector_delete_segment_btn.setEnabled(not is_review_mode and can_modify_layer)
+        if hasattr(self, "set_inspector_collapsed"):
+            self.set_inspector_collapsed(False)
         if layer_type == "subtitle":
             self._show_subtitle_inspector_for_layer(layer_id)
         elif layer_type == "dub_subtitle":

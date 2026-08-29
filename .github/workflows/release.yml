@@ -1,4 +1,4 @@
-﻿name: Build and Release CapCap
+name: Build and Release CapCap
 
 on:
   push:
@@ -70,6 +70,15 @@ jobs:
           }
 
           Write-Host "Base models setup completed."
+
+      - name: Inject Version Info
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "v1.0.0" }
+          $cleanVersion = $tag.TrimStart("v")
+          $versionData = @{ version = $cleanVersion; tag = $tag } | ConvertTo-Json
+          Set-Content -Path "app/version.json" -Value $versionData -Encoding UTF8
+          Write-Host "Injected version: $cleanVersion"
 
       - name: Build with PyInstaller
         shell: pwsh

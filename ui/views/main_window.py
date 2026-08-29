@@ -215,6 +215,7 @@ def _build_header_bar(gui):
     gui.normalizer_dict_action = more_menu.addAction("Normalizer Dictionary")
     gui.normalizer_dict_action.triggered.connect(gui.open_normalizer_dict_dialog)
 
+
     gui.header_home_btn = QPushButton("Projects")
     gui.header_home_btn.setObjectName("secondaryActionBtn")
     gui.header_home_btn.setMinimumHeight(36)
@@ -552,4 +553,7 @@ def _initialize_ui_state(gui):
             pass
     gui.sync_segment_editor_rows()
     gui.set_controls_panel_visible(False)
+    if hasattr(gui, "schedule_startup_update_check"):
+        gui.schedule_startup_update_check()
+
 

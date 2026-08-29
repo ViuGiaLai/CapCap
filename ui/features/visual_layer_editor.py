@@ -514,6 +514,9 @@ class VisualLayerEditorMixin:
     def _show_blur_inspector_for_track(self, track, layer=None):
         """Show the Blur Track Inspector populated with the selected track."""
         self._switch_inspector("blur")
+        studio_inspector = getattr(self, "studio_inspector", None)
+        if studio_inspector is not None:
+            studio_inspector.show()
         self._wire_blur_inspector_controls()
         self._wire_layer_timing_controls("blur")
         if track is None:
