@@ -69,6 +69,16 @@ class ProjectStateMixin:
             state.set_setting("translation_signature", signature)
             self.project_service.save_project(state)
 
+    def persist_auto_recap_project_data(self, decisions, recap_video_path=""):
+        state = self.ensure_current_project()
+        if not state:
+            return
+        edl_data = [d.to_dict() if hasattr(d, "to_dict") else dict(d.__dict__) for d in decisions]
+        state.set_setting("auto_recap_edl", edl_data)
+        if recap_video_path:
+            state.artifacts["auto_recap_video"] = self._normalize_local_file_path(recap_video_path)
+        self.project_service.save_project(state)
+
     def build_current_translation_signature(self, source_segments=None):
         base_segments = list(source_segments or self.current_segments or [])
         if not base_segments:
@@ -312,6 +322,26 @@ class ProjectStateMixin:
         self._allow_post_pipeline_preview_assets = False
 
         st = getattr(state, "settings", {}) or {}
+
+        # Restore Auto Recap state early so export and the Generate menu do not
+        # silently lose the previous EDL when a project is reopened.
+        try:
+            from app.services.auto_recap_engine import ShotDecision
+
+            restored_edl = []
+            for item in list(st.get("auto_recap_edl") or []):
+                if not isinstance(item, dict):
+                    continue
+                values = dict(item)
+                values.pop("output_duration", None)
+                restored_edl.append(ShotDecision(**values))
+            self.current_auto_recap_edl = restored_edl
+        except (TypeError, ValueError):
+            self.current_auto_recap_edl = []
+
+        recap_artifact = str(getattr(state, "artifacts", {}).get("auto_recap_video", "") or "")
+        recap_artifact = self._normalize_local_file_path(recap_artifact)
+        self.last_recap_video_path = recap_artifact if recap_artifact and os.path.exists(recap_artifact) else ""
 
         # 1. Output & Media Settings
         saved_output_mode = st.get("output_mode")

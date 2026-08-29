@@ -593,6 +593,9 @@ class SegmentEditorMixin:
     def _show_logo_inspector_for_track(self, track, layer=None):
         """Show the Logo Track Inspector populated with the selected L1 layer."""
         self._switch_inspector("logo")
+        self._wire_layer_timing_controls("logo")
+        if layer is not None:
+            self._set_layer_timing_controls("logo", layer)
         self._sync_logo_inspector_for_layer(track, layer)
 
     def _sync_logo_inspector_for_layer(self, track, layer):
@@ -1544,7 +1547,11 @@ class SegmentEditorMixin:
             return
         for track in timeline._timeline.tracks:
             if track.name == track_name and track.layers:
-                timeline.select_layer(track.layers[0].id)
+                layer_id = track.layers[0].id
+                timeline.select_layer(layer_id)
+                # select_layer updates the canvas only; label clicks must
+                # also route through the inspector/preview selection path.
+                self.on_timeline_layer_selected(layer_id)
                 return
 
     def _sync_timeline_mute_to_gui(self):
@@ -1594,13 +1601,12 @@ class SegmentEditorMixin:
         if self._preview_is_playing():
             return
 
-        if layer_type in {"blur", "logo", "mask", "text", "image", "sticker"} and not bool(
-            getattr(self, "_optional_layer_controls_ready", False)
-        ):
+        video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+        if layer_type != "subtitle" and (not video_path or not os.path.exists(video_path)):
             QMessageBox.information(
                 self,
-                "Generate Video First",
-                "Complete video generation before adding Blur, Logo, Mask, Text, or other overlay layers.",
+                "Select Video First",
+                "Open a valid video before adding a visual layer.",
             )
             return
 
@@ -1783,8 +1789,8 @@ class SegmentEditorMixin:
             # visible in the timeline (otherwise overlapping layers at
             # the same position hide each other).
             stagger = idx % 4
-            base_y = 0.75 - stagger * 0.06
-            base_x = 0.30 + (stagger % 2) * 0.08
+            base_y = 0.78 - stagger * 0.04
+            base_x = 0.15 + (stagger % 2) * 0.05
             # New Blur layers are global by default.  Their geometry can be
             # narrowed later in the inspector/timeline, but creating one must
             # not unexpectedly limit it to a five-second window at the
@@ -1795,8 +1801,8 @@ class SegmentEditorMixin:
                 name=f"Blur {idx + 1}",
                 position_x=float(base_x),
                 position_y=float(base_y),
-                width=0.4,
-                height=0.1,
+                width=0.7,
+                height=0.18,
                 blur_strength=20.0,
                 start=blur_start,
                 end=blur_end,

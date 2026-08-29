@@ -49,7 +49,7 @@ class TimelineSelectionMixin:
         return str(getattr(self, "_deferred_effect_edit_layer_id", "") or "")
 
     def _set_deferred_effect_edit_target(self, track=None, layer=None) -> bool:
-        """Suppress exactly one selected Blur/Mask effect while paused.
+        """Suppress one selected Mask effect while paused.
 
         Overlay geometry continues to update normally; only the MPV filter
         contribution of the selected clip is deferred until it is committed.
@@ -59,9 +59,7 @@ class TimelineSelectionMixin:
         if layer is not None and not self._preview_is_playing():
             layer_type = str(getattr(getattr(layer, "type", ""), "value", getattr(layer, "type", ""))).lower()
             track_name = str(getattr(track, "name", "") or "")
-            if layer_type == "blur" and track_name == "B1":
-                next_type, next_id = "blur", str(getattr(layer, "id", "") or "")
-            elif layer_type == "mask" and track_name == "M1":
+            if layer_type == "mask" and track_name == "M1":
                 next_type, next_id = "mask", str(getattr(layer, "id", "") or "")
         changed = (
             next_type != str(getattr(self, "_deferred_effect_edit_type", "") or "")
@@ -211,7 +209,6 @@ class TimelineSelectionMixin:
                     self.video_view.set_blur_edit_enabled(bool(
                         is_selected_blur
                         and selected_id == str(getattr(self, "_preview_edit_layer_id", "") or "")
-                        and self._deferred_effect_layer_id_for("blur") == selected_id
                         and not is_playing
                         and self._blur_effect_enabled()
                     ))
@@ -219,12 +216,7 @@ class TimelineSelectionMixin:
                 # outline. Update that filter with the same time-filtered
                 # regions; otherwise a filter applied at playback start
                 # continues blurring after the outline has disappeared.
-                suppressed_id = self._deferred_effect_layer_id_for("blur")
-                effect_regions = [
-                    region for region, layer in zip(overlay_regions, active_layers)
-                    if str(getattr(layer, "id", "")) != suppressed_id
-                ]
-                self.apply_preview_blur_region(regions=effect_regions)
+                self.apply_preview_blur_region(regions=overlay_regions)
 
         # Rebuild both managed effect payloads once from the complete active
         # timeline after all overlay bookkeeping. This is the authoritative
@@ -238,14 +230,11 @@ class TimelineSelectionMixin:
             )
         )
         blur_effect_regions = []
-        suppressed_blur_id = self._deferred_effect_layer_id_for("blur")
         for track in self.timeline._timeline.tracks:
             if str(getattr(track, "name", "")) != "B1":
                 continue
             for layer in track.layers:
                 if not self._layer_is_active_at_preview_time(layer, time_seconds):
-                    continue
-                if str(getattr(layer, "id", "") or "") == suppressed_blur_id:
                     continue
                 blur_effect_regions.append({
                     "x": float(getattr(layer, "position_x", 0.0)),

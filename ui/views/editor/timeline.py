@@ -5,9 +5,8 @@ from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPai
 from PySide6.QtWidgets import QApplication, QFrame, QGraphicsScene, QGraphicsView, QMenu, QPushButton
 
 
-from app.layers.base import BaseLayer, LayerType
-from app.layers.timeline import Timeline, Track, Clip
-from app.layers.dub_subtitle import DubSubtitleLayer
+from app.layers.base import LayerType
+from app.layers.timeline import Timeline, Track
 from app.runtime_paths import subprocess_hidden_kwargs
 
 
@@ -1658,6 +1657,9 @@ class EditorTimeline(QGraphicsView):
                 track, layer = self._find_layer_by_id(lid)
                 if layer:
                     if bool(getattr(track, "locked", False)):
+                        self._selected_layer_id = lid
+                        self.layerSelected.emit(lid)
+                        self.viewport().update()
                         event.accept()
                         return
                     if bool(getattr(layer, "locked", False)):
@@ -1690,6 +1692,9 @@ class EditorTimeline(QGraphicsView):
             elif lid:
                 track, layer = self._find_layer_by_id(lid)
                 if bool(getattr(track, "locked", False)):
+                    self._selected_layer_id = lid
+                    self.layerSelected.emit(lid)
+                    self.viewport().update()
                     event.accept()
                     return
                 if bool(getattr(layer, "locked", False)):
@@ -1727,14 +1732,13 @@ class EditorTimeline(QGraphicsView):
             _edge, lid = self._hit_test_edge(pos, scroll_x, scroll_y)
             if lid:
                 track, layer = self._find_layer_by_id(lid)
-                if not bool(getattr(track, "locked", False)):
-                    self._selected_layer_id = lid
-                    self.layerSelected.emit(lid)
-                    idx = self.segment_index_for_layer_id(lid)
-                    if idx >= 0:
-                        self._manual_subtitle_selection = True
-                        self.segmentSelected.emit(idx)
-                    self.viewport().update()
+                self._selected_layer_id = lid
+                self.layerSelected.emit(lid)
+                idx = self.segment_index_for_layer_id(lid)
+                if idx >= 0:
+                    self._manual_subtitle_selection = True
+                    self.segmentSelected.emit(idx)
+                self.viewport().update()
 
         super().mousePressEvent(event)
 

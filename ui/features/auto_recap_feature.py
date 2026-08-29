@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import os
+from typing import Any, Dict, List, Optional
+
+from app.services.auto_recap_engine import AutoRecapConfig, AutoRecapEngine, ShotDecision
+from ui.dialogs.auto_recap_dialog import AutoRecapSettingsDialog
+
+
+class AutoRecapFeatureMixin:
+    """Mixin class providing UI integration and feature actions for CapCap Auto Edit Recap."""
+
+    def init_auto_recap_feature(self):
+        """Initializes default Auto Recap configuration and EDL decision state."""
+        if not hasattr(self, "auto_recap_config") or self.auto_recap_config is None:
+            self.auto_recap_config = AutoRecapConfig()
+        if not hasattr(self, "current_auto_recap_edl"):
+            self.current_auto_recap_edl: List[ShotDecision] = []
+
+    def open_auto_recap_settings_dialog(self):
+        """Tier 2 UI: Opens the 12 Rules Customization Modal."""
+        self.init_auto_recap_feature()
+        dialog = AutoRecapSettingsDialog(self.auto_recap_config, parent=self)
+        if dialog.exec():
+            self.auto_recap_config = dialog.config
+            if hasattr(self, "log"):
+                self.log(
+                    f"[Auto Recap] Configuration updated: Style={self.auto_recap_config.editing_style}, "
+                    f"Flip={self.auto_recap_config.allow_horizontal_flip}, Speed={self.auto_recap_config.allow_speed_change}"
+                )
+
+    def run_auto_recap_workflow(self):
+        """Action for running Auto Edit Recap from the Generate dropdown menu."""
+        self.init_auto_recap_feature()
+        if hasattr(self, "auto_recap_cb"):
+            self.auto_recap_cb.setChecked(True)
+        if hasattr(self, "log"):
+            self.log("[Auto Recap] Triggered Auto Edit Recap from Generate menu.")
+        if hasattr(self, "run_all_pipeline"):
+            self.run_all_pipeline()
+
+    def is_auto_recap_enabled(self) -> bool:
+        self.init_auto_recap_feature()
+        if hasattr(self, "auto_recap_cb"):
+            return self.auto_recap_cb.isChecked()
+        return self.auto_recap_config.enabled
+
+    def run_auto_recap_processing(self, segments: Optional[List[Dict[str, Any]]] = None, scenes: Optional[List[Dict[str, Any]]] = None) -> List[ShotDecision]:
+        """Runs the 12 Core Rules Engine to produce EDL decisions during generation."""
+        self.init_auto_recap_feature()
+
+        if not self.is_auto_recap_enabled():
+            if hasattr(self, "log"):
+                self.log("[Auto Recap] Engine disabled by user settings. Skipping Auto Recap EDL.")
+            return []
+
+        if segments is not None:
+            input_segments = segments
+        elif hasattr(self, "get_active_segments"):
+            # Prefer the text the user is actually previewing/editing (usually
+            # translated text) over a stale raw transcript.
+            input_segments = list(self.get_active_segments() or [])
+        else:
+            input_segments = list(getattr(self, "current_translated_segments", []) or getattr(self, "current_segments", []) or [])
+        input_scenes = scenes
+        video_path = str(getattr(self.video_path_edit, "text", lambda: "")() or "").strip() if hasattr(self, "video_path_edit") else ""
+
+        engine = AutoRecapEngine(self.auto_recap_config)
+        if not input_segments and not input_scenes and video_path and os.path.exists(video_path):
+            if hasattr(self, "log"):
+                self.log(f"[Auto Recap] Detecting scene cuts for video: {video_path}")
+            input_scenes = engine.detect_scenes_ffmpeg(video_path, threshold=0.25)
+            if hasattr(self, "log"):
+                self.log(f"[Auto Recap] Detected {len(input_scenes)} scenes for Auto Recap EDL.")
+
+        if not input_segments and not input_scenes:
+            if hasattr(self, "log"):
+                self.log("[Auto Recap] Warning: No segments or scenes found for Auto Recap EDL.")
+            return []
+
+        engine = AutoRecapEngine(self.auto_recap_config)
+        decisions = engine.generate_edl(input_segments, input_scenes)
+        self.current_auto_recap_edl = decisions
+
+        if hasattr(self, "persist_auto_recap_project_data"):
+            self.persist_auto_recap_project_data(decisions)
+
+        if hasattr(self, "log"):
+            self.log(f"[Auto Recap] Generated EDL with {len(decisions)} shot decisions using 12 Core Rules.")
+            for d in decisions[:3]:
+                self.log(f"  • Shot {d.shot_index + 1}: {d.recap_notes} (Zoom: {d.zoom_scale}x, Flip: {d.horizontal_flip})")
+
+        return decisions

@@ -222,6 +222,7 @@ class WindowUiMixin:
         inspector_width = 320 if compact_width else 400
         inspector_max = 440 if compact_width else 560
         self._responsive_inspector_width = inspector_width
+        studio_inspector = getattr(self, "studio_inspector", None)
         for attr in (
             "subtitle_inspector_card", "audio_inspector_card", "blur_inspector_card",
             "logo_inspector_card", "mask_inspector_card", "text_inspector_card",
@@ -229,8 +230,12 @@ class WindowUiMixin:
         ):
             card = getattr(self, attr, None)
             if card is not None:
-                card.setMinimumWidth(inspector_width)
-                card.setMaximumWidth(inspector_max)
+                if studio_inspector is not None:
+                    card.setMinimumWidth(0)
+                    card.setMaximumWidth(16777215)
+                else:
+                    card.setMinimumWidth(inspector_width)
+                    card.setMaximumWidth(inspector_max)
         self._sync_subtitle_inspector_shell_width()
         stack = getattr(self, "inspector_stack", None)
         if stack is not None:

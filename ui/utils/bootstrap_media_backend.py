@@ -25,7 +25,14 @@ class BootstrapMediaBackend:
     def set_original_audio_file(self, audio_path): return None
     def _clear_original_audio(self): return None
     def set_blur_region(self, blur_region=None): return None
+    def set_blur_regions_normalized(self, regions=None): return None
+    def set_blur_edit_enabled(self, enabled=True): return None
+    def set_blur_active_index(self, index=0): return None
     def clear_blur_region(self): return None
+    def set_mask_region(self, mask_region=None): return None
+    def set_mask_regions(self, regions=None, active_index=0): return None
+    def set_mask_edit_enabled(self, enabled=True): return None
+    def clear_mask_region(self): return None
     def set_volume(self, percent): return None
     def volume(self): return 100
     def set_muted(self, muted): return None

@@ -403,10 +403,12 @@ class QtMediaPlayerBackend(QObject):
         self._dubbed_output.setMuted(bool(self._mute_dubbed or self._dubbed_vol <= 0.0 or not self._dubbed_loaded_path))
 
     def set_blur_region(self, blur_region=None):
-        return None
+        if hasattr(self.video_view, "set_blur_effect_regions"):
+            self.video_view.set_blur_effect_regions(blur_region)
 
     def clear_blur_region(self):
-        return None
+        if hasattr(self.video_view, "set_blur_effect_regions"):
+            self.video_view.set_blur_effect_regions(None)
 
     def set_mask_region(self, mask_region=None):
         return None

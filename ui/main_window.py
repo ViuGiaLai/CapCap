@@ -25,6 +25,8 @@ from features.timeline_editing import TimelineEditingMixin
 from features.voice_subtitle_preview import VoiceSubtitlePreviewMixin
 from features.workflow_actions import WorkflowActionsMixin
 from features.model_settings import ModelSettingsMixin
+from features.update_feature import UpdateFeatureMixin
+from features.auto_recap_feature import AutoRecapFeatureMixin
 from features.pipeline_lifecycle import PipelineLifecycleMixin
 from utils.bootstrap_media_backend import BootstrapMediaBackend
 from runtime_paths import asset_path, workspace_root
@@ -34,7 +36,7 @@ def _default_asr_engine() -> str:
     return "sensevoice"
 
 
-class VideoTranslatorGUI(PipelineLifecycleMixin, ModelSettingsMixin, WorkflowActionsMixin, VoiceSubtitlePreviewMixin, TimelineEditingMixin, SegmentEditorMixin, PreviewConfigurationMixin, ProjectStateMixin, FilterSubtitleStyleMixin, SpeakerVoiceMixin, WindowUiMixin, RuntimeMediaMixin, VoiceCatalogMixin, VisualLayerEditorMixin, TimelineSelectionMixin, QMainWindow):
+class VideoTranslatorGUI(PipelineLifecycleMixin, AutoRecapFeatureMixin, ModelSettingsMixin, UpdateFeatureMixin, WorkflowActionsMixin, VoiceSubtitlePreviewMixin, TimelineEditingMixin, SegmentEditorMixin, PreviewConfigurationMixin, ProjectStateMixin, FilterSubtitleStyleMixin, SpeakerVoiceMixin, WindowUiMixin, RuntimeMediaMixin, VoiceCatalogMixin, VisualLayerEditorMixin, TimelineSelectionMixin, QMainWindow):
     VOICE_ENTRY_ID_ROLE = Qt.UserRole + 1
     runtime_log_received = Signal(str)
     subtitle_ass_ready = Signal(int, str, str, object)
@@ -246,7 +248,7 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, ModelSettingsMixin, WorkflowAct
                 border-radius: 9px;
                 font-size: 13px;
                 font-weight: 700;
-                padding: 8px 18px;
+                padding: 5px 13px;
                 letter-spacing: 0.2px;
             }
             QPushButton#mainActionBtn:hover, QToolButton#mainActionBtn:hover {
@@ -268,7 +270,7 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, ModelSettingsMixin, WorkflowAct
                 border-radius: 9px;
                 font-size: 12px;
                 font-weight: 700;
-                padding: 7px 16px;
+                padding: 5px 12px;
             }
             QPushButton#secondaryActionBtn:hover {
                 background-color: #1a2d44;

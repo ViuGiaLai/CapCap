@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTextEdit,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -851,7 +850,8 @@ def build_preview_panel(gui):
     gui.preview_btn.setFixedSize(34, 32)
 
     gui.blur_add_btn.setToolTip("Add a blur region")
-    gui.blur_add_btn.setFixedSize(44, 32)
+    gui.blur_add_btn.setFixedHeight(30)
+    gui.blur_add_btn.setMinimumWidth(50)
     gui.blur_add_btn.setEnabled(False)
 
     gui.ocr_region_btn.setToolTip("Edit OCR subtitle region")
@@ -887,7 +887,8 @@ def build_preview_panel(gui):
     gui.blur_area_btn.setVisible(False)
     # Dedicated Logo / Watermark button (beside the Blur button)
     gui.add_logo_btn = QPushButton("Logo")
-    gui.add_logo_btn.setFixedSize(44, 32)
+    gui.add_logo_btn.setFixedHeight(30)
+    gui.add_logo_btn.setMinimumWidth(52)
     gui.add_logo_btn.setEnabled(False)
     gui.add_logo_btn.setToolTip("Add a logo or watermark image to the video")
     gui.add_logo_btn.clicked.connect(
@@ -896,14 +897,16 @@ def build_preview_panel(gui):
     # Dedicated Mask button (beside the Logo button). Adds a new
     # rectangular mask to the M1 track.
     gui.add_mask_btn = QPushButton("Mask")
-    gui.add_mask_btn.setFixedSize(44, 32)
+    gui.add_mask_btn.setFixedHeight(30)
+    gui.add_mask_btn.setMinimumWidth(54)
     gui.add_mask_btn.setEnabled(False)
     gui.add_mask_btn.setToolTip("Add a rectangular mask to the video")
     gui.add_mask_btn.clicked.connect(
         lambda: gui.on_add_timeline_layer("mask") if hasattr(gui, "on_add_timeline_layer") else None
     )
     gui.add_text_btn = QPushButton("Text")
-    gui.add_text_btn.setFixedSize(44, 32)
+    gui.add_text_btn.setFixedHeight(30)
+    gui.add_text_btn.setMinimumWidth(50)
     gui.add_text_btn.setEnabled(False)
     gui.add_text_btn.setToolTip("Add editable text to the video")
     gui.add_text_btn.clicked.connect(
@@ -1024,31 +1027,40 @@ def build_preview_panel(gui):
     timeline_copy_layout.addWidget(timeline_meta)
     timeline_header_layout.addLayout(timeline_copy_layout, 0)
 
-    gui.timeline_undo_btn = QPushButton("Undo")
-    gui.timeline_undo_btn.setFixedHeight(26)
-    gui.timeline_undo_btn.setMinimumWidth(54)
+    gui.timeline_undo_btn = QPushButton()
+    gui.timeline_undo_btn.setFixedSize(30, 28)
+    gui.timeline_undo_btn.setIcon(load_icon(os.path.join(icons_dir, "undo.svg"), 16))
+    gui.timeline_undo_btn.setIconSize(QSize(16, 16))
+    gui.timeline_undo_btn.setToolTip("Undo timeline edit")
     gui.timeline_undo_btn.setEnabled(False)
-    gui.timeline_redo_btn = QPushButton("Redo")
-    gui.timeline_redo_btn.setFixedHeight(26)
-    gui.timeline_redo_btn.setMinimumWidth(54)
+    gui.timeline_redo_btn = QPushButton()
+    gui.timeline_redo_btn.setFixedSize(30, 28)
+    gui.timeline_redo_btn.setIcon(load_icon(os.path.join(icons_dir, "redo.svg"), 16))
+    gui.timeline_redo_btn.setIconSize(QSize(16, 16))
+    gui.timeline_redo_btn.setToolTip("Redo timeline edit")
     gui.timeline_redo_btn.setEnabled(False)
-    gui.timeline_split_btn = QPushButton("Split")
-    gui.timeline_split_btn.setFixedHeight(26)
-    gui.timeline_split_btn.setMinimumWidth(54)
+    gui.timeline_split_btn = QPushButton()
+    gui.timeline_split_btn.setFixedSize(30, 28)
+    gui.timeline_split_btn.setIcon(load_icon(os.path.join(icons_dir, "split.svg"), 16))
+    gui.timeline_split_btn.setIconSize(QSize(16, 16))
+    gui.timeline_split_btn.setToolTip("Split selected layer at the playhead")
     gui.timeline_split_btn.setEnabled(False)
-    gui.timeline_delete_btn = QPushButton("Delete")
-    gui.timeline_delete_btn.setFixedHeight(26)
-    gui.timeline_delete_btn.setMinimumWidth(60)
+    gui.timeline_delete_btn = QPushButton()
+    gui.timeline_delete_btn.setFixedSize(30, 28)
+    gui.timeline_delete_btn.setIcon(load_icon(os.path.join(icons_dir, "delete.svg"), 16))
+    gui.timeline_delete_btn.setIconSize(QSize(16, 16))
+    gui.timeline_delete_btn.setToolTip("Delete selected layer")
     gui.timeline_delete_btn.setEnabled(False)
     gui.timeline_undo_btn.clicked.connect(gui.undo_last_timeline_timing_edit)
     gui.timeline_redo_btn.clicked.connect(gui.redo_last_timeline_timing_edit)
     gui.timeline_split_btn.clicked.connect(gui.split_selected_timeline_segment)
     gui.timeline_delete_btn.clicked.connect(gui.delete_selected_timeline_segment)
 
-    gui.timeline_selection_mode_btn = QPushButton("Select")
+    gui.timeline_selection_mode_btn = QPushButton()
     gui.timeline_selection_mode_btn.setCheckable(True)
-    gui.timeline_selection_mode_btn.setFixedHeight(26)
-    gui.timeline_selection_mode_btn.setMinimumWidth(60)
+    gui.timeline_selection_mode_btn.setFixedSize(30, 28)
+    gui.timeline_selection_mode_btn.setIcon(load_icon(os.path.join(icons_dir, "select.svg"), 16))
+    gui.timeline_selection_mode_btn.setIconSize(QSize(16, 16))
     gui.timeline_selection_mode_btn.setToolTip("Enable Selection Range Mode")
     gui.timeline_selection_mode_btn.setStyleSheet(
         "QPushButton:checked { background:#1e2a40; border-color:#3b82f6; color:#60a5fa; }"
@@ -1091,7 +1103,7 @@ def build_preview_panel(gui):
         gui.timeline_selection_mode_btn.blockSignals(True)
         gui.timeline_selection_mode_btn.setChecked(bool(enabled))
         gui.timeline_selection_mode_btn.blockSignals(False)
-        gui.timeline_selection_mode_btn.setText("Selecting" if enabled else "Select")
+        gui.timeline_selection_mode_btn.setProperty("selectionActive", bool(enabled))
         gui.timeline_selection_mode_btn.setToolTip(
             "Selection Range Mode active: drag the ruler to create or adjust a range"
             if enabled else "Enable Selection Range Mode"
@@ -1099,9 +1111,11 @@ def build_preview_panel(gui):
 
     gui.timeline.selectionModeChanged.connect(_on_selection_mode_changed)
 
-    gui.timeline_layers_btn = QPushButton("Layers ▾")
-    gui.timeline_layers_btn.setFixedHeight(26)
-    gui.timeline_layers_btn.setMinimumWidth(64)
+    gui.timeline_layers_btn = QPushButton("Layers")
+    gui.timeline_layers_btn.setFixedHeight(28)
+    gui.timeline_layers_btn.setMinimumWidth(76)
+    gui.timeline_layers_btn.setIcon(load_icon(os.path.join(icons_dir, "layers.svg"), 16))
+    gui.timeline_layers_btn.setIconSize(QSize(16, 16))
     gui.timeline_layers_btn.setToolTip("Show or hide layers on the timeline only")
     gui.timeline_layers_menu = QMenu(gui.timeline_layers_btn)
     gui.timeline_layers_menu.setStyleSheet(
@@ -1118,24 +1132,35 @@ def build_preview_panel(gui):
     )
     gui.timeline_layers_btn.setMenu(gui.timeline_layers_menu)
 
-    gui.timeline_zoom_out_btn = QPushButton("-")
-    gui.timeline_zoom_out_btn.setFixedSize(26, 26)
+    gui.timeline_zoom_out_btn = QPushButton()
+    gui.timeline_zoom_out_btn.setFixedSize(30, 28)
+    gui.timeline_zoom_out_btn.setIcon(load_icon(os.path.join(icons_dir, "zoom_out.svg"), 16))
+    gui.timeline_zoom_out_btn.setIconSize(QSize(16, 16))
+    gui.timeline_zoom_out_btn.setToolTip("Zoom out timeline")
     gui.timeline_zoom_label = QLabel(f"{gui.timeline.zoom_percent()}%")
     gui.timeline_zoom_label.setObjectName("helperLabel")
     gui.timeline_zoom_label.setAlignment(Qt.AlignCenter)
     gui.timeline_zoom_label.setFixedWidth(40)
     gui.timeline_zoom_label.setStyleSheet("font-size: 11px; color: #94a3b8;")
-    gui.timeline_zoom_in_btn = QPushButton("+")
-    gui.timeline_zoom_in_btn.setFixedSize(26, 26)
-    gui.timeline_zoom_reset_btn = QPushButton("Fit")
-    gui.timeline_zoom_reset_btn.setFixedSize(36, 26)
+    gui.timeline_zoom_in_btn = QPushButton()
+    gui.timeline_zoom_in_btn.setFixedSize(30, 28)
+    gui.timeline_zoom_in_btn.setIcon(load_icon(os.path.join(icons_dir, "zoom_in.svg"), 16))
+    gui.timeline_zoom_in_btn.setIconSize(QSize(16, 16))
+    gui.timeline_zoom_in_btn.setToolTip("Zoom in timeline")
+    gui.timeline_zoom_reset_btn = QPushButton()
+    gui.timeline_zoom_reset_btn.setFixedSize(30, 28)
+    gui.timeline_zoom_reset_btn.setIcon(load_icon(os.path.join(icons_dir, "fit.svg"), 16))
+    gui.timeline_zoom_reset_btn.setIconSize(QSize(16, 16))
+    gui.timeline_zoom_reset_btn.setToolTip("Fit the full timeline")
     gui.timeline_zoom_out_btn.clicked.connect(gui.timeline.zoom_out)
     gui.timeline_zoom_in_btn.clicked.connect(gui.timeline.zoom_in)
     gui.timeline_zoom_reset_btn.clicked.connect(gui.timeline.reset_zoom)
 
-    gui.add_layer_btn = QPushButton("+ Layer ▾")
-    gui.add_layer_btn.setFixedHeight(26)
-    gui.add_layer_btn.setMinimumWidth(68)
+    gui.add_layer_btn = QPushButton("Add layer")
+    gui.add_layer_btn.setFixedHeight(28)
+    gui.add_layer_btn.setMinimumWidth(88)
+    gui.add_layer_btn.setIcon(load_icon(os.path.join(icons_dir, "add_layer.svg"), 16))
+    gui.add_layer_btn.setIconSize(QSize(16, 16))
     gui.add_layer_btn.setToolTip("Add a new layer")
     gui.add_layer_btn.setEnabled(False)
     gui._layer_menu = QMenu(gui.add_layer_btn)
@@ -1153,6 +1178,26 @@ def build_preview_panel(gui):
     gui._layer_menu.addAction("Blur", lambda: gui.on_add_timeline_layer("blur"))
     gui._layer_menu.addAction("Mask", lambda: gui.on_add_timeline_layer("mask"))
     gui.add_layer_btn.setMenu(gui._layer_menu)
+
+    timeline_toolbar_style = (
+        "QPushButton { background:#111d2b; color:#b8c9dc; border:1px solid #263c55;"
+        " border-radius:6px; padding:3px 8px; font-size:10px; font-weight:600; }"
+        "QPushButton:hover { background:#192a3d; color:#edf6ff; border-color:#3b6b95; }"
+        "QPushButton:pressed, QPushButton:checked { background:#1b3550; color:#75c7ff;"
+        " border-color:#3b82b8; }"
+        "QPushButton:disabled { background:#0d1722; color:#40546a; border-color:#1a2a3a; }"
+        "QPushButton::menu-indicator { subcontrol-origin:padding; subcontrol-position:center right;"
+        " width:10px; right:3px; }"
+    )
+    timeline_buttons = (
+        gui.timeline_undo_btn, gui.timeline_redo_btn, gui.timeline_split_btn,
+        gui.timeline_delete_btn, gui.timeline_selection_mode_btn,
+        gui.timeline_clear_selection_btn, gui.timeline_alt_transcribe_btn,
+        gui.timeline_layers_btn, gui.add_layer_btn, gui.timeline_zoom_out_btn,
+        gui.timeline_zoom_in_btn, gui.timeline_zoom_reset_btn,
+    )
+    for button in timeline_buttons:
+        button.setStyleSheet(timeline_toolbar_style)
 
     edit_group = QHBoxLayout()
     edit_group.setSpacing(4)

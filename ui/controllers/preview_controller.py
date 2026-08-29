@@ -909,6 +909,36 @@ class PreviewController:
             QMessageBox.warning(self.gui, "Error", "Please choose a video first.")
             return
 
+        # Auto Edit Recap Export Handler
+        if hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled():
+            recap_path = str(getattr(self.gui, "last_recap_video_path", "") or "")
+            if recap_path and os.path.exists(recap_path):
+                self.gui.log(f"[Export] Opening output recap video folder: {recap_path}")
+                os.startfile(os.path.dirname(recap_path))
+                return
+            elif getattr(self.gui, "current_auto_recap_edl", None):
+                output_dir = os.path.join(self.gui.workspace_root, "output")
+                os.makedirs(output_dir, exist_ok=True)
+                output_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}_recap.mp4")
+                from app.services.auto_recap_engine import AutoRecapEngine
+                engine = AutoRecapEngine(getattr(self.gui, "auto_recap_config", None))
+                self.gui.log("[Export] Rendering 1-Pass Auto Recap video for export...")
+                if engine.render_recap_video_1pass(video_path, output_path, self.gui.current_auto_recap_edl):
+                    self.gui.last_recap_video_path = output_path
+                    if hasattr(self.gui, "persist_auto_recap_project_data"):
+                        self.gui.persist_auto_recap_project_data(self.gui.current_auto_recap_edl, output_path)
+                    self.gui.log(f"[Export] Recap video rendered successfully: {output_path}")
+                    os.startfile(output_dir)
+                    return
+                render_error = str(getattr(engine, "last_render_error", "") or "").strip()
+                self.gui.log(f"[Export] Auto Recap render failed: {render_error or 'unknown FFmpeg error'}")
+                QMessageBox.warning(
+                    self.gui,
+                    "Auto Edit Recap",
+                    "Could not render the recap video. Check the source video and FFmpeg installation.",
+                )
+                return
+
         mode = self._effective_render_mode_without_tts(self.gui.get_output_mode_key())
         original_audio_gain_db = self._original_audio_gain_db_for_render(mode)
         video_name = os.path.splitext(os.path.basename(video_path))[0]

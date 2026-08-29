@@ -321,3 +321,78 @@ def ensure_v1_a1_tracks(timeline: Timeline, video_path: str, duration: float) ->
     if not isinstance(a1.metadata, dict):
         a1.metadata = {}
     a1.metadata.setdefault("_volume", 50.0)
+
+
+def sync_auto_recap_decisions_to_timeline(
+    timeline: Timeline,
+    decisions: list[Any],
+    video_path: str,
+) -> None:
+    """Convert Auto Edit Recap decisions into multiple distinct VideoLayer & AudioLayer items on V1 Video & A1 Audio tracks."""
+    if not decisions or not video_path:
+        return
+
+    from app.layers.audio import AudioLayer
+    from app.layers.transform import Transform
+    from app.layers.video import VideoLayer
+
+    v1 = find_or_create_track(timeline, "V1 Video", LayerType.VIDEO, 80)
+    v1.visible = True
+    v1.layers.clear()
+
+    a1 = find_or_create_track(timeline, "A1 Audio", LayerType.AUDIO, 80)
+    a1.visible = True
+    a1.layers.clear()
+
+    timeline_pos = 0.0
+    for idx, d in enumerate(decisions):
+        action = getattr(d, "action_type", "KEEP")
+        if action == "CUT":
+            continue
+
+        eff_dur = float(getattr(d, "output_duration", 0.0) or 0.0)
+        if eff_dur <= 0:
+            source_duration = float(getattr(d, "duration", 0.0) or 0.0)
+            speed = max(0.01, float(getattr(d, "speed", 1.0) or 1.0))
+            freeze = max(0.0, float(getattr(d, "freeze_duration", 0.0) or 0.0))
+            eff_dur = (source_duration / speed) + freeze
+        if eff_dur <= 0:
+            continue
+
+        end_pos = round(timeline_pos + eff_dur, 3)
+
+        # video_path is the already-rendered recap. Keep timeline layers as
+        # identity slices so effects and speed are not applied a second time.
+        v_layer = VideoLayer(
+            name=f"Shot {idx + 1} [{action}]",
+            source=video_path,
+            start=round(timeline_pos, 3),
+            end=end_pos,
+            source_start=round(timeline_pos, 3),
+            speed=1.0,
+            transform=Transform(x=0, y=0, scale_x=1.0, scale_y=1.0),
+            filters={},
+        )
+        v_layer.z_index = idx
+        v_layer.metadata["_recap_decision"] = {
+            "shot_index": idx,
+            "action_type": action,
+            "recap_notes": str(getattr(d, "recap_notes", "")),
+        }
+        v1.layers.append(v_layer)
+
+        a_layer = AudioLayer(
+            name=f"Audio {idx + 1}",
+            source=video_path,
+            start=round(timeline_pos, 3),
+            end=end_pos,
+            source_start=round(timeline_pos, 3),
+            speed=1.0,
+            volume=1.0,
+        )
+        a_layer.z_index = idx
+        a1.layers.append(a_layer)
+
+        timeline_pos = end_pos
+
+    timeline.duration = max(timeline_pos, 0.1)

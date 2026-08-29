@@ -204,10 +204,8 @@ def build_start_group(gui, left_layout):
 
     gui.run_all_btn = QToolButton()
     gui.run_all_btn.setObjectName("mainActionBtn")
-    gui.run_all_btn.setPopupMode(QToolButton.MenuButtonPopup)
-    gui._generate_full_action = QAction("Generate Full Pipeline", gui.run_all_btn)
-    gui._generate_full_action.triggered.connect(gui.run_all_pipeline)
-    gui.run_all_btn.setDefaultAction(gui._generate_full_action)
+    gui.run_all_btn.setPopupMode(QToolButton.InstantPopup)
+    gui.run_all_btn.setText("Generate")
     gui._generate_menu = None
 
     gui.export_btn = QPushButton("Export")
@@ -462,6 +460,34 @@ def build_start_group(gui, left_layout):
     diarization_layout.addWidget(gui.speaker_diarization_hint_label)
     output_layout.addWidget(audio_cleanup_card)
     output_layout.addWidget(diarization_card)
+
+    # --- Auto Edit Recap Card (Tier 1 & Tier 2) ---
+    recap_card, recap_layout = _section_card()
+    recap_title = QLabel("Auto Edit Recap")
+    recap_title.setObjectName("sectionTitle")
+    recap_layout.addWidget(recap_title)
+
+    recap_row = QHBoxLayout()
+    gui.auto_recap_cb = QCheckBox("✨ Auto Edit Recap (Speed Priority)")
+    gui.auto_recap_cb.setChecked(True)
+    gui.auto_recap_cb.setToolTip(
+        "Apply the 12 Core Edit Rules: Scene cuts, Zoom, Pan, Crop, Speed, Horizontal Flip & Audio Ducking"
+    )
+    recap_row.addWidget(gui.auto_recap_cb, 1)
+
+    gui.auto_recap_customize_btn = QPushButton("⚙ Customize")
+    gui.auto_recap_customize_btn.setObjectName("secondaryActionBtn")
+    gui.auto_recap_customize_btn.setToolTip("Customize the 12 Auto Recap rules")
+    if hasattr(gui, "open_auto_recap_settings_dialog"):
+        gui.auto_recap_customize_btn.clicked.connect(gui.open_auto_recap_settings_dialog)
+    recap_row.addWidget(gui.auto_recap_customize_btn)
+    recap_layout.addLayout(recap_row)
+
+    recap_hint = QLabel("Applies 12 smart edit rules (cuts, zoom, pan, flip, audio ducking). Click 'Customize' for advanced rule control.", gui)
+    recap_hint.setObjectName("helperLabel")
+    recap_hint.setWordWrap(True)
+    recap_layout.addWidget(recap_hint)
+    output_layout.addWidget(recap_card)
 
     media_layout.addWidget(output_card)
     if hasattr(gui, "update_speaker_diarization_availability"):

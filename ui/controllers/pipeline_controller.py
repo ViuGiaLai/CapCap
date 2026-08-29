@@ -293,15 +293,20 @@ class PipelineController:
         self.progress_dialog.stop_requested.connect(self._on_pipeline_stop)
         if hasattr(self.gui, "_register_progress_dialog"):
             self.gui._register_progress_dialog(self.progress_dialog)
-        from runtime_profile import is_remote_profile
-        if is_remote_profile():
-            # Backend runs separate + transcribe + translate in one batch.
-            # Cleaner voice (separation) is handled inside the batch silently.
-            self.progress_dialog.add_step("ai_process", "Subtitle Processing (AI)")
+        if hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled():
+            if hasattr(self.progress_dialog, "title_label"):
+                self.progress_dialog.title_label.setText("✨ Auto Edit Recap")
+            self.progress_dialog.add_step("analyzing", "Analyzing Video (Scene Detection & Timing)")
+            self.progress_dialog.add_step("building", "Building Recap (Importance & Cut Logic)")
+            self.progress_dialog.add_step("smart_edits", "Applying Smart Edits (Zoom, Pan, Crop & Speed)")
+            self.progress_dialog.add_step("audio", "Processing Audio (Voiceover & Ducking)")
+            self.progress_dialog.add_step("rendering", "Rendering Recap (FFmpeg 1-Pass)")
         else:
+            if hasattr(self.progress_dialog, "title_label"):
+                self.progress_dialog.title_label.setText("AI Production Pipeline")
             self.progress_dialog.add_step("ai_process", "Subtitle Processing (AI)")
-        self.progress_dialog.add_step("voiceover", "Synthesizing AI Voiceover")
-        self.progress_dialog.add_step("preview", "Preparing Video Preview")
+            self.progress_dialog.add_step("voiceover", "Synthesizing AI Voiceover")
+            self.progress_dialog.add_step("preview", "Preparing Video Preview")
         self.progress_dialog.show()
 
     def run_all_pipeline(self, video_path=None, requires_separation=None, target_stage="full"):
@@ -335,7 +340,11 @@ class PipelineController:
             self.gui.run_all_btn.setText("Processing...")
             
         self._setup_progress_dialog(includes_separation=requires_separation)
-        self.progress_dialog.start_step("ai_process")
+        if self.progress_dialog:
+            if hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled():
+                self.progress_dialog.start_step("analyzing")
+            else:
+                self.progress_dialog.start_step("ai_process")
 
         # Start the background worker
         self.gui.log(f"[Pipeline] Starting prepare workflow for: {video_path}")
@@ -353,13 +362,8 @@ class PipelineController:
             return
         self._start_prepare_status_polling()
         transcription_engine = self.gui.get_transcription_engine()
-        # Transcript-only is a true stop point: PrepareWorkflow still
-        # extracts audio and transcribes, but does not call translation.
         skip_translation = self.gui.is_skip_translation() or self.target_stage == "transcript"
         output_mode = self.gui.get_output_mode_key()
-        # Prefetch voice audio only when Full Pipeline will immediately
-        # continue into TTS. A Run to Translate stop point must not spend
-        # resources creating cache entries the user may never need.
         prefetch_tts = self.target_stage == "full" and output_mode in ("voice", "both")
         self.gui.prepare_workflow_thread = PrepareWorkflowWorker(
             self.gui.workspace_root,
@@ -395,10 +399,6 @@ class PipelineController:
         self.gui.prepare_workflow_thread.start()
 
     def _on_prepare_step_started(self, step_id, message=""):
-        # The Prepare workflow runs in a separate local process, so mirror
-        # its active phase into the GUI's in-memory project state.  This lets
-        # Stop mark the correct phase failed instead of leaving a stale
-        # completed artifact to drive the sidebar badge.
         if step_id == "translation":
             try:
                 self.gui.update_project_step("translate_raw", "running")
@@ -440,22 +440,122 @@ class PipelineController:
             self.gui.show_error("Prepare Failed", "Could not complete project preparation.", str(error))
             return
 
+        is_auto_recap = hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled()
+
         if self.progress_dialog:
-            self.progress_dialog.finish_step("ai_process")
+            if is_auto_recap:
+                self.progress_dialog.finish_step("analyzing")
+            else:
+                self.progress_dialog.finish_step("ai_process")
 
         try:
             state = self.gui.project_service.load_project(project_state_path)
             self.gui.current_project_state = state
             self.gui.load_project_context(state)
             self.gui.refresh_ui_state()
-            # The OCR crop is an editing aid. Once its transcript is ready,
-            # return the preview to its normal unobstructed state. The crop
-            # geometry remains available through the OCR button for later
-            # adjustment, and this does not affect OCR Translator overlays.
             if self.gui.get_transcription_engine() == "ocr":
                 self.gui.toggle_ocr_overlay_visibility(False)
                 self.gui.log("[OCR Region] Hidden after OCR transcription completed.")
             self._notify_translation_fallback_if_used()
+
+            if is_auto_recap:
+                if self.progress_dialog:
+                    self.progress_dialog.finish_step("analyzing")
+
+                # Stage 2: Building Recap (Importance & Cut Logic)
+                self.gui._pipeline_step = "building"
+                if self.progress_dialog:
+                    self.progress_dialog.start_step("building")
+                    self.progress_dialog.footer.setText("Stage 2/5: Building Recap (Importance & Cut Logic)")
+
+                decisions = []
+                if hasattr(self.gui, "run_auto_recap_processing"):
+                    decisions = self.gui.run_auto_recap_processing()
+
+                if not decisions:
+                    self.pipeline_fail("Auto Edit Recap could not create any usable shots from this video.")
+                    return
+
+                if self.progress_dialog:
+                    self.progress_dialog.finish_step("building")
+
+                # Stage 3: Applying Smart Edits (Zoom, Pan, Crop & Speed)
+                self.gui._pipeline_step = "smart_edits"
+                if self.progress_dialog:
+                    self.progress_dialog.start_step("smart_edits")
+                    self.progress_dialog.footer.setText("Stage 3/5: Applying Smart Edits (Zoom, Pan, Crop & Speed)")
+                    self.progress_dialog.finish_step("smart_edits")
+
+                # Stage 4: Processing Audio (Voiceover & Ducking)
+                self.gui._pipeline_step = "audio"
+                if self.progress_dialog:
+                    self.progress_dialog.start_step("audio")
+                    self.progress_dialog.footer.setText("Stage 4/5: Processing Audio (Voiceover & Ducking)")
+                    self.progress_dialog.finish_step("audio")
+
+                # Stage 5: Rendering Recap (FFmpeg 1-Pass)
+                self.gui._pipeline_step = "rendering"
+                if self.progress_dialog:
+                    self.progress_dialog.start_step("rendering")
+                    self.progress_dialog.footer.setText("Stage 5/5: Rendering Recap (FFmpeg 1-Pass)")
+
+                video_path = self.gui.video_path_edit.text().strip()
+                if video_path and os.path.exists(video_path) and decisions:
+                    output_dir = os.path.join(self.gui.workspace_root, "output")
+                    os.makedirs(output_dir, exist_ok=True)
+                    output_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}_recap.mp4")
+                    from app.services.auto_recap_engine import AutoRecapEngine
+                    engine = AutoRecapEngine(getattr(self.gui, "auto_recap_config", None))
+                    if engine.render_recap_video_1pass(video_path, output_path, decisions):
+                        self.gui.last_recap_video_path = output_path
+                        if hasattr(self.gui, "persist_auto_recap_project_data"):
+                            self.gui.persist_auto_recap_project_data(decisions, output_path)
+                        self.gui.log(f"[Auto Recap] 1-Pass Render complete: {output_path}")
+
+                        # Defer media player reload and timeline sync slightly to allow QThread to exit cleanly without deadlock
+                        def _update_recap_ui():
+                            try:
+                                from PySide6.QtCore import QUrl
+                                if hasattr(self.gui, "media_player") and self.gui.media_player is not None:
+                                    self.gui.media_player.setSource(QUrl.fromLocalFile(output_path))
+                                    if hasattr(self.gui.media_player, "setPosition"):
+                                        self.gui.media_player.setPosition(0)
+                                if hasattr(self.gui, "video_path_edit"):
+                                    self.gui.video_path_edit.setText(output_path)
+
+                                if hasattr(self.gui, "timeline") and getattr(self.gui.timeline, "_timeline", None):
+                                    from app.layers.sync_bridge import sync_auto_recap_decisions_to_timeline
+                                    sync_auto_recap_decisions_to_timeline(self.gui.timeline._timeline, decisions, output_path)
+                                    self.gui.timeline.set_duration(self.gui.timeline._timeline.duration)
+                                    self.gui.timeline._redraw()
+
+                                if hasattr(self.gui, "_loaded_live_ass_path"):
+                                    self.gui._loaded_live_ass_path = ""
+                            except Exception as ex:
+                                if hasattr(self.gui, "log"):
+                                    self.gui.log(f"[Auto Recap] Warning updating recap UI: {ex}")
+
+                        from PySide6.QtCore import QTimer
+                        QTimer.singleShot(150, _update_recap_ui)
+                    else:
+                        render_error = str(getattr(engine, "last_render_error", "") or "").strip()
+                        if render_error:
+                            self.gui.log(f"[Auto Recap] FFmpeg render error: {render_error}")
+                        self.pipeline_fail("Auto Edit Recap render failed. Check that FFmpeg can read the selected video.")
+                        return
+                else:
+                    self.pipeline_fail("Auto Edit Recap lost access to the selected source video.")
+                    return
+
+                if self.progress_dialog:
+                    self.progress_dialog.finish_step("rendering")
+                    self.progress_dialog.set_completed()
+                    self.progress_dialog.footer.setText("✨ Auto Edit Recap Complete! Ready for export.")
+                    self.progress_dialog.footer.setStyleSheet("color: #6ee7b7; font-weight: bold; font-size: 13px;")
+
+                self.gui._pipeline_active = False
+                self.pipeline_done()
+                return
         except Exception as e:
             self.gui.log(f"[Pipeline] Error reloading state: {e}")
 
@@ -568,6 +668,12 @@ class PipelineController:
         self.gui._pipeline_step = ""
         self._stop_prepare_status_polling()
         self._stop_local_worker_server()
+        if hasattr(self.gui, "prepare_workflow_thread") and self.gui.prepare_workflow_thread is not None:
+            try:
+                self.gui.prepare_workflow_thread.deleteLater()
+            except Exception:
+                pass
+            self.gui.prepare_workflow_thread = None
         
         if hasattr(self.gui, "run_all_btn"):
             self.gui.run_all_btn.setEnabled(True)

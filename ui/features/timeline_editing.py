@@ -1930,6 +1930,10 @@ class TimelineEditingMixin:
                 try:
                     regions = self._current_blur_regions_payload() if hasattr(self, "_current_blur_regions_payload") else []
                     self.timeline.sync_blur_regions(regions)
+                    # Keep the real effect attached to the editable frame.
+                    # Previously only the dashed outline moved while the
+                    # selected B1 effect remained at its old coordinates.
+                    self.apply_preview_blur_region(regions=regions, force=True)
                     self.schedule_timeline_project_persist(blur_state=True)
                 except Exception:
                     pass
@@ -1949,19 +1953,6 @@ class TimelineEditingMixin:
             blur_region = regions
         else:
             blur_region = self._current_blur_regions_payload()
-            suppressed_id = self._deferred_effect_layer_id_for("blur")
-            if suppressed_id and isinstance(blur_region, list):
-                blur_layers = []
-                timeline_model = getattr(getattr(self, "timeline", None), "_timeline", None)
-                for track in list(getattr(timeline_model, "tracks", []) or []):
-                    if str(getattr(track, "name", "") or "") == "B1":
-                        blur_layers = list(getattr(track, "layers", []) or [])
-                        break
-                if len(blur_layers) == len(blur_region):
-                    blur_region = [
-                        region for region, layer in zip(blur_region, blur_layers)
-                        if str(getattr(layer, "id", "") or "") != suppressed_id
-                    ]
         # Always apply the blur when enabled and regions exist, even
         # when the video is paused, so the user can see the cached
         # blur effect on the video preview.

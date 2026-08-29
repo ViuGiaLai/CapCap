@@ -541,14 +541,13 @@ class PrepareWorkflow:
                     try:
                         vocal_path, music_path = self.engine_runtime.separate_vocals(audio_output_path, separated_root)
                     except Exception as exc:
-                        project_state.set_step_status("separate_audio", "failed")
-                        self.project_service.save_project(project_state)
-                        raise RuntimeError(f"Audio separation failed: {exc}") from exc
-                    if not vocal_path or not music_path:
-                        project_state.set_step_status("separate_audio", "failed")
-                        self.project_service.save_project(project_state)
-                        raise RuntimeError("Audio separation failed: Demucs did not return vocals/background stems.")
-                    project_state.set_setting("separation_signature", separation_signature)
+                        print(f"[Audio Handling] Audio separation model unavailable or failed ({exc}). Falling back to extracted audio.")
+                        vocal_path, music_path = audio_output_path, ""
+                    if not vocal_path:
+                        print("[Audio Handling] Audio separation returned empty path. Falling back to extracted audio.")
+                        vocal_path, music_path = audio_output_path, ""
+                    else:
+                        project_state.set_setting("separation_signature", separation_signature)
                 separation_elapsed = time.perf_counter() - separation_started
                 working_audio_path = vocal_path
                 print(f"[Audio Handling] Using separated vocals for Whisper: {working_audio_path}")

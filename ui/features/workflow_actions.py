@@ -32,6 +32,9 @@ class WorkflowActionsMixin:
         can_export = v_ok and (
             has_subtitle_track
             or (mode == "voice" and has_voice_audio)
+            or bool(getattr(self, "current_auto_recap_edl", None))
+            or bool(getattr(self, "last_recap_video_path", ""))
+            or bool(self.get_active_segments())
         )
 
         self.extract_btn.setEnabled(v_ok)
@@ -104,11 +107,10 @@ class WorkflowActionsMixin:
         if hasattr(self, "stop_btn"):
             self.stop_btn.setEnabled(v_ok and not voice_running)
         if hasattr(self, "blur_area_btn"):
-            self.blur_area_btn.setEnabled(can_export and not review_mode)
-        # Overlay tracks are only meaningful once the generated output is
-        # ready. Keep their controls disabled before that point so users
-        # cannot create layers against an incomplete video workflow.
-        self._optional_layer_controls_ready = bool(can_export and not voice_running and not review_mode)
+            self.blur_area_btn.setEnabled(v_ok and not review_mode)
+        # Visual layers operate directly on the loaded source video; they do
+        # not require transcript, translation, or a generated output first.
+        self._optional_layer_controls_ready = bool(v_ok and not voice_running and not review_mode)
         for button_name in ("blur_add_btn", "add_logo_btn", "add_mask_btn", "add_text_btn"):
             button = getattr(self, button_name, None)
             if button is not None:
@@ -117,8 +119,7 @@ class WorkflowActionsMixin:
         # available. Keep the shared + Layer menu usable for manual fixes
         # without unlocking the unrelated overlay-layer actions early.
         if hasattr(self, "add_layer_btn"):
-            has_subtitle_segments = bool(self.current_segments or self.current_translated_segments)
-            self.add_layer_btn.setEnabled((self._optional_layer_controls_ready or has_subtitle_segments) and not review_mode)
+            self.add_layer_btn.setEnabled(v_ok and not voice_running and not review_mode)
         if hasattr(self, "blur_add_btn"):
             self.blur_add_btn.setEnabled(
                 self._optional_layer_controls_ready
@@ -172,12 +173,14 @@ class WorkflowActionsMixin:
             )
         if hasattr(self, "timeline_delete_btn"):
             self.timeline_delete_btn.setEnabled(
-                has_timeline_segments and (not has_selected_timeline_layer or not selected_layer_locked)
+                (has_timeline_segments or selected_overlay_is_splittable)
+                and (not has_selected_timeline_layer or not selected_layer_locked)
                 and not review_mode
             )
         if hasattr(self, "inspector_delete_segment_btn"):
             self.inspector_delete_segment_btn.setEnabled(
-                has_timeline_segments and (not has_selected_timeline_layer or not selected_layer_locked)
+                (has_timeline_segments or selected_overlay_is_splittable)
+                and (not has_selected_timeline_layer or not selected_layer_locked)
                 and not review_mode
             )
 
@@ -248,10 +251,23 @@ class WorkflowActionsMixin:
         if btn.menu() is None:
             menu = QMenu(btn)
             menu.setObjectName("generateMenu")
-            # The parent menu renders the Step-by-Step / Full Pipeline
-            # submenu titles, so it needs its own width—not just the child
-            # popup menus.
-            menu.setMinimumWidth(220)
+            menu.setMinimumWidth(240)
+
+            # --- ✨ Auto Edit Recap Top Actions ---
+            recap_action = QAction("✨ Run Auto Edit Recap", menu)
+            if hasattr(self, "run_auto_recap_workflow"):
+                recap_action.triggered.connect(self.run_auto_recap_workflow)
+            else:
+                recap_action.triggered.connect(self.run_all_pipeline)
+            menu.addAction(recap_action)
+
+            recap_custom_action = QAction("⚙ Customize Auto Recap Rules...", menu)
+            if hasattr(self, "open_auto_recap_settings_dialog"):
+                recap_custom_action.triggered.connect(self.open_auto_recap_settings_dialog)
+            menu.addAction(recap_custom_action)
+
+            menu.addSeparator()
+
             step_menu = menu.addMenu("Step-by-Step")
             step_menu.setObjectName("generateStepMenu")
             step_menu.setMinimumWidth(220)

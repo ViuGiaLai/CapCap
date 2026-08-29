@@ -1,9 +1,13 @@
 import os
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTransform
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
-from PySide6.QtWidgets import QFrame, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import QFrame, QGraphicsBlurEffect, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 
+from .mpv_video_view import (
+    _BlurRegionOverlayWindow,
+    _MaskRegionOverlayWindow,
+)
 from .subtitle_overlay import SubtitleOverlayItem
 
 
@@ -11,7 +15,7 @@ class VideoView(QGraphicsView):
     """Hosts video, logo, and subtitle overlay in one scene."""
 
     framingChanged = Signal(float, float)
-    blurRegionChanged = Signal(object)
+    blurRegionChanged = Signal()
     blurEditFinished = Signal()
     subtitlePositionChanged = Signal(int, int)  # x_percent, y_percent
     subtitleDragStarted = Signal()
@@ -38,6 +42,23 @@ class VideoView(QGraphicsView):
 
         self.video_item = QGraphicsVideoItem()
         self._scene.addItem(self.video_item)
+        self._last_video_image = QImage()
+        self._blur_effect_regions: list[dict] = []
+        self._blur_preview_items: list[QGraphicsPixmapItem] = []
+
+        self.blur_overlay = _BlurRegionOverlayWindow(
+            on_region_changed=self._on_blur_overlay_changed,
+            on_edit_finished=self.blurEditFinished.emit,
+        )
+        video_sink = self.video_item.videoSink()
+        if video_sink is not None:
+            video_sink.videoFrameChanged.connect(self._on_video_frame_changed)
+        self.mask_overlay = _MaskRegionOverlayWindow(
+            on_region_changed=self.maskRegionChanged.emit,
+            on_edit_finished=self.maskEditFinished.emit,
+        )
+        self.mask_overlay.maskDeleted.connect(self.maskDeleted.emit)
+        self.text_overlay = None
 
         self.logo_item = QGraphicsPixmapItem()
         self.logo_item.setZValue(5)
@@ -72,6 +93,8 @@ class VideoView(QGraphicsView):
         self.video_item.setSize(QSizeF(content_rect.width(), content_rect.height()))
         self.reposition_subtitle()
         self.reposition_logo()
+        self._refresh_blur_preview_items()
+        self.blur_overlay.sync_to_view()
         self.viewport().update()
 
     def set_video_dimensions(self, width: int, height: int):
@@ -81,6 +104,7 @@ class VideoView(QGraphicsView):
         self.video_item.setPos(content_rect.topLeft())
         self.video_item.setSize(QSizeF(content_rect.width(), content_rect.height()))
         self.reposition_subtitle()
+        self._refresh_blur_preview_items()
 
     def set_preview_aspect_ratio(self, aspect_key: str):
         self.preview_aspect_key = str(aspect_key or "source").strip().lower() or "source"
@@ -88,6 +112,8 @@ class VideoView(QGraphicsView):
         self.video_item.setPos(content_rect.topLeft())
         self.video_item.setSize(QSizeF(content_rect.width(), content_rect.height()))
         self.reposition_subtitle()
+        self._refresh_blur_preview_items()
+        self.blur_overlay.sync_to_view()
         self.viewport().update()
 
     def set_preview_scale_mode(self, scale_mode: str):
@@ -96,6 +122,8 @@ class VideoView(QGraphicsView):
         self.video_item.setPos(content_rect.topLeft())
         self.video_item.setSize(QSizeF(content_rect.width(), content_rect.height()))
         self.reposition_subtitle()
+        self._refresh_blur_preview_items()
+        self.blur_overlay.sync_to_view()
         self.viewport().update()
 
     def set_preview_fill_focus(self, focus_x: float, focus_y: float):
@@ -105,6 +133,8 @@ class VideoView(QGraphicsView):
         self.video_item.setPos(content_rect.topLeft())
         self.video_item.setSize(QSizeF(content_rect.width(), content_rect.height()))
         self.reposition_subtitle()
+        self._refresh_blur_preview_items()
+        self.blur_overlay.sync_to_view()
         self.viewport().update()
 
     def reset_preview_fill_focus(self):
@@ -114,33 +144,185 @@ class VideoView(QGraphicsView):
         return (float(self.preview_fill_focus_x), float(self.preview_fill_focus_y))
 
     def set_blur_edit_enabled(self, enabled: bool):
-        pass
+        self.blur_overlay.attach_to_view(self)
+        self.blur_overlay.set_editable(bool(enabled))
+
+    def add_blur_region(self):
+        self.blur_overlay.attach_to_view(self)
+        self.blur_overlay.add_region()
+
+    def set_blur_active_index(self, index: int):
+        self.blur_overlay.set_active_index(index)
 
     def clear_blur_region(self):
-        pass
+        self.blur_overlay.clear_region()
+        self.set_blur_effect_regions(None)
+        self.blurRegionChanged.emit()
 
     def has_blur_region(self) -> bool:
-        return False
+        return self.blur_overlay.has_region()
 
     def get_blur_region_normalized(self) -> "dict | list[dict] | None":
-        """Qt backend has no blur overlay; always returns None."""
-        return None
+        if not self.blur_overlay.has_region():
+            return None
+        regions = [
+            {
+                "x": round(float(rect.x()), 6),
+                "y": round(float(rect.y()), 6),
+                "width": round(float(rect.width()), 6),
+                "height": round(float(rect.height()), 6),
+            }
+            for rect in self.blur_overlay._regions
+        ]
+        return regions[0] if len(regions) == 1 else regions
 
     def set_blur_regions_normalized(self, regions) -> None:
-        pass
+        self.blur_overlay.attach_to_view(self)
+        self.blur_overlay.set_regions(regions)
+
+    def set_blur_effect_regions(self, regions) -> None:
+        raw = regions if isinstance(regions, list) else ([regions] if isinstance(regions, dict) else [])
+        self._blur_effect_regions = [dict(region) for region in raw if isinstance(region, dict)]
+        self._refresh_blur_preview_items()
+
+    def _on_blur_overlay_changed(self):
+        raw = self.get_blur_region_normalized()
+        raw = raw if isinstance(raw, list) else ([raw] if raw else [])
+        previous = list(self._blur_effect_regions)
+        self._blur_effect_regions = []
+        for index, region in enumerate(raw):
+            merged = dict(previous[index]) if index < len(previous) else {}
+            merged.update(region)
+            self._blur_effect_regions.append(merged)
+        self._refresh_blur_preview_items()
+        self.blurRegionChanged.emit()
+
+    def _on_video_frame_changed(self, frame):
+        try:
+            image = frame.toImage()
+        except Exception:
+            image = QImage()
+        if image is not None and not image.isNull():
+            self._last_video_image = image.copy()
+            if self._blur_effect_regions:
+                self._refresh_blur_preview_items()
+
+    def _clear_blur_preview_items(self):
+        for item in self._blur_preview_items:
+            self._scene.removeItem(item)
+        self._blur_preview_items = []
+
+    def _refresh_blur_preview_items(self):
+        self._clear_blur_preview_items()
+        image = self._last_video_image
+        if image.isNull() or not self._blur_effect_regions:
+            return
+        content = self.get_video_content_rect()
+        if content.width() <= 0 or content.height() <= 0:
+            return
+        source_w, source_h = image.width(), image.height()
+        for region in self._blur_effect_regions:
+            try:
+                x = max(0.0, min(1.0, float(region.get("x", 0.0))))
+                y = max(0.0, min(1.0, float(region.get("y", 0.0))))
+                width = max(0.0, min(1.0 - x, float(region.get("width", 0.0))))
+                height = max(0.0, min(1.0 - y, float(region.get("height", 0.0))))
+            except (TypeError, ValueError):
+                continue
+            crop_x = max(0, min(source_w - 1, round(x * source_w)))
+            crop_y = max(0, min(source_h - 1, round(y * source_h)))
+            crop_w = max(1, min(source_w - crop_x, round(width * source_w)))
+            crop_h = max(1, min(source_h - crop_y, round(height * source_h)))
+            crop = image.copy(crop_x, crop_y, crop_w, crop_h)
+            target = QRectF(
+                content.x() + x * content.width(),
+                content.y() + y * content.height(),
+                width * content.width(),
+                height * content.height(),
+            )
+            if target.width() <= 0 or target.height() <= 0:
+                continue
+            pixelate = bool(region.get("pixelate", False))
+            if pixelate:
+                try:
+                    pixel_size = max(2, int(region.get("pixelate_size", region.get("pixel_size", 12)) or 12))
+                except (TypeError, ValueError):
+                    pixel_size = 12
+                crop = crop.scaled(
+                    max(1, crop.width() // pixel_size), max(1, crop.height() // pixel_size),
+                    Qt.IgnoreAspectRatio, Qt.FastTransformation,
+                ).scaled(crop.width(), crop.height(), Qt.IgnoreAspectRatio, Qt.FastTransformation)
+            pixmap = QPixmap.fromImage(crop).scaled(
+                max(1, round(target.width())), max(1, round(target.height())),
+                Qt.IgnoreAspectRatio, Qt.FastTransformation if pixelate else Qt.SmoothTransformation,
+            )
+            item = QGraphicsPixmapItem(pixmap)
+            item.setZValue(4)
+            item.setPos(target.topLeft())
+            if not pixelate:
+                try:
+                    radius = max(1.0, float(region.get("blur_strength", 20.0) or 20.0))
+                except (TypeError, ValueError):
+                    radius = 20.0
+                effect = QGraphicsBlurEffect()
+                effect.setBlurRadius(min(radius, max(1.0, min(target.width(), target.height()) / 2.0)))
+                item.setGraphicsEffect(effect)
+            try:
+                opacity = float(region.get("blur_opacity", region.get("opacity", 1.0)) or 1.0)
+            except (TypeError, ValueError):
+                opacity = 1.0
+            item.setOpacity(max(0.0, min(1.0, opacity)))
+            self._scene.addItem(item)
+            self._blur_preview_items.append(item)
 
     def set_mask_region(self, *, x: float = 0.0, y: float = 0.0,
                         w: float = 0.0, h: float = 0.0, **kwargs) -> None:
-        pass
+        if hasattr(self, "mask_overlay") and self.mask_overlay is not None:
+            self.mask_overlay.attach_to_view(self)
+            self.mask_overlay.set_mask_rect(x, y, w, h)
+            if kwargs.get("color") is not None:
+                self.mask_overlay.set_fill_color(kwargs["color"])
+            self.mask_overlay.set_editable(bool(kwargs.get("editable", True)))
+            self.mask_overlay.sync_to_view()
 
-    def set_mask_regions(self, regions=None, on_change=None, active=False):
-        pass
+    def set_mask_regions(self, regions=None, *, active_index=0, editable=True, **_kwargs):
+        if hasattr(self, "mask_overlay") and self.mask_overlay is not None:
+            self.mask_overlay.attach_to_view(self)
+            self.mask_overlay.set_mask_regions(regions or [], active_index)
+            self.mask_overlay.set_editable(bool(editable))
+            self.mask_overlay.sync_to_view()
 
     def clear_mask_region(self):
-        pass
+        if hasattr(self, "mask_overlay") and self.mask_overlay is not None:
+            self.mask_overlay.set_editable(False)
+            self.mask_overlay.clear_region()
 
     def set_mask_edit_enabled(self, enabled: bool):
-        pass
+        if hasattr(self, "mask_overlay") and self.mask_overlay is not None:
+            self.mask_overlay.attach_to_view(self)
+            self.mask_overlay.set_editable(bool(enabled))
+
+    def set_text_track_visible(self, visible: bool):
+        if getattr(self, "text_overlay", None) is not None:
+            self.text_overlay.set_suppressed(not bool(visible))
+
+    def clear_text_layers(self):
+        if getattr(self, "text_overlay", None) is not None:
+            self.text_overlay.set_items([], "")
+
+    def set_text_layers(self, layers, active_id=""):
+        if getattr(self, "text_overlay", None) is None:
+            try:
+                from .mpv_video_view import _TextLayerOverlayWindow
+                self.text_overlay = _TextLayerOverlayWindow()
+                self.text_overlay.attach_to_view(self)
+                self.text_overlay.layerSelected.connect(self.textLayerSelected.emit)
+                self.text_overlay.layerMoved.connect(self.textLayerMoved.emit)
+            except Exception:
+                pass
+        if getattr(self, "text_overlay", None) is not None:
+            self.text_overlay.set_items(layers or [], active_id or "")
+            self.text_overlay.sync_to_view()
 
     def set_subtitle_render_dimensions(self, width: int, height: int):
         pass

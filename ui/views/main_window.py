@@ -88,18 +88,18 @@ def _build_header_bar(gui):
     gui.project_title_label.setObjectName("statusHeadline")
     layout.addWidget(gui.project_title_label, 1)
 
-    gui.run_all_btn.setMinimumHeight(36)
-    gui.run_all_btn.setMinimumWidth(120)
+    gui.run_all_btn.setFixedHeight(32)
+    gui.run_all_btn.setMinimumWidth(104)
     layout.addWidget(gui.run_all_btn)
 
     gui.export_btn.setObjectName("secondaryActionBtn")
-    gui.export_btn.setMinimumHeight(36)
-    gui.export_btn.setMinimumWidth(90)
+    gui.export_btn.setFixedHeight(32)
+    gui.export_btn.setMinimumWidth(76)
     layout.addWidget(gui.export_btn)
 
     gui.preview_5s_btn.setObjectName("secondaryActionBtn")
-    gui.preview_5s_btn.setMinimumHeight(36)
-    gui.preview_5s_btn.setMinimumWidth(110)
+    gui.preview_5s_btn.setFixedHeight(32)
+    gui.preview_5s_btn.setMinimumWidth(96)
     gui.preview_5s_btn.setToolTip("Render five seconds with final export subtitle styling")
     layout.addWidget(gui.preview_5s_btn)
 
@@ -116,8 +116,8 @@ def _build_header_bar(gui):
 
     gui.more_actions_btn = QPushButton("More")
     gui.more_actions_btn.setObjectName("secondaryActionBtn")
-    gui.more_actions_btn.setMinimumHeight(36)
-    gui.more_actions_btn.setMinimumWidth(80)
+    gui.more_actions_btn.setFixedHeight(32)
+    gui.more_actions_btn.setMinimumWidth(68)
     more_menu = QMenu(gui.more_actions_btn)
     more_menu.setObjectName("headerMoreMenu")
 
@@ -134,13 +134,19 @@ def _build_header_bar(gui):
     gui.exit_project_action.triggered.connect(gui.exit_to_launcher)
     gui.settings_action = more_menu.addAction("Settings")
     gui.settings_action.triggered.connect(gui.open_model_settings_dialog)
-    more_menu.addSeparator()
     gui.normalizer_dict_action = more_menu.addAction("Normalizer Dictionary")
     gui.normalizer_dict_action.triggered.connect(gui.open_normalizer_dict_dialog)
+    gui.auto_recap_action = more_menu.addAction("⚡ Auto Edit Recap Settings")
+    if hasattr(gui, "open_auto_recap_settings_dialog"):
+        gui.auto_recap_action.triggered.connect(gui.open_auto_recap_settings_dialog)
+    gui.check_updates_action = more_menu.addAction("🔄 Check for Updates…")
+    if hasattr(gui, "check_for_updates"):
+        gui.check_updates_action.triggered.connect(lambda: gui.check_for_updates(verbose=True))
 
     gui.header_home_btn = QPushButton("Projects")
     gui.header_home_btn.setObjectName("secondaryActionBtn")
-    gui.header_home_btn.setMinimumHeight(36)
+    gui.header_home_btn.setFixedHeight(32)
+    gui.header_home_btn.setMinimumWidth(76)
     gui.header_home_btn.setToolTip("Return to Projects Launcher")
     gui.header_home_btn.clicked.connect(gui.exit_to_launcher)
     layout.addWidget(gui.header_home_btn)
