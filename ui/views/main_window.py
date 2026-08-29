@@ -7,6 +7,8 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, Q
 from .advanced_tabs import build_advanced_group
 from .preview_panel import build_preview_panel
 from .start_panel import build_start_group
+from shell import StudioAppBar, StudioStatusBar, StudioToolRail
+from studio import StudioInspector, StudioTaskPanel
 
 
 class _TitleBar(QFrame):
@@ -33,20 +35,48 @@ def build_main_window_ui(gui):
     root_layout.setSpacing(10)
     gui.root_layout = root_layout
 
+    # Build the existing workflow controls first.  Their attributes and
+    # signals remain the contract used by current controllers; the Studio
+    # shell below changes how users reach those controls.
     scroll_area = _build_left_panel(gui)
-    root_layout.addWidget(_build_header_bar(gui))
+    app_bar = StudioAppBar(central_widget)
+    gui.studio_app_bar = app_bar
+    gui.project_title_label = app_bar.project_title_label
+    gui.header_bar = app_bar
+    gui.header_layout = app_bar.layout()
+    root_layout.addWidget(app_bar)
 
     content_layout = QHBoxLayout()
-    content_layout.setSpacing(10)
+    content_layout.setSpacing(0)
     gui.content_layout = content_layout
     right_panel = build_preview_panel(gui)
 
-    content_layout.addWidget(scroll_area)
+    tool_rail = StudioToolRail(central_widget)
+    gui.studio_tool_rail = tool_rail
+    # Keep legacy controls alive as an invisible controller adapter.  No old
+    # workflow widget is placed in the visible Studio editor.
+    scroll_area.hide()
+    gui.legacy_control_adapter = scroll_area
+
+    task_panel = StudioTaskPanel(gui, central_widget)
+    gui.studio_task_panel = task_panel
+    inspector = StudioInspector(gui, central_widget)
+    gui.studio_inspector = inspector
+    gui._studio_uses_contextual_inspector = True
+
+    content_layout.addWidget(tool_rail)
+    content_layout.addWidget(task_panel)
     content_layout.addWidget(right_panel, 1)
+    content_layout.addWidget(inspector)
     gui.right_panel = right_panel
     root_layout.addLayout(content_layout, 1)
 
+    status_bar = StudioStatusBar(central_widget)
+    gui.studio_status_bar = status_bar
+    root_layout.addWidget(status_bar)
+
     _connect_ui_signals(gui)
+    _connect_studio_shell(gui)
     if hasattr(gui, "left_panel_stack"):
         gui.left_panel_stack.currentChanged.connect(gui.sync_runtime_log_view)
     _initialize_ui_state(gui)
@@ -56,6 +86,53 @@ def build_main_window_ui(gui):
     # The first show event only finalizes geometry that Qt cannot know until
     # the window has a real viewport.
     gui.prepare_responsive_layout()
+
+
+def _connect_studio_shell(gui):
+    """Connect the new visible shell to the established controller widgets."""
+    app_bar = gui.studio_app_bar
+    app_bar.projects_requested.connect(gui.exit_to_launcher)
+    app_bar.settings_requested.connect(gui.open_model_settings_dialog)
+    app_bar.bind_legacy_actions(
+        generate=gui.run_all_btn,
+        export=gui.export_btn,
+        undo=gui.timeline_undo_btn,
+        redo=gui.timeline_redo_btn,
+    )
+
+    def select_page(section: str):
+        is_open = gui.studio_task_panel.show_section(section)
+        if is_open:
+            gui.studio_tool_rail.select(section)
+
+    gui.studio_tool_rail.section_requested.connect(select_page)
+
+    # The legacy workflow stage list and tab grid are replaced by the rail.
+    # Progress remains available through the existing status updates and
+    # dialogs; no pipeline actions are removed.
+    for widget_name in ("workflow_stage_box", "workflow_tab_bar"):
+        widget = getattr(gui, widget_name, None)
+        if widget is not None:
+            widget.hide()
+
+    def sync_status():
+        active = "Processing" if getattr(gui, "_pipeline_active", False) else "Ready"
+        gui.studio_status_bar.set_task(active)
+        mode = "GPU" if str(getattr(gui, "device", "")).lower() == "gpu" else "CPU"
+        gui.studio_status_bar.device_label.setText(mode)
+
+    sync_status()
+    gui.run_all_btn.clicked.connect(sync_status)
+
+    # The workflow panel is contextual, not permanent chrome.  The current
+    # startup sequence still restores legacy visibility, so collapse it after
+    # that setup pass completes.  Users open Media from the rail when needed.
+    def collapse_initial_task_panel():
+        gui.left_panel_scroll_area.hide()
+        gui.studio_task_panel.hide()
+        gui.studio_tool_rail.clear_selection()
+
+    QTimer.singleShot(0, collapse_initial_task_panel)
 
 
 def _build_header_bar(gui):
@@ -289,6 +366,11 @@ def _connect_ui_signals(gui):
         gui.translation_engine_combo.currentIndexChanged.connect(gui.on_translation_engine_changed)
     if hasattr(gui, "translation_test_btn"):
         gui.translation_test_btn.clicked.connect(gui.on_translation_engine_test_connection)
+    if hasattr(gui, "translation_local_model_combo"):
+        gui.translation_local_model_combo.currentIndexChanged.connect(gui.on_local_translation_model_changed)
+        gui.translation_local_storage_btn.clicked.connect(gui.choose_local_translation_storage)
+        gui.translation_local_scan_btn.clicked.connect(gui.scan_local_translation_models)
+        gui.translation_local_manage_btn.clicked.connect(gui.open_resource_manager_dialog)
     gui.blur_area_btn.toggled.connect(gui.toggle_blur_effect_enabled)
     # The visible Blur button creates a timeline-backed B1 layer.  Keeping
     # creation in one path ensures multiple Blur layers receive independent

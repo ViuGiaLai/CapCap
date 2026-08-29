@@ -4,7 +4,7 @@ import os
 import re
 import math
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBitmap, QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap, QRegion
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 

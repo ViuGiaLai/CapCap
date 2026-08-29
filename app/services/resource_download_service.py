@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -10,9 +11,22 @@ import uuid
 from pathlib import Path
 
 from runtime_paths import app_path, bin_path, bundle_root, join_root, models_path, subprocess_hidden_kwargs, subprocess_text_kwargs
+from .local_translation_config import HYMT_MODELS, model_info, load_local_translation_config, save_local_translation_config
 
 
 class ResourceDownloadService:
+    LOCAL_TRANSLATION_RESOURCE_PREFIX = "translation:hymt:"
+    LOCAL_TRANSLATION_RESOURCE_ID = "translation:hymt:q4_k_m"
+    LOCAL_TRANSLATION_RUNTIME_URL = (
+        "https://github.com/ggml-org/llama.cpp/releases/download/"
+        "b10679/llama-b10679-bin-win-cpu-x64.zip"
+    )
+    LOCAL_TRANSLATION_RUNTIME_SIZE = 18_130_542
+    LOCAL_TRANSLATION_RUNTIME_SHA256 = "c0dec4dfb52919e17f0a108a94bfbe877c67d77825145079e7703fc84f63986e"
+    LOCAL_TRANSLATION_MODEL_SHA256 = HYMT_MODELS["q4_k_m"]["sha256"]
+    LOCAL_TRANSLATION_LICENSE_URL = (
+        "https://huggingface.co/tencent/HY-MT1.5-1.8B-GGUF/resolve/main/License.txt"
+    )
     WHISPER_ZIP_FILES = {
         "base": "models--Systran--faster-whisper-base.zip",
         "small": "models--Systran--faster-whisper-small.zip",
@@ -505,7 +519,28 @@ class ResourceDownloadService:
         )
 
     def list_resources(self) -> list[dict]:
-        resources: list[dict] = [
+        config = load_local_translation_config()
+        translation_resources = []
+        for model_id, entry in HYMT_MODELS.items():
+            selected_label = " • Selected" if config["model_id"] == model_id else ""
+            translation_resources.append({
+                "id": f"{self.LOCAL_TRANSLATION_RESOURCE_PREFIX}{model_id}",
+                "name": f"Local AI HY-MT — {entry['label']}{selected_label}",
+                "kind": "translation",
+                "required_for": "Offline accurate translation",
+                "status": self._local_translation_status(model_id),
+                "target_dir": config["storage_dir"],
+                "expected_filename": f"{entry['filename']} + llama-server.exe",
+                "auto_download_supported": True,
+                "license_required": True,
+                "license_url": self.LOCAL_TRANSLATION_LICENSE_URL,
+                "description": (
+                    f"{entry['description']} Translation-specialized model, run by CapCap without Ollama. "
+                    "Tencent is not affiliated with, sponsoring, or endorsing CapCap. "
+                    "License excludes use in the EU, UK, and South Korea."
+                ),
+            })
+        resources: list[dict] = translation_resources + [
             {
                 "id": "sensevoice:model",
                 "name": "SenseVoice (Required)",
@@ -649,6 +684,12 @@ class ResourceDownloadService:
         return resources
 
     def is_resource_installed(self, resource_id: str) -> bool:
+        if resource_id.startswith(self.LOCAL_TRANSLATION_RESOURCE_PREFIX):
+            model_id = resource_id.removeprefix(self.LOCAL_TRANSLATION_RESOURCE_PREFIX)
+            if model_id not in HYMT_MODELS:
+                return False
+            from .local_translation_runtime import local_translation_executable
+            return os.path.isfile(local_translation_executable()) and os.path.isfile(model_info(model_id)["path"])
         if resource_id == "ocr:engine":
             return self.is_ocr_ready()
         if resource_id == "cuda:whisper":
@@ -695,6 +736,19 @@ class ResourceDownloadService:
             except Exception:
                 return False
         return False
+
+    def _local_translation_status(self, model_id: str) -> str:
+        from .local_translation_runtime import local_translation_executable
+
+        path = model_info(model_id)["path"]
+        if os.path.isfile(local_translation_executable()) and os.path.isfile(path):
+            return "installed"
+        candidates = (
+            local_translation_executable(),
+            path,
+            path + ".part",
+        )
+        return "partial" if any(os.path.exists(path) for path in candidates) else "missing"
 
     def _find_voice_entry(self, voice_id: str) -> dict | None:
         payload = self._read_catalog()
@@ -748,7 +802,152 @@ class ResourceDownloadService:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+    @staticmethod
+    def _sha256(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _download_verified_file(
+        self, *, url: str, target: str, expected_size: int, expected_sha256: str,
+        progress_cb=None, start_percent: int = 0, end_percent: int = 100, label: str,
+    ) -> str:
+        import urllib.request
+
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        partial = target + ".part"
+        if os.path.isfile(target):
+            if os.path.getsize(target) == expected_size and self._sha256(target).lower() == expected_sha256.lower():
+                if progress_cb:
+                    progress_cb(end_percent, f"{label} already verified.")
+                return target
+            os.remove(target)
+        existing = os.path.getsize(partial) if os.path.isfile(partial) else 0
+        if existing == expected_size:
+            if self._sha256(partial).lower() == expected_sha256.lower():
+                os.replace(partial, target)
+                if progress_cb:
+                    progress_cb(end_percent, f"{label} verified.")
+                return target
+            os.remove(partial)
+            existing = 0
+        if existing > expected_size:
+            os.remove(partial)
+            existing = 0
+        request = urllib.request.Request(url)
+        if existing:
+            request.add_header("Range", f"bytes={existing}-")
+        with urllib.request.urlopen(request, timeout=60) as response:
+            if existing and getattr(response, "status", 200) != 206:
+                existing = 0
+                mode = "wb"
+            else:
+                mode = "ab" if existing else "wb"
+            downloaded = existing
+            last_raw_percent = -1
+            with open(partial, mode) as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb and expected_size:
+                        raw = min(99, int(downloaded * 100 / expected_size))
+                        if raw != last_raw_percent:
+                            scaled = start_percent + int((end_percent - start_percent) * raw / 100)
+                            progress_cb(scaled, f"{label} ({raw}%)")
+                            last_raw_percent = raw
+        actual_size = os.path.getsize(partial)
+        if actual_size != expected_size:
+            raise IOError(f"Incomplete download for {label}: expected {expected_size} bytes, got {actual_size}.")
+        if self._sha256(partial).lower() != expected_sha256.lower():
+            raise IOError(f"Checksum verification failed for {label}.")
+        os.replace(partial, target)
+        return target
+
+    @staticmethod
+    def _extract_zip_safely(zip_path: str, target_dir: str) -> None:
+        import zipfile
+
+        target_root = os.path.abspath(target_dir)
+        os.makedirs(target_root, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            for member in archive.infolist():
+                destination = os.path.abspath(os.path.join(target_root, member.filename))
+                if os.path.commonpath([target_root, destination]) != target_root:
+                    raise ValueError(f"Unsafe path in runtime archive: {member.filename}")
+            archive.extractall(target_root)
+
     def download_resource(self, resource_id: str, progress_cb=None) -> None:
+        if resource_id.startswith(self.LOCAL_TRANSLATION_RESOURCE_PREFIX):
+            import tempfile
+
+            model_id = resource_id.removeprefix(self.LOCAL_TRANSLATION_RESOURCE_PREFIX)
+            if model_id not in HYMT_MODELS:
+                raise ValueError(f"Unsupported HY-MT model: {model_id}")
+            selected = model_info(model_id)
+            config = load_local_translation_config()
+
+            runtime_dir = join_root("bin", "llama_cpp")
+            model_dir = config["storage_dir"]
+            model_path = selected["path"]
+            runtime_ready = all(
+                os.path.isfile(os.path.join(runtime_dir, filename))
+                for filename in ("llama-server.exe", "llama.dll", "ggml.dll")
+            )
+            if not runtime_ready:
+                with tempfile.TemporaryDirectory(prefix="capcap-llama-") as temp_dir:
+                    archive_path = os.path.join(temp_dir, "llama-cpp.zip")
+                    self._download_verified_file(
+                        url=self.LOCAL_TRANSLATION_RUNTIME_URL,
+                        target=archive_path,
+                        expected_size=self.LOCAL_TRANSLATION_RUNTIME_SIZE,
+                        expected_sha256=self.LOCAL_TRANSLATION_RUNTIME_SHA256,
+                        progress_cb=progress_cb,
+                        start_percent=0,
+                        end_percent=10,
+                        label="Downloading local translation runtime",
+                    )
+                    if progress_cb:
+                        progress_cb(10, "Installing local translation runtime...")
+                    self._extract_zip_safely(archive_path, runtime_dir)
+            elif progress_cb:
+                progress_cb(10, "Local translation runtime already installed.")
+            self._download_verified_file(
+                url=selected["url"],
+                target=model_path,
+                expected_size=selected["size"],
+                expected_sha256=selected["sha256"],
+                progress_cb=progress_cb,
+                start_percent=10,
+                end_percent=100,
+                label=f"Downloading {selected['filename']}",
+            )
+            license_path = os.path.join(model_dir, "License.txt")
+            self._download_unverified_text(self.LOCAL_TRANSLATION_LICENSE_URL, license_path)
+            notice_path = os.path.join(model_dir, "NOTICE.txt")
+            with open(notice_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "Tencent HY is licensed under the Tencent HY Community License Agreement, "
+                    "Copyright © 2025 Tencent. All Rights Reserved. The trademark rights of "
+                    "\"Tencent HY\" are owned by Tencent or its affiliate.\n\n"
+                    "CapCap is an independent application. Tencent is not affiliated with, "
+                    "associated with, sponsoring, or endorsing CapCap.\n"
+                )
+            save_local_translation_config(
+                model_id=model_id,
+                storage_dir=config["storage_dir"],
+                custom_model_path="",
+            )
+            if not self.is_resource_installed(resource_id):
+                raise FileNotFoundError("The local translation package was downloaded but required files are missing.")
+            if progress_cb:
+                progress_cb(100, "Local AI translation is ready.")
+            return
+
         if resource_id.startswith("whisper:"):
             raise ValueError(
                 "Whisper models are downloaded manually. Use Open Download Page, then extract the ZIP into models/faster_whisper."
@@ -845,9 +1044,14 @@ class ResourceDownloadService:
                 progress_cb(100, f"Voice {voice_id} is ready.")
             return
 
-        if resource_id in {self.NORMAL_AI_RESOURCE_ID, self.HIGH_AI_RESOURCE_ID}:
-            raise ValueError(
-                f"Auto download is not supported for '{resource_id}'. Use 'Open Download Page' to get the file manually."
-            )
-
         raise ValueError(f"Unsupported resource: {resource_id}")
+
+    @staticmethod
+    def _download_unverified_text(url: str, target: str) -> None:
+        import urllib.request
+
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with urllib.request.urlopen(url, timeout=30) as response:
+            payload = response.read()
+        with open(target, "wb") as handle:
+            handle.write(payload)

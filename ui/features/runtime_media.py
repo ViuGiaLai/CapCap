@@ -423,6 +423,8 @@ class RuntimeMediaMixin:
             self.load_voice_preview_catalog()
         except Exception:
             pass
+        if hasattr(self, "refresh_local_translation_controls"):
+            self.refresh_local_translation_controls()
         self.refresh_ui_state()
 
     def show_error(self, title: str, short_msg: str, details: str = ""):

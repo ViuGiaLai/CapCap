@@ -214,10 +214,22 @@ class WindowUiMixin:
                                              10 if compact_width else 18, 8 if compact_height else 14)
             header_layout.setSpacing(6 if compact_width else 12)
 
+        # Studio's content order is Preview > Timeline > Inspector > Task
+        # Panel.  Legacy controls are an invisible adapter and must not take
+        # geometry in responsive calculations.
+        studio_task = getattr(self, "studio_task_panel", None)
+        if studio_task is not None:
+            studio_task.setFixedWidth(280 if compact_width else 312)
+        studio_inspector = getattr(self, "studio_inspector", None)
+        if studio_inspector is not None:
+            studio_inspector.setFixedWidth(268 if compact_width else 290)
+            if width < 1180 and studio_inspector.isVisible():
+                studio_inspector.hide()
+
         # Narrower side panels leave a meaningful preview width on 1366/1280
         # laptops while the cards themselves remain scrollable.
         left_panel = getattr(self, "left_panel_scroll_area", None)
-        if left_panel is not None:
+        if left_panel is not None and studio_task is None:
             left_panel.setFixedWidth(320 if compact_width else 420)
         inspector_width = 320 if compact_width else 400
         inspector_max = 440 if compact_width else 560
@@ -229,9 +241,14 @@ class WindowUiMixin:
         ):
             card = getattr(self, attr, None)
             if card is not None:
-                card.setMinimumWidth(inspector_width)
-                card.setMaximumWidth(inspector_max)
-        self._sync_subtitle_inspector_shell_width()
+                if studio_inspector is not None:
+                    card.setMinimumWidth(0)
+                    card.setMaximumWidth(16777215)
+                else:
+                    card.setMinimumWidth(inspector_width)
+                    card.setMaximumWidth(inspector_max)
+        if studio_inspector is None:
+            self._sync_subtitle_inspector_shell_width()
         stack = getattr(self, "inspector_stack", None)
         if stack is not None:
             for index in range(stack.count()):

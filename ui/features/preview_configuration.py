@@ -645,7 +645,7 @@ class PreviewConfigurationMixin:
         # bypasses the AI branch.  Keeping the legacy checkbox fallback makes
         # older embedded UI layouts harmless.
         provider = str(os.getenv("OPENAI_PROVIDER") or "google").strip().lower()
-        if provider in {"gemini", "google_ai_studio", "openai", "ollama"}:
+        if provider in {"gemini", "google_ai_studio", "local_hymt", "local_qwen"}:
             return True
         legacy_checkbox = getattr(self, "translator_ai_cb", None)
         return bool(legacy_checkbox and legacy_checkbox.isChecked())
@@ -662,19 +662,6 @@ class PreviewConfigurationMixin:
 
     def get_ai_style_instruction(self):
         style_parts = []
-        preset_key = ""
-        if hasattr(self, "translation_style_preset_combo"):
-            preset_key = str(self.translation_style_preset_combo.currentData() or "").strip()
-
-        preset_prompts = {
-            "tutien_recap": "Thể loại Recap Tu Tiên / Kiếm Hiệp: Dịch chuẩn xưng hô Hán Việt theo vai vế ngữ cảnh (Sư tôn/Đồ nhi, Tiền bối/Vãn bối, Huynh đệ/Tỷ muội, Đạo hữu/Tại hạ, Tông chủ/Trưởng lão). Sử dụng chính xác thuật ngữ tu chân (công pháp, linh đan, đan điền, độ kiếp, pháp bảo, tông môn, linh khí, thần thức). Câu văn ngắn gọn súc tích (khoảng 25-35 ký tự/dòng, tối đa 2 dòng), nhịp điệu nhanh dứt khoát, dễ đọc lướt theo video recap.",
-            "anime": "Thể loại Anime / Manga: Dịch trẻ trung, sinh động, giàu cảm xúc, xưng hô tự nhiên theo tình huống (cậu/tớ, anh/em, mày/tao), giữ nguyên tên nhân vật và thuật ngữ đặc trưng.",
-            "drama": "Thể loại Phim Điện Ảnh / Kịch Tính: Lời thoại sâu sắc, kịch tính, tự nhiên như phim điện ảnh chiếu rạp, giữ đúng sắc thái cảm xúc và bối cảnh nhân vật.",
-            "standard": "Dịch chuẩn xác, tự nhiên, văn phong hiện đại, lưu loát, ngắn gọn, phù hợp làm phụ đề video.",
-        }
-        if preset_key in preset_prompts:
-            style_parts.append(preset_prompts[preset_key])
-
         if hasattr(self, "translator_style_edit"):
             custom_style = self.translator_style_edit.text().strip()
             if custom_style:
@@ -828,7 +815,15 @@ class PreviewConfigurationMixin:
         self.set_controls_panel_visible(True)
 
     def set_controls_panel_visible(self, visible: bool):
-        # The workflow panel is always visible. Hide-controls is disabled.
+        # Studio owns the visible task panel. The old scroll area only exists
+        # as a controller adapter and must never reappear.
+        if hasattr(self, "studio_task_panel"):
+            if visible:
+                self.studio_task_panel.show_section("media")
+            else:
+                self.studio_task_panel.hide()
+            QTimer.singleShot(0, self._resync_preview_region_overlays)
+            return
         if hasattr(self, "left_panel_scroll_area"):
             self.left_panel_scroll_area.setVisible(True)
         QTimer.singleShot(0, self._resync_preview_region_overlays)
@@ -849,8 +844,7 @@ class PreviewConfigurationMixin:
     def _completed_translation_provider_label(self) -> str:
         """Return the provider recorded in completed translation segments.
 
-        This intentionally reads the result metadata rather than Settings:
-        an unavailable AI provider can finish a run through Google Translate.
+        This intentionally reads result metadata rather than current Settings.
         """
         models = list(getattr(self, "current_translated_segment_models", []) or [])
         provider_counts = {}
@@ -866,8 +860,8 @@ class PreviewConfigurationMixin:
             "google": "Google Translate",
             "gemini": "Google AI Studio",
             "google_ai_studio": "Google AI Studio",
-            "openai": "OpenAI",
-            "ollama": "Ollama",
+            "local_hymt": "CapCap Local AI HY-MT",
+            "local_qwen": "CapCap Local AI HY-MT",
         }
         return names.get(provider, provider.replace("-", " ").title())
 

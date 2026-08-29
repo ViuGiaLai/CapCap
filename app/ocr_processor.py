@@ -6,7 +6,7 @@ import time
 import cv2
 import numpy as np
 
-from runtime_paths import bin_path, subprocess_hidden_kwargs, subprocess_text_kwargs
+from runtime_paths import bin_path, subprocess_text_kwargs
 
 _OCR_ENGINE = None
 _OCR_ENGINE_LOCK = None

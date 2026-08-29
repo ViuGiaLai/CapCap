@@ -725,9 +725,8 @@ class PrepareWorkflow:
                 print(f"[ASR] Working audio duration: {audio_duration:.2f}s")
                 if is_sensevoice:
                     print("[ASR] Using SenseVoice single-pass transcription with Silero VAD.")
-                    try:
-                        import sherpa_onnx
-                    except ImportError:
+                    import importlib.util
+                    if importlib.util.find_spec("sherpa_onnx") is None:
                         raise RuntimeError("sherpa-onnx is not installed. Run: pip install sherpa-onnx")
                     raw_segments = self.engine_runtime.transcribe_audio_sensevoice(
                         working_audio_path,

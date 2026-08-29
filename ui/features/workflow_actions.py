@@ -104,24 +104,21 @@ class WorkflowActionsMixin:
         if hasattr(self, "stop_btn"):
             self.stop_btn.setEnabled(v_ok and not voice_running)
         if hasattr(self, "blur_area_btn"):
-            self.blur_area_btn.setEnabled(can_export and not review_mode)
-        # Overlay tracks are only meaningful once the generated output is
-        # ready. Keep their controls disabled before that point so users
-        # cannot create layers against an incomplete video workflow.
-        self._optional_layer_controls_ready = bool(can_export and not voice_running and not review_mode)
+            self.blur_area_btn.setEnabled(v_ok and not review_mode)
+        # Visual layers edit the loaded source video directly. They must not
+        # depend on whether transcript/translation/generation has completed.
+        self._optional_layer_controls_ready = bool(v_ok and not voice_running and not review_mode)
         for button_name in ("blur_add_btn", "add_logo_btn", "add_mask_btn", "add_text_btn"):
             button = getattr(self, button_name, None)
             if button is not None:
                 button.setEnabled(self._optional_layer_controls_ready)
-        # Subtitle segments are valid as soon as a transcript/translation is
-        # available. Keep the shared + Layer menu usable for manual fixes
-        # without unlocking the unrelated overlay-layer actions early.
         if hasattr(self, "add_layer_btn"):
             has_subtitle_segments = bool(self.current_segments or self.current_translated_segments)
             self.add_layer_btn.setEnabled((self._optional_layer_controls_ready or has_subtitle_segments) and not review_mode)
         if hasattr(self, "blur_add_btn"):
             self.blur_add_btn.setEnabled(
-                self._optional_layer_controls_ready
+                v_ok
+                and not review_mode
                 and not bool(getattr(self, "_filter_thumbnail_visible", False))
             )
         if hasattr(self, "ocr_region_btn"):
@@ -238,6 +235,9 @@ class WorkflowActionsMixin:
         self.update_workflow_availability()
         self.update_guidance_panel()
         self._update_ocr_overlay()
+        studio_bar = getattr(self, "studio_app_bar", None)
+        if studio_bar is not None:
+            studio_bar.sync_legacy_actions()
 
     def _update_generate_button_menu(self, has_data: bool):
         if not hasattr(self, "run_all_btn"):

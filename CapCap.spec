@@ -94,6 +94,7 @@ a = Analysis(
         "services.gui_project_bridge",
         "services.voice_catalog_service",
         "services.resource_download_service",
+        "services.local_translation_runtime",
         "services.engine_runtime",
         "services.workflow_runtime",
         "services.segment_service",
@@ -117,13 +118,13 @@ a = Analysis(
         # Lazy-loaded translation providers
         "translation.providers.gemini_polisher",
         "translation.providers.google_web_translator",
-        "translation.providers.microsoft_translator",
+        "translation.providers.local_gguf_translator",
         # Lazy-loaded workflows
         "workflows.prepare_workflow",
         "workflows.voice_workflow",
         "workflows.export_workflow",
         # Required for voice workflow
-        "utils.voice_preview_utils",
+        "app.utils.voice_preview_utils",
         # Required for timeline + audio
         "numpy",
         "pydub",
@@ -174,6 +175,13 @@ a.binaries = [m for m in a.binaries if not str(m[0]).replace("\\", "/").split("/
 # normal provider copy; CUDA runtime DLLs are installed on demand by the
 # Resource Manager, not bundled into the application.
 a.binaries = [m for m in a.binaries if str(m[0]).replace("\\", "/") != "onnxruntime/capi/onnxruntime/capi/onnxruntime_providers_cuda.dll"]
+
+# Qt6Core intentionally resolves Windows' system ``icuuc.dll``. A developer
+# PATH may also contain Poppler's unrelated ICU build; PyInstaller can collect
+# that DLL at the bundle root, where it shadows the Windows API shim and makes
+# importing QtCore fail with WinError 127. Never package that PATH contaminant.
+_SYSTEM_ICU_SHIMS = {"icuuc.dll", "icudt78.dll"}
+a.binaries = [m for m in a.binaries if Path(str(m[0])).name.lower() not in _SYSTEM_ICU_SHIMS]
 
 # Do not silently turn the installer into a CUDA runtime installer. Native
 # dependency analysis of CTranslate2 can discover these DLLs from the CUDA

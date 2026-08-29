@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CapCap Studio – AI Video Localization</title>
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800;14..32,900&display=swap" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* ─── RESET & BASE ─── */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html {
+            scroll-behavior: smooth;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #080C16;
+            color: #F1F5F9;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+        ::selection {
+            background: #6C8CFF;
+            color: #0A0E1A;
+        }
+
+        /* ─── SCROLLBAR ─── */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #111827;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3B506E;
+            border-radius: 8px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6C8CFF;
+        }
+
+        /* ─── UTILITY ─── */
+        .gradient-text {
+            background: linear-gradient(135deg, #6C8CFF 0%, #A78BFA 60%, #F472B6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .gradient-text-blue {
+            background: linear-gradient(135deg, #6C8CFF, #8AA4FF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .glow {
+            box-shadow: 0 0 60px rgba(108, 140, 255, 0.08), inset 0 0 60px rgba(108, 140, 255, 0.02);
+        }
+        .glow-strong {
+            box-shadow: 0 0 80px rgba(108, 140, 255, 0.15);
+        }
+
+        /* ─── BUTTONS ─── */
+        .btn-primary {
+            background: linear-gradient(135deg, #6C8CFF, #8AA4FF);
+            color: #0A0E1A;
+            font-weight: 700;
+            padding: 14px 36px;
+            border-radius: 14px;
+            border: none;
+            transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+            box-shadow: 0 4px 20px rgba(108, 140, 255, 0.35);
+            cursor: pointer;
+            display: inline-block;
+            text-decoration: none;
+            font-size: 1rem;
+            letter-spacing: 0.01em;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 8px 40px rgba(108, 140, 255, 0.5);
+        }
+        .btn-secondary {
+            background: rgba(30, 41, 59, 0.6);
+            backdrop-filter: blur(8px);
+            color: #F1F5F9;
+            border: 1px solid rgba(59, 80, 110, 0.5);
+            padding: 14px 36px;
+            border-radius: 14px;
+            font-weight: 600;
+            transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+            cursor: pointer;
+            display: inline-block;
+            text-decoration: none;
+            font-size: 1rem;
+        }
+        .btn-secondary:hover {
+            background: rgba(30, 41, 59, 0.9);
+            border-color: #6C8CFF;
+            box-shadow: 0 0 30px rgba(108, 140, 255, 0.08);
+            transform: translateY(-2px);
+        }
+        .btn-ghost {
+            color: #94A3B8;
+            font-weight: 500;
+            transition: color 0.2s;
+            text-decoration: none;
+        }
+        .btn-ghost:hover {
+            color: #F1F5F9;
+        }
+
+        /* ─── CARDS ─── */
+        .card-premium {
+            background: linear-gradient(145deg, #1A2235, #111827);
+            border: 1px solid #2A3A55;
+            border-radius: 20px;
+            transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        .card-premium::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 20px;
+            padding: 1px;
+            background: linear-gradient(135deg, rgba(108, 140, 255, 0.2), transparent 60%);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.4s;
+        }
+        .card-premium:hover::before {
+            opacity: 1;
+        }
+        .card-premium:hover {
+            transform: translateY(-8px);
+            border-color: rgba(108, 140, 255, 0.3);
+            box-shadow: 0 20px 60px rgba(108, 140, 255, 0.08);
+        }
+
+        /* ─── HERO BACKGROUND ─── */
+        .hero-bg {
+            position: relative;
+            background: #080C16;
+            overflow: hidden;
+        }
+        .hero-bg::before {
+            content: '';
+            position: absolute;
+            top: -40%;
+            left: -20%;
+            width: 80%;
+            height: 80%;
+            background: radial-gradient(ellipse, rgba(108, 140, 255, 0.06), transparent 70%);
+            pointer-events: none;
+        }
+        .hero-bg::after {
+            content: '';
+            position: absolute;
+            bottom: -30%;
+            right: -10%;
+            width: 60%;
+            height: 60%;
+            background: radial-gradient(ellipse, rgba(167, 139, 250, 0.05), transparent 70%);
+            pointer-events: none;
+        }
+        .hero-grid {
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.01) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            opacity: 0.3;
+        }
+
+        /* ─── FLOATING PARTICLES ─── */
+        .particle {
+            position: absolute;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(108, 140, 255, 0.15), transparent 70%);
+            pointer-events: none;
+            animation: floatParticle 20s infinite alternate ease-in-out;
+        }
+        @keyframes floatParticle {
+            0% {
+                transform: translate(0, 0) scale(1);
+                opacity: 0.2;
+            }
+            100% {
+                transform: translate(40px, -30px) scale(1.3);
+                opacity: 0.6;
+            }
+        }
+
+        /* ─── ORB ANIMATION ─── */
+        .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.3;
+            animation: orbPulse 8s infinite alternate ease-in-out;
+        }
+        @keyframes orbPulse {
+            0% {
+                transform: scale(1) translate(0, 0);
+            }
+            100% {
+                transform: scale(1.2) translate(20px, -20px);
+            }
+        }
+
+        /* ─── FADE-UP ANIMATION ─── */
+        .fade-up {
+            opacity: 0;
+            transform: translateY(40px);
+            transition: all 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .fade-up.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .fade-up-d1 {
+            transition-delay: 0.05s;
+        }
+        .fade-up-d2 {
+            transition-delay: 0.15s;
+        }
+        .fade-up-d3 {
+            transition-delay: 0.25s;
+        }
+        .fade-up-d4 {
+            transition-delay: 0.35s;
+        }
+        .fade-up-d5 {
+            transition-delay: 0.45s;
+        }
+        .fade-up-d6 {
+            transition-delay: 0.55s;
+        }
+
+        /* ─── STATS COUNTER ─── */
+        .stat-number {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #6C8CFF, #A78BFA);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* ─── TESTIMONIAL QUOTE ─── */
+        .quote-mark {
+            font-size: 4rem;
+            line-height: 0.8;
+            color: rgba(108, 140, 255, 0.15);
+            font-family: serif;
+        }
+
+        /* ─── FEATURE ICON WRAPPER ─── */
+        .icon-wrap {
+            width: 56px;
+            height: 56px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(108, 140, 255, 0.12), rgba(167, 139, 250, 0.08));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(108, 140, 255, 0.1);
+            flex-shrink: 0;
+        }
+
+        /* ─── NAVBAR GLASS ─── */
+        .glass-nav {
+            background: rgba(8, 12, 22, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(30, 41, 59, 0.4);
+        }
+
+        /* ─── RESPONSIVE ─── */
+        @media (max-width: 640px) {
+            .hero-title {
+                font-size: 2.4rem !important;
+                line-height: 1.2 !important;
+            }
+            .stat-number {
+                font-size: 2.2rem;
+            }
+            .container-custom {
+                padding-left: 1.25rem;
+                padding-right: 1.25rem;
+            }
+            .btn-primary,
+            .btn-secondary {
+                padding: 12px 24px;
+                font-size: 0.95rem;
+            }
+        }
+        @media (min-width: 768px) {
+            .hero-title {
+                font-size: 4.2rem !important;
+            }
+        }
+        @media (min-width: 1024px) {
+            .hero-title {
+                font-size: 5rem !important;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- NAVIGATION -->
+    <!-- ════════════════════════════════════════════ -->
+    <nav class="glass-nav fixed top-0 left-0 w-full z-50">
+        <div class="container mx-auto px-6 py-3.5 flex items-center justify-between">
+            <a href="#" class="flex items-center gap-2.5 no-underline">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-[#6C8CFF] to-[#A78BFA] flex items-center justify-center shadow-lg shadow-[#6C8CFF]/20">
+                    <span class="text-white font-extrabold text-sm">CC</span>
+                </div>
+                <span class="text-xl font-bold text-white tracking-tight">CapCap</span>
+                <span class="text-[#64748B] text-sm font-medium">Studio</span>
+            </a>
+
+            <div class="hidden lg:flex items-center gap-8 text-sm">
+                <a href="#features" class="text-[#94A3B8] hover:text-white transition font-medium">Features</a>
+                <a href="#workflow" class="text-[#94A3B8] hover:text-white transition font-medium">Workflow</a>
+                <a href="#testimonials" class="text-[#94A3B8] hover:text-white transition font-medium">Testimonials</a>
+                <a href="#pricing" class="text-[#94A3B8] hover:text-white transition font-medium">Pricing</a>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <a href="#" class="text-[#94A3B8] hover:text-white transition p-1.5">
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.15 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.62.24 2.85.12 3.15.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                </a>
+                <a href="#" class="btn-primary text-sm py-2.5 px-5">Download</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- HERO SECTION -->
+    <!-- ════════════════════════════════════════════ -->
+    <section class="hero-bg min-h-screen flex items-center pt-24 pb-16 relative">
+        <div class="hero-grid"></div>
+
+        <!-- Orbs -->
+        <div class="orb w-[600px] h-[600px] -top-40 -left-40 bg-[#6C8CFF]"></div>
+        <div class="orb w-[400px] h-[400px] -bottom-40 -right-20 bg-[#A78BFA]" style="animation-delay:2s;"></div>
+
+        <!-- Particles -->
+        <div class="particle w-72 h-72 top-12 left-[10%]"></div>
+        <div class="particle w-48 h-48 bottom-32 right-[8%]" style="animation-delay:4s;"></div>
+        <div class="particle w-32 h-32 top-1/2 left-1/2" style="animation-delay:8s;"></div>
+
+        <div class="container mx-auto px-6 relative z-10">
+            <div class="grid lg:grid-cols-2 gap-16 items-center">
+                <div class="space-y-7">
+                    <div class="inline-flex items-center gap-2.5 bg-[#1E293B]/80 backdrop-blur-sm px-4 py-2 rounded-full border border-[#2A3A55] text-sm text-[#94A3B8]">
+                        <span class="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                        <span class="font-medium">AI-Powered Video Localization</span>
+                    </div>
+
+                    <h1 class="hero-title text-4xl md:text-5xl lg:text-6xl font-extrabold leading-[1.1] tracking-tight">
+                        Translate & Voice
+                        <span class="gradient-text">Any Video</span>
+                        Instantly
+                    </h1>
+
+                    <p class="text-lg text-[#94A3B8] max-w-lg leading-relaxed">
+                        CapCap Studio uses cutting‑edge AI to transcribe, translate,
+                        and dub videos with natural‑sounding voices — all in one
+                        sleek, open‑source desktop app.
+                    </p>
+
+                    <div class="flex flex-wrap gap-4">
+                        <a href="#" class="btn-primary">
+                            Get Started Free
+                            <svg class="inline-block w-4 h-4 ml-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+                        </a>
+                        <a href="#features" class="btn-secondary">Explore Features</a>
+                    </div>
+
+                    <div class="flex items-center gap-6 text-sm text-[#64748B] pt-1">
+                        <span class="flex items-center gap-1.5">
+                            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                            No watermark
+                        </span>
+                        <span class="flex items-center gap-1.5">
+                            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                            Open source
+                        </span>
+                        <span class="flex items-center gap-1.5">
+                            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                            GPU accelerated
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Hero Visual -->
+                <div class="relative flex justify-center">
+                    <div class="w-full max-w-lg aspect-[16/10] rounded-2xl bg-gradient-to-br from-[#1A2235] to-[#0F1729] border border-[#2A3A55] glow-strong p-1">
+                        <div class="w-full h-full rounded-xl bg-[#080C16] flex flex-col items-center justify-center p-8 relative overflow-hidden">
+                            <div class="absolute inset-0 bg-gradient-to-br from-[#6C8CFF]/5 to-transparent"></div>
+                            <svg class="w-20 h-20 text-[#6C8CFF]/40 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <p class="text-[#64748B] text-sm font-medium">Preview your localized video in real‑time</p>
+                            <div class="flex gap-1.5 mt-4">
+                                <span class="w-2 h-2 rounded-full bg-[#6C8CFF]/40 animate-pulse" style="animation-delay:0s;"></span>
+                                <span class="w-2 h-2 rounded-full bg-[#6C8CFF]/40 animate-pulse" style="animation-delay:0.4s;"></span>
+                                <span class="w-2 h-2 rounded-full bg-[#6C8CFF]/40 animate-pulse" style="animation-delay:0.8s;"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Floating badge -->
+                    <div class="absolute -bottom-4 -right-4 bg-[#1A2235] border border-[#2A3A55] rounded-xl px-4 py-2.5 flex items-center gap-2.5 backdrop-blur-sm shadow-xl">
+                        <div class="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                        </div>
+                        <span class="text-sm font-semibold text-white">100% Free</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- STATS BAR -->
+    <!-- ════════════════════════════════════════════ -->
+    <section class="py-12 border-y border-[#1E293B] bg-[#0A0F1A]">
+        <div class="container mx-auto px-6">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+                <div class="fade-up fade-up-d1">
+                    <div class="stat-number">10K+</div>
+                    <p class="text-[#94A3B8] text-sm mt-1">Videos localized</p>
+                </div>
+                <div class="fade-up fade-up-d2">
+                    <div class="stat-number">50+</div>
+                    <p class="text-[#94A3B8] text-sm mt-1">Languages supported</p>
+                </div>
+                <div class="fade-up fade-up-d3">
+                    <div class="stat-number">5x</div>
+                    <p class="text-[#94A3B8] text-sm mt-1">Faster with GPU</p>
+                </div>
+                <div class="fade-up fade-up-d4">
+                    <div class="stat-number">100%</div>
+                    <p class="text-[#94A3B8] text-sm mt-1">Open source</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- FEATURES SECTION -->
+    <!-- ════════════════════════════════════════════ -->
+    <section id="features" class="py-28 bg-[#080C16]">
+        <div class="container mx-auto px-6">
+            <div class="text-center max-w-2xl mx-auto mb-20 fade-up">
+                <span class="text-sm font-semibold text-[#6C8CFF] uppercase tracking-[0.15em]">Features</span>
+                <h2 class="text-3xl md:text-4xl lg:text-5xl font-bold mt-3 leading-tight">
+                    Everything you need to
+                    <span class="gradient-text-blue">localize videos</span>
+                </h2>
+                <p class="text-[#94A3B8] mt-4 text-lg">
+                    From transcription to voiceover, CapCap Studio streamlines the entire workflow.
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Feature 1 -->
+                <div class="card-premium p-7 fade-up fade-up-d1">
+                    <div class="icon-wrap mb-4">
+                        <svg class="w-6 h-6 text-[#6C8CFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold">AI Transcription</h3>
+                    <p class="text-[#94A3B8] text-sm leading-relaxed mt-1.5">
+                        SenseVoice, Whisper, Faster‑Whisper with speaker diarization for accurate, timestamped subtitles.
+                    </p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="card-premium p-7 fade-up fade-up-d2">
+                    <div class="icon-wrap mb-4">
+                        <svg class="w-6 h-6 text-[#6C8CFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold">AI Translation</h3>
+                    <p class="text-[#94A3B8] text-sm leading-relaxed mt-1.5">
+                        Translate subtitles using OpenAI, Claude, Gemini, DeepL, or local LLMs with style presets.
+                    </p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="card-premium p-7 fade-up fade-up-d3">
+                    <div class="icon-wrap mb-4">
+                        <svg class="w-6 h-6 text-[#6C8CFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold">Voice Synthesis</h3>
+                    <p class="text-[#94A3B8] text-sm leading-relaxed mt-1.5">
+                        EdgeTTS, CosyVoice, F5‑TTS, MeloTTS for natural, multi‑speaker voiceovers.
+                    </p>
+                </div>
+
+                <!-- Feature 4 -->
+                <div class="card-premium p-7 fade-up fade-up-d2">
+                    <div class="icon-wrap mb-4">
+                        <svg class="w-6 h-6 text-[#6C8CFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold">Multi‑Track Timeline</h3>
+                    <p class="text-[#94A3B8] text-sm leading-relaxed mt-1.5">
+                        Edit video, audio, subtitles, blur, logo, mask, and text layers on a flexible timeline.
+                    </p>
+                </div>
+
+                <!-- Feature 5 -->
+                <div class="card-premium p-7 fade-up fade-up-d3">
+                    <div class="icon-wrap mb-4">
+                        <svg class="w-6 h-6 text-[#6C8CFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold">Style & Effects</h3>
+                    <p class="text-[#94A3B8] text-sm leading-relaxed mt-1.5">
+                        Custom typography, colors, outlines, animations, and visual overlays.
+                    </p>
+                </div>
+
+                <!-- Feature 6 -->
+                <div class="card-premium p-7 fade-up fade-up-d4">
+                    <div class="icon-wrap mb-4">
+                        <svg class="w-6 h-6 text-[#6C8CFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
+                    </div>
+                    <h3 class="text-lg font-bold">GPU Accelerated</h3>
+                    <p class="text-[#94A3B8] text-sm leading-relaxed mt-1.5">
+                        Leverage CUDA for 5‑10x faster transcription, translation, and voice generation.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- WORKFLOW SECTION -->
+    <!-- ════════════════════════════════════════════ -->
+    <section id="workflow" class="py-28 bg-[#0A0F1A] border-t border-[#1E293B]">
+        <div class="container mx-auto px-6">
+            <div class="text-center max-w-2xl mx-auto mb-20 fade-up">
+                <span class="text-sm font-semibold text-[#6C8CFF] uppercase tracking-[0.15em]">Workflow</span>
+                <h2 class="text-3xl md:text-4xl lg:text-5xl font-bold mt-3">
+                    Three steps to a
+                    <span class="gradient-text-blue">localized video</span>
+                </h2>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8 relative">
+                <!-- Connecting line (desktop) -->
+                <div class="hidden md:block absolute top-16 left-[16.6%] right-[16.6%] h-[2px] bg-gradient-to-r from-[#6C8CFF]/20 via-[#A78BFA]/20 to-[#6C8CFF]/20"></div>
+
+                <!-- Step 1 -->
+                <div class="text-center fade-up fade-up-d1 relative">
+                    <div class="w-20 h-20 rounded-full bg-gradient-to-br from-[#6C8CFF]/20 to-[#A78BFA]/10 border border-[#6C8CFF]/20 flex items-center justify-center mx-auto mb-5 text-3xl font-black text-[#6C8CFF] shadow-lg shadow-[#6C8CFF]/5">1</div>
+                    <h3 class="text-xl font-bold">Import & Transcribe</h3>
+                    <p class="text-[#94A3B8] text-sm mt-2 leading-relaxed max-w-xs mx-auto">
+                        Drop any video and let AI generate timestamped subtitles with speaker detection.
+                    </p>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="text-center fade-up fade-up-d2 relative">
+                    <div class="w-20 h-20 rounded-full bg-gradient-to-br from-[#6C8CFF]/20 to-[#A78BFA]/10 border border-[#6C8CFF]/20 flex items-center justify-center mx-auto mb-5 text-3xl font-black text-[#6C8CFF] shadow-lg shadow-[#6C8CFF]/5">2</div>
+                    <h3 class="text-xl font-bold">Translate & Style</h3>
+                    <p class="text-[#94A3B8] text-sm mt-2 leading-relaxed max-w-xs mx-auto">
+                        Translate subtitles to your target language and customize typography, colors, and layout.
+                    </p>
+                </div>
+
+                <!-- Step 3 -->
+                <div class="text-center fade-up fade-up-d3 relative">
+                    <div class="w-20 h-20 rounded-full bg-gradient-to-br from-[#6C8CFF]/20 to-[#A78BFA]/10 border border-[#6C8CFF]/20 flex items-center justify-center mx-auto mb-5 text-3xl font-black text-[#6C8CFF] shadow-lg shadow-[#6C8CFF]/5">3</div>
+                    <h3 class="text-xl font-bold">Voice & Export</h3>
+                    <p class="text-[#94A3B8] text-sm mt-2 leading-relaxed max-w-xs mx-auto">
+                        Generate natural voiceovers and export your final video with subtitles burned in.
+                    </p>
+                </div>
+            </div>
+
+            <div class="text-center mt-14 fade-up fade-up-d4">
+                <a href="#" class="btn-primary">
+                    Try it now
+                    <svg class="inline-block w-4 h-4 ml-1.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- TESTIMONIALS -->
+    <!-- ════════════════════════════════════════════ -->
+    <section id="testimonials" class="py-28 bg-[#080C16] border-t border-[#1E293B]">
+        <div class="container mx-auto px-6">
+            <div class="text-center max-w-2xl mx-auto mb-16 fade-up">
+                <span class="text-sm font-semibold text-[#6C8CFF] uppercase tracking-[0.15em]">Testimonials</span>
+                <h2 class="text-3xl md:text-4xl font-bold mt-3">
+                    Loved by creators worldwide
+                </h2>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-6">
+                <!-- Testimonial 1 -->
+                <div class="card-premium p-7 fade-up fade-up-d1">
+                    <div class="quote-mark">"</div>
+                    <p class="text-[#E2E8F0] text-sm leading-relaxed mt-[-0.5rem]">
+                        CapCap Studio cut our video localization time by 80%. The AI translation is surprisingly accurate and the voice synthesis sounds natural.
+                    </p>
+                    <div class="flex items-center gap-3 mt-5 pt-4 border-t border-[#1E293B]">
+                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#6C8CFF] to-[#A78BFA] flex items-center justify-center text-white font-bold text-sm">JD</div>
+                        <div>
+                            <p class="text-sm font-semibold">John Doe</p>
+                            <p class="text-xs text-[#64748B]">Content Creator</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Testimonial 2 -->
+                <div class="card-premium p-7 fade-up fade-up-d2">
+                    <div class="quote-mark">"</div>
+                    <p class="text-[#E2E8F0] text-sm leading-relaxed mt-[-0.5rem]">
+                        I've tried many tools but CapCap is the only one that gives me complete control over the timeline, subtitles, and voice layers. A game changer.
+                    </p>
+                    <div class="flex items-center gap-3 mt-5 pt-4 border-t border-[#1E293B]">
+                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#F472B6] to-[#A78BFA] flex items-center justify-center text-white font-bold text-sm">SM</div>
+                        <div>
+                            <p class="text-sm font-semibold">Sarah Mitchell</p>
+                            <p class="text-xs text-[#64748B]">Video Editor</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Testimonial 3 -->
+                <div class="card-premium p-7 fade-up fade-up-d3">
+                    <div class="quote-mark">"</div>
+                    <p class="text-[#E2E8F0] text-sm leading-relaxed mt-[-0.5rem]">
+                        The fact that it's open source and completely free is incredible. The quality rivals paid tools. Highly recommend for any localization workflow.
+                    </p>
+                    <div class="flex items-center gap-3 mt-5 pt-4 border-t border-[#1E293B]">
+                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#34D399] to-[#6C8CFF] flex items-center justify-center text-white font-bold text-sm">AK</div>
+                        <div>
+                            <p class="text-sm font-semibold">Alex Kim</p>
+                            <p class="text-xs text-[#64748B]">Open Source Contributor</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- PRICING / CTA -->
+    <!-- ════════════════════════════════════════════ -->
+    <section id="pricing" class="py-28 bg-[#0A0F1A] border-t border-[#1E293B]">
+        <div class="container mx-auto px-6">
+            <div class="max-w-3xl mx-auto text-center fade-up">
+                <span class="text-sm font-semibold text-[#6C8CFF] uppercase tracking-[0.15em]">Pricing</span>
+                <h2 class="text-3xl md:text-4xl lg:text-5xl font-bold mt-3">
+                    Free forever.
+                    <span class="gradient-text-blue">No catch.</span>
+                </h2>
+                <p class="text-[#94A3B8] text-lg mt-4 leading-relaxed">
+                    CapCap Studio is completely open‑source and free to use. No subscriptions, no hidden fees, no watermark.
+                </p>
+
+                <div class="mt-10 bg-[#1A2235] border border-[#2A3A55] rounded-2xl p-8 max-w-md mx-auto glow">
+                    <div class="text-5xl font-black text-white">$0</div>
+                    <p class="text-[#94A3B8] text-sm mt-1">per month</p>
+                    <ul class="mt-6 space-y-3 text-left text-sm">
+                        <li class="flex items-center gap-3 text-[#E2E8F0]">
+                            <svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                            Unlimited video processing
+                        </li>
+                        <li class="flex items-center gap-3 text-[#E2E8F0]">
+                            <svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                            All AI engines included
+                        </li>
+                        <li class="flex items-center gap-3 text-[#E2E8F0]">
+                            <svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                            No watermark on exports
+                        </li>
+                        <li class="flex items-center gap-3 text-[#E2E8F0]">
+                            <svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                            Open source & self‑hostable
+                        </li>
+                    </ul>
+                    <a href="#" class="btn-primary w-full mt-8 text-center">Download for Windows</a>
+                    <p class="text-[#64748B] text-xs mt-3">macOS & Linux coming soon</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- FOOTER -->
+    <!-- ════════════════════════════════════════════ -->
+    <footer class="bg-[#080C16] border-t border-[#1E293B] py-12">
+        <div class="container mx-auto px-6">
+            <div class="flex flex-col md:flex-row items-center justify-between gap-6">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-[#6C8CFF] to-[#A78BFA] flex items-center justify-center shadow-lg shadow-[#6C8CFF]/20">
+                        <span class="text-white font-extrabold text-xs">CC</span>
+                    </div>
+                    <span class="text-sm font-bold text-white">CapCap Studio</span>
+                    <span class="text-[#64748B] text-xs">© 2026</span>
+                </div>
+                <div class="flex items-center gap-6 text-sm text-[#64748B]">
+                    <a href="#" class="hover:text-white transition">GitHub</a>
+                    <a href="#" class="hover:text-white transition">Docs</a>
+                    <a href="#" class="hover:text-white transition">Privacy</a>
+                    <a href="#" class="hover:text-white transition">Contact</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- ════════════════════════════════════════════ -->
+    <!-- SCRIPT: Intersection Observer -->
+    <!-- ════════════════════════════════════════════ -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const elements = document.querySelectorAll('.fade-up');
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('visible');
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, {
+                threshold: 0.15,
+                rootMargin: '0px 0px -40px 0px'
+            });
+            elements.forEach(el => observer.observe(el));
+        });
+    </script>
+
+</body>
+</html>

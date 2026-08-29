@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>404 – CapCap Studio</title>
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,600;14..32,700;14..32,800;14..32,900&display=swap" rel="stylesheet" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #080C16;
+            color: #F1F5F9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            text-align: center;
+            padding: 2rem;
+            overflow: hidden;
+            position: relative;
+        }
+        body::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(ellipse at 30% 40%, rgba(108, 140, 255, 0.06), transparent 60%),
+                        radial-gradient(ellipse at 70% 60%, rgba(167, 139, 250, 0.04), transparent 50%);
+            pointer-events: none;
+        }
+        .container {
+            max-width: 480px;
+            position: relative;
+            z-index: 1;
+        }
+        .code {
+            font-size: 8rem;
+            font-weight: 900;
+            line-height: 1;
+            letter-spacing: -0.05em;
+            background: linear-gradient(135deg, #6C8CFF, #A78BFA, #F472B6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .sub {
+            color: #94A3B8;
+            margin-top: 0.5rem;
+            font-size: 1.1rem;
+        }
+        .btn-primary {
+            display: inline-block;
+            margin-top: 2rem;
+            background: linear-gradient(135deg, #6C8CFF, #8AA4FF);
+            color: #0A0E1A;
+            font-weight: 700;
+            padding: 14px 36px;
+            border-radius: 14px;
+            text-decoration: none;
+            transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+            box-shadow: 0 4px 20px rgba(108, 140, 255, 0.35);
+            font-size: 1rem;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 8px 40px rgba(108, 140, 255, 0.5);
+        }
+        .glow-orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.15;
+            animation: orbFloat 10s infinite alternate ease-in-out;
+        }
+        @keyframes orbFloat {
+            0% {
+                transform: translate(0, 0) scale(1);
+            }
+            100% {
+                transform: translate(30px, -20px) scale(1.1);
+            }
+        }
+        @media (max-width: 480px) {
+            .code {
+                font-size: 5rem;
+            }
+            .btn-primary {
+                padding: 12px 28px;
+                font-size: 0.95rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="glow-orb w-[400px] h-[400px] -top-40 -left-40 bg-[#6C8CFF]"></div>
+    <div class="glow-orb w-[300px] h-[300px] -bottom-40 -right-20 bg-[#A78BFA]" style="animation-delay:3s;"></div>
+
+    <div class="container">
+        <div class="code">404</div>
+        <h1 class="text-2xl font-bold mt-2">Page not found</h1>
+        <p class="sub">The page you are looking for doesn't exist or has been moved.</p>
+        <a href="/" class="btn-primary">
+            <svg class="inline-block w-4 h-4 mr-2 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+            Go back home
+        </a>
+        <p class="text-[#64748B] text-xs mt-6">CapCap Studio · AI Video Localization</p>
+    </div>
+</body>
+</html>

@@ -29,6 +29,7 @@ from features.pipeline_lifecycle import PipelineLifecycleMixin
 from utils.bootstrap_media_backend import BootstrapMediaBackend
 from runtime_paths import asset_path, workspace_root
 from runtime_profile import is_remote_profile
+from design_system import build_application_stylesheet, load_application_fonts
 
 def _default_asr_engine() -> str:
     return "sensevoice"
@@ -707,7 +708,12 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, ModelSettingsMixin, WorkflowAct
         self._deferred_startup_stage1_done = False
         self._deferred_startup_stage2_done = False
 
+        load_application_fonts()
         self.setup_ui()
+        # Keep legacy object-specific behavior during the migration, then
+        # append the Studio Dark token layer so shared controls use one visual
+        # language instead of inheriting whichever local QSS was added first.
+        self.setStyleSheet(self.styleSheet() + build_application_stylesheet())
         self._configure_local_voice_mode_ui()
         self._timeline_visual_refresh_timer = QTimer(self)
         self._timeline_visual_refresh_timer.setSingleShot(True)

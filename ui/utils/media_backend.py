@@ -403,10 +403,12 @@ class QtMediaPlayerBackend(QObject):
         self._dubbed_output.setMuted(bool(self._mute_dubbed or self._dubbed_vol <= 0.0 or not self._dubbed_loaded_path))
 
     def set_blur_region(self, blur_region=None):
-        return None
+        if hasattr(self.video_view, "set_blur_effect_regions"):
+            self.video_view.set_blur_effect_regions(blur_region)
 
     def clear_blur_region(self):
-        return None
+        if hasattr(self.video_view, "set_blur_effect_regions"):
+            self.video_view.set_blur_effect_regions(None)
 
     def set_mask_region(self, mask_region=None):
         return None
@@ -946,11 +948,18 @@ class MpvMediaPlayerBackend(QObject):
                 continue
             try:
                 strength_raw = blur.get("blur_strength", blur.get("strength"))
+                # FFmpeg limits boxblur's radius to half the cropped
+                # dimension. Subtitle covers are often short, so accepting a
+                # UI value such as 20 unchanged makes the entire filter graph
+                # fail instead of blurring the selected region.
+                max_luma_radius = max(1, min(20, min(w, h) // 2))
                 if strength_raw is None:
-                    min_dimension = min(w, h)
-                    luma_radius = max(1, min(20, int(min_dimension // 2)))
+                    luma_radius = max_luma_radius
                 else:
-                    luma_radius = max(1, min(20, int(round(float(strength_raw)))))
+                    luma_radius = max(
+                        1,
+                        min(max_luma_radius, int(round(float(strength_raw)))),
+                    )
             except (TypeError, ValueError):
                 luma_radius = max(1, min(20, int(min(w, h) // 2)))
             chroma_radius = max(0, min(20, luma_radius // 2))

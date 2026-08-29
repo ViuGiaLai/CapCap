@@ -5,7 +5,7 @@ import threading
 import traceback
 from pathlib import Path
 
-from runtime_paths import bin_path, models_path, workspace_root, subprocess_hidden_kwargs, subprocess_text_kwargs
+from runtime_paths import bin_path, models_path, workspace_root, subprocess_text_kwargs
 from services.resource_download_service import ResourceDownloadService
 
 

@@ -683,36 +683,35 @@ class VisualLayerEditorMixin:
             regions = self.video_view.blur_overlay._regions or []
         except Exception:
             return
-        # Find the index of this layer in the B1 track to map it to
-        # the corresponding region in the video overlay.
-        idx = -1
-        if hasattr(self, "timeline") and self.timeline._timeline:
-            for tr in self.timeline._timeline.tracks:
-                if tr.id == layer.id or layer in tr.layers:
-                    try:
-                        idx = list(tr.layers).index(layer)
-                    except ValueError:
-                        idx = -1
-                    break
-        if idx < 0 or idx >= len(regions):
-            return
-        rect = regions[idx]
-        try:
-            x = float(rect.x())
-            y = float(rect.y())
-            w = float(rect.width())
-            h = float(rect.height())
-        except Exception:
-            return
-        # Build a single-region payload using this layer's style and
-        # write it through the normal persist + preview path.
-        payload = [{
-            "x": x, "y": y, "width": w, "height": h,
-            "blur_strength": int(getattr(layer, "blur_strength", 20)),
-            "blur_opacity": float(getattr(layer, "blur_opacity", 1.0)),
-            "pixelate": bool(getattr(layer, "pixelate", False)),
-            "pixelate_size": int(getattr(layer, "pixelate_size", 12)),
-        }]
+        # Build the full B1 payload. Updating one inspector control must not
+        # erase the other user-created blur regions.
+        payload = []
+        for track in self.timeline._timeline.tracks:
+            if str(getattr(track, "name", "")) != "B1":
+                continue
+            for index, current_layer in enumerate(track.layers):
+                if index < len(regions):
+                    current_rect = regions[index]
+                    region_x = float(current_rect.x())
+                    region_y = float(current_rect.y())
+                    region_w = float(current_rect.width())
+                    region_h = float(current_rect.height())
+                else:
+                    region_x = float(getattr(current_layer, "position_x", 0.0))
+                    region_y = float(getattr(current_layer, "position_y", 0.0))
+                    region_w = float(getattr(current_layer, "width", 0.0))
+                    region_h = float(getattr(current_layer, "height", 0.0))
+                payload.append({
+                    "x": region_x, "y": region_y,
+                    "width": region_w, "height": region_h,
+                    "start": float(getattr(current_layer, "start", 0.0)),
+                    "end": float(getattr(current_layer, "end", 0.0)),
+                    "blur_strength": int(getattr(current_layer, "blur_strength", 20)),
+                    "blur_opacity": float(getattr(current_layer, "blur_opacity", 1.0)),
+                    "pixelate": bool(getattr(current_layer, "pixelate", False)),
+                    "pixelate_size": int(getattr(current_layer, "pixelate_size", 12)),
+                })
+            break
         try:
             if hasattr(self.video_view, "set_blur_regions_normalized"):
                 self.video_view.set_blur_regions_normalized(payload)

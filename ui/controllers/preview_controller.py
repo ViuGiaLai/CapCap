@@ -7,7 +7,6 @@ import subprocess
 import time
 
 from PySide6.QtCore import QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from runtime_paths import bin_path
@@ -1329,8 +1328,19 @@ class PreviewController:
             if hasattr(self.gui, "update_project_artifact"):
                 self.gui.update_project_artifact("preview_video_5s", output_path)
             self.gui.log(f"[Preview] 5-second preview exported: {output_path}")
-            if not QDesktopServices.openUrl(QUrl.fromLocalFile(output_path)):
-                self.gui.open_folder(os.path.dirname(output_path))
+            # Do not hand the preview to Windows' default video app. That
+            # creates a floating native "Fast Preview" window over the editor
+            # (with its own minimise/maximise/close buttons). Preview belongs
+            # in the Studio canvas where transport and timeline stay coherent.
+            self.gui.media_player.setSource(QUrl.fromLocalFile(output_path))
+            self.gui.refresh_video_dimensions(output_path)
+            self.gui._fast_preview_active = True
+            if hasattr(self.gui, "preview_context_label"):
+                self.gui.preview_context_label.setText("Fast preview · rendered 5-second clip")
+                self.gui.preview_context_label.show()
+            self.gui.media_player.play()
+            if hasattr(self.gui, "timeline"):
+                self.gui.timeline.set_playing(True)
             self.gui.refresh_ui_state()
 
     def preview_video(self):

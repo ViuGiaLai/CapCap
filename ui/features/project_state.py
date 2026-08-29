@@ -375,6 +375,8 @@ class ProjectStateMixin:
 
         saved_tengine = st.get("translation_engine")
         if saved_tengine and hasattr(self, "translation_engine_combo"):
+            if saved_tengine == "local_qwen":
+                saved_tengine = "local_hymt"
             idx = self.translation_engine_combo.findData(saved_tengine)
             if idx < 0:
                 idx = self.translation_engine_combo.findText(saved_tengine)

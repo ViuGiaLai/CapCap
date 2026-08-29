@@ -1031,6 +1031,12 @@ class PipelineLifecycleMixin:
         QTimer.singleShot(100, lambda: relaunch_launcher(self.__class__))
 
     def _terminate_workers(self):
+        try:
+            from services.local_translation_runtime import stop_local_translation_runtime
+            stop_local_translation_runtime()
+        except Exception:
+            pass
+
         # Stop local worker process server immediately
         if hasattr(self, "pipeline_controller") and hasattr(self.pipeline_controller, "_stop_local_worker_server"):
             try:

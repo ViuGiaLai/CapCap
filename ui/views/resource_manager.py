@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from runtime_paths import workspace_root as default_workspace_root
 from services import ResourceDownloadService
+from worker_adapters import ResourceDownloadWorker
 
 
 _STATUS_STYLES = {
@@ -141,6 +143,7 @@ def open_resource_manager(workspace_root: str = None, parent=None,
     scroll.setWidget(content)
 
     dialog._resource_rows = {}
+    dialog._resource_workers = {}
 
     def _show_status_pill(row, status_key: str, status_label: str = ""):
         new_pill = _status_pill_widget(status_key, dialog, status_label)
@@ -225,7 +228,27 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         # definitions expose separate buttons instead of making users find
         # the required pair themselves on Hugging Face.
         download_links = item.get("download_links") or []
-        if download_links:
+        auto_download = bool(item.get("auto_download_supported"))
+        download_btn = None
+        license_url = str(item.get("license_url", "") or "").strip()
+        if license_url:
+            license_btn = QPushButton("View License", dialog)
+            license_btn.clicked.connect(
+                lambda _checked=False, url=license_url: _open_url(url)
+            )
+            button_row.addWidget(license_btn)
+        if auto_download:
+            download_btn = QPushButton(
+                "Installed" if item.get("status") == "installed" else "Download & Install",
+                dialog,
+            )
+            download_btn.setObjectName("primaryBtn")
+            download_btn.setEnabled(item.get("status") != "installed")
+            download_btn.clicked.connect(
+                lambda _checked=False, rid=item["id"]: _start_download(rid)
+            )
+            button_row.addWidget(download_btn)
+        elif download_links:
             for link in download_links:
                 if not isinstance(link, dict):
                     continue
@@ -261,13 +284,73 @@ def open_resource_manager(workspace_root: str = None, parent=None,
 
         outer.addLayout(button_row)
 
+        progress_label = QLabel("", dialog)
+        progress_label.setObjectName("resourceHint")
+        progress_label.setWordWrap(True)
+        progress_label.hide()
+        outer.addWidget(progress_label)
+
         target_layout.addWidget(card)
         dialog._resource_rows[item["id"]] = {
             "item": item,
             "name_label": name_label,
             "status_pill": status_pill,
             "header_row": header_row,
+            "download_btn": download_btn,
+            "progress_label": progress_label,
         }
+
+    def _start_download(resource_id: str):
+        row = dialog._resource_rows.get(resource_id)
+        if not row or resource_id in dialog._resource_workers:
+            return
+        item = row.get("item", {})
+        if item.get("license_required"):
+            answer = QMessageBox.question(
+                dialog,
+                "Tencent HY license",
+                "HY-MT is licensed by Tencent for use outside the EU, UK, and South Korea.\n\n"
+                "By continuing, you confirm that your use is within the permitted territory "
+                "and that you accept the Tencent HY Community License. A copy will be saved "
+                "with the model.\n\nContinue download?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        button = row.get("download_btn")
+        progress_label = row.get("progress_label")
+        if button:
+            button.setEnabled(False)
+            button.setText("Downloading...")
+        if progress_label:
+            progress_label.setText("Preparing download...")
+            progress_label.show()
+        worker = ResourceDownloadWorker(workspace_root, resource_id)
+        dialog._resource_workers[resource_id] = worker
+
+        def _progress(percent: int, message: str):
+            if progress_label:
+                prefix = f"{percent}% — " if percent >= 0 else ""
+                progress_label.setText(prefix + str(message or "Downloading..."))
+
+        def _finished(_resource_id: str, error: str):
+            dialog._resource_workers.pop(resource_id, None)
+            if error:
+                if button:
+                    button.setEnabled(True)
+                    button.setText("Retry Download")
+                if progress_label:
+                    progress_label.setText("Download failed.")
+                QMessageBox.critical(dialog, "Download failed", error)
+                return
+            if progress_label:
+                progress_label.setText("Installed successfully.")
+            _refresh()
+
+        worker.progress.connect(_progress)
+        worker.finished.connect(_finished)
+        worker.start()
 
     def _make_section(title_text, expanded):
         wrapper = QFrame()
@@ -309,6 +392,10 @@ def open_resource_manager(workspace_root: str = None, parent=None,
             row["item"] = item
             status = str(item.get("status", "missing")).strip().lower()
             _show_status_pill(row, status, str(item.get("status_label", "") or ""))
+            button = row.get("download_btn")
+            if button and resource_id not in dialog._resource_workers:
+                button.setText("Installed" if status == "installed" else "Download & Install")
+                button.setEnabled(status != "installed")
 
     def _populate():
         for i in reversed(range(content_layout.count())):
@@ -319,7 +406,7 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         dialog._resource_rows = {}
 
         resources = service.list_resources()
-        cpu_items = [r for r in resources if r.get("kind") in {"sensevoice", "whisper_cpu"}]
+        cpu_items = [r for r in resources if r.get("kind") in {"sensevoice", "whisper_cpu", "translation"}]
         gpu_kinds = {"ai", "whisper", "cuda"}
         gpu_items = [r for r in resources if r.get("kind") in gpu_kinds]
         voice_items = [r for r in resources if r.get("kind") == "voice"]

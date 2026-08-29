@@ -1390,11 +1390,21 @@ class TimelineEditingMixin:
         # on Play) just hide the details without collapsing the shell.
 
     def set_inspector_collapsed(self, collapsed: bool):
-        """Collapse or expand the inspector shell. The track layer
-        inspector is always expanded - collapse is disabled.
+        """Collapse or expand the contextual inspector shell.
+
+        The approved Studio layout keeps Inspector out of the way until a
+        timeline selection needs it.  Existing selection code already calls
+        this method with ``False`` before showing a concrete editor card.
         """
-        collapsed = False
-        self._inspector_collapsed = False
+        collapsed = bool(collapsed)
+        self._inspector_collapsed = collapsed
+        # The Studio inspector is a dedicated visible panel. Legacy inspector
+        # widgets remain in the controller tree but are never shown.
+        if getattr(self, "_studio_uses_contextual_inspector", False):
+            legacy_shell = getattr(self, "subtitle_inspector_shell", None)
+            if legacy_shell is not None:
+                legacy_shell.hide()
+            return
         # Sync shell width
         try:
             self._sync_subtitle_inspector_shell_width(visible=not bool(collapsed))
@@ -1830,8 +1840,7 @@ class TimelineEditingMixin:
             # AND add a region. Requiring the user to toggle first is
             # unnecessary friction.
             blur_add_btn.setEnabled(
-                bool(getattr(self, "_optional_layer_controls_ready", False))
-                and has_video
+                has_video
                 and not is_playing
                 and not bool(getattr(self, "_filter_thumbnail_visible", False))
             )
@@ -1930,6 +1939,11 @@ class TimelineEditingMixin:
                 try:
                     regions = self._current_blur_regions_payload() if hasattr(self, "_current_blur_regions_payload") else []
                     self.timeline.sync_blur_regions(regions)
+                    # Keep the effect rendered while the user drags the
+                    # rectangle. Previously this path only updated B1 data,
+                    # while the selected layer was suppressed from MPV, so
+                    # users saw an outline but no blurred content.
+                    self.apply_preview_blur_region(regions=regions, force=True)
                     self.schedule_timeline_project_persist(blur_state=True)
                 except Exception:
                     pass

@@ -246,6 +246,7 @@ def build_start_group(gui, left_layout):
     gui.workflow_stage_badges = {}
     gui.workflow_stage_labels = {}
     stage_box = QFrame()
+    gui.workflow_stage_box = stage_box
     stage_box.setObjectName("statusCard")
     stage_box.setStyleSheet(
         "QFrame#statusCard { background-color: #11141d; border: 1px solid #1e2433; border-radius: 8px; }"
@@ -271,6 +272,7 @@ def build_start_group(gui, left_layout):
     workflow_shell_layout.addWidget(stage_box)
 
     tab_bar = QWidget()
+    gui.workflow_tab_bar = tab_bar
     tab_bar_layout = QGridLayout(tab_bar)
     tab_bar_layout.setContentsMargins(0, 0, 0, 0)
     tab_bar_layout.setHorizontalSpacing(6)
@@ -501,14 +503,14 @@ def build_start_group(gui, left_layout):
     trans_engine_layout.addWidget(trans_engine_title)
 
     gui.translation_engine_combo = QComboBox()
-    gui.translation_engine_combo.addItem("🌐 Google Translate (Free, không cần Key)", "google")
-    gui.translation_engine_combo.addItem("⚡ Google Gemini (Khuyên dùng, Free Key)", "google_ai_studio")
-    gui.translation_engine_combo.addItem("🐉 DeepSeek AI (Chuyên dịch Tu Tiên / Phim)", "deepseek")
+    gui.translation_engine_combo.addItem("🌐 Google Translate (Free, no Key needed)", "google")
+    gui.translation_engine_combo.addItem("⚡ Google Gemini (Recommended, Free Key)", "google_ai_studio")
+    gui.translation_engine_combo.addItem("💻 CapCap Local AI HY-MT (Offline, no Ollama)", "local_hymt")
+    gui.translation_engine_combo.addItem("🐉 DeepSeek AI (Great for Xianxia / Films)", "deepseek")
     gui.translation_engine_combo.addItem("🤖 ChatGPT / OpenAI", "openai")
-    gui.translation_engine_combo.addItem("💻 Ollama (Local Offline)", "ollama")
     gui.translation_engine_combo.addItem("⚙️ Custom API (OpenAI Compatible)", "custom")
 
-    trans_engine_layout.addWidget(QLabel("AI Provider / Dịch thuật"))
+    trans_engine_layout.addWidget(QLabel("AI Provider / Translation engine"))
     trans_engine_layout.addWidget(gui.translation_engine_combo)
 
     # Config panel for API Key & Model
@@ -520,11 +522,11 @@ def build_start_group(gui, left_layout):
     gui.translation_key_label = QLabel("API Key:")
     gui.translation_api_key_edit = QLineEdit()
     gui.translation_api_key_edit.setEchoMode(QLineEdit.Password)
-    gui.translation_api_key_edit.setPlaceholderText("Nhập API key tại đây...")
+    gui.translation_api_key_edit.setPlaceholderText("Enter your API key here...")
 
     gui.translation_model_label = QLabel("AI Model:")
     gui.translation_model_edit = QLineEdit()
-    gui.translation_model_edit.setPlaceholderText("Ví dụ: gemini-2.5-flash")
+    gui.translation_model_edit.setPlaceholderText("e.g. gemini-2.5-flash")
 
     gui.translation_base_url_label = QLabel("API URL:")
     gui.translation_base_url_edit = QLineEdit()
@@ -535,9 +537,48 @@ def build_start_group(gui, left_layout):
     gui.translation_link_label.setWordWrap(True)
     gui.translation_link_label.setOpenExternalLinks(True)
 
+    # Local AI model panel (shown only when local_hymt is selected)
+    gui.translation_local_panel = QWidget()
+    local_layout = QVBoxLayout(gui.translation_local_panel)
+    local_layout.setContentsMargins(0, 4, 0, 0)
+    local_layout.setSpacing(6)
+    local_layout.addWidget(QLabel("Local AI Model"))
+    gui.translation_local_model_combo = QComboBox()
+    local_layout.addWidget(gui.translation_local_model_combo)
+    gui.translation_local_model_hint = QLabel("")
+    gui.translation_local_model_hint.setObjectName("helperLabel")
+    gui.translation_local_model_hint.setWordWrap(True)
+    local_layout.addWidget(gui.translation_local_model_hint)
+    local_layout.addWidget(QLabel("Model storage folder"))
+    storage_row = QHBoxLayout()
+    gui.translation_local_storage_edit = QLineEdit()
+    gui.translation_local_storage_edit.setReadOnly(True)
+    gui.translation_local_storage_btn = QPushButton("Change folder")
+    storage_row.addWidget(gui.translation_local_storage_edit, 1)
+    storage_row.addWidget(gui.translation_local_storage_btn)
+    local_layout.addLayout(storage_row)
+    gui.translation_local_scan_btn = QPushButton("🔍  Scan for GGUF models on this PC")
+    gui.translation_local_scan_btn.setToolTip(
+        "Automatically scans all drives (C:\\, D:\\...) for .gguf files already on your machine.\n"
+        "No folder selection needed — results appear in a list once the scan finishes."
+    )
+    local_layout.addWidget(gui.translation_local_scan_btn)
+    gui.translation_local_manage_btn = QPushButton("Download Model")
+    gui.translation_local_manage_btn.setToolTip(
+        "Download the HY-MT model to your storage folder.\n"
+        "If a model is already installed, this button will show '✓ Installed — Manage Models'."
+    )
+    local_layout.addWidget(gui.translation_local_manage_btn)
+    gui.translation_local_path_label = QLabel("")
+    gui.translation_local_path_label.setObjectName("helperLabel")
+    gui.translation_local_path_label.setWordWrap(True)
+    gui.translation_local_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    local_layout.addWidget(gui.translation_local_path_label)
+    gui.translation_local_panel.hide()
+
     test_action_layout = QHBoxLayout()
     test_action_layout.setSpacing(8)
-    gui.translation_test_btn = QPushButton("Kiểm tra kết nối")
+    gui.translation_test_btn = QPushButton("Test connection")
     gui.translation_test_btn.setFixedHeight(26)
     gui.translation_test_status = QLabel("")
     gui.translation_test_status.setObjectName("helperLabel")
@@ -551,6 +592,7 @@ def build_start_group(gui, left_layout):
     trans_config_layout.addWidget(gui.translation_base_url_label)
     trans_config_layout.addWidget(gui.translation_base_url_edit)
     trans_config_layout.addWidget(gui.translation_link_label)
+    trans_config_layout.addWidget(gui.translation_local_panel)
     trans_config_layout.addLayout(test_action_layout)
 
     trans_engine_layout.addWidget(gui.translation_config_panel)
@@ -558,12 +600,12 @@ def build_start_group(gui, left_layout):
     # Style Preset for Tu Tien / Recap
     trans_style_row = QVBoxLayout()
     trans_style_row.setSpacing(4)
-    trans_style_row.addWidget(QLabel("Phong cách dịch (Style Preset)"))
+    trans_style_row.addWidget(QLabel("Translation style preset"))
     gui.translation_style_preset_combo = QComboBox()
-    gui.translation_style_preset_combo.addItem("Tiêu chuẩn / Tự nhiên (Standard)", "standard")
-    gui.translation_style_preset_combo.addItem("Recap Tu Tiên / Kiếm Hiệp (Ngắn gọn, xưng hô chuẩn)", "tutien_recap")
-    gui.translation_style_preset_combo.addItem("Anime / Manga (Trẻ trung, sinh động)", "anime")
-    gui.translation_style_preset_combo.addItem("Phim Điện Ảnh / Kịch Tính (Drama)", "drama")
+    gui.translation_style_preset_combo.addItem("Standard / Natural", "standard")
+    gui.translation_style_preset_combo.addItem("Xianxia Recap / Wuxia (concise, proper honorifics)", "tutien_recap")
+    gui.translation_style_preset_combo.addItem("Anime / Manga (casual, lively)", "anime")
+    gui.translation_style_preset_combo.addItem("Cinema / Drama (dramatic)", "drama")
     trans_style_row.addWidget(gui.translation_style_preset_combo)
     trans_engine_layout.addLayout(trans_style_row)
 

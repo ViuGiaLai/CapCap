@@ -1,12 +1,8 @@
-import json
 import random
 import time
 from urllib.parse import quote
 
 import requests
-
-from ..errors import TranslationProviderError
-
 
 class GoogleWebTranslatorProvider:
     ENDPOINTS = [

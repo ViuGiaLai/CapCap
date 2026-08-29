@@ -3,11 +3,13 @@ from importlib import import_module
 __all__ = [
     "OpenAICompatiblePolisherProvider",
     "GoogleWebTranslatorProvider",
+    "LocalGGUFTranslatorProvider",
 ]
 
 _MODULE_MAP = {
     "OpenAICompatiblePolisherProvider": ".gemini_polisher",
     "GoogleWebTranslatorProvider": ".google_web_translator",
+    "LocalGGUFTranslatorProvider": ".local_gguf_translator",
 }
 
 

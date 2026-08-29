@@ -1,4 +1,3 @@
-import json
 import os
 
 
@@ -147,6 +146,8 @@ def load_user_settings(gui):
 
     trans_engine = s.value("translation_engine", None)
     if trans_engine and hasattr(gui, "translation_engine_combo"):
+        if trans_engine == "local_qwen":
+            trans_engine = "local_hymt"
         idx = gui.translation_engine_combo.findData(trans_engine)
         if idx < 0:
             idx = gui.translation_engine_combo.findText(trans_engine)

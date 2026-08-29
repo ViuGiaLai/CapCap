@@ -5,9 +5,8 @@ from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPai
 from PySide6.QtWidgets import QApplication, QFrame, QGraphicsScene, QGraphicsView, QMenu, QPushButton
 
 
-from app.layers.base import BaseLayer, LayerType
-from app.layers.timeline import Timeline, Track, Clip
-from app.layers.dub_subtitle import DubSubtitleLayer
+from app.layers.base import LayerType
+from app.layers.timeline import Timeline, Track
 from app.runtime_paths import subprocess_hidden_kwargs
 
 

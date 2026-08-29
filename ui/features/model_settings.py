@@ -213,15 +213,16 @@ class ModelSettingsMixin:
         provider_label.setVisible(not remote_mode)
         provider_layout.addWidget(provider_label)
         provider_combo = QComboBox(dialog)
-        provider_combo.addItem("Google Translate (free, no key)", "google")
-        provider_combo.addItem("Google AI Studio", "google_ai_studio")
-        provider_combo.addItem("OpenAI", "openai")
-        provider_combo.addItem("Ollama (Local)", "ollama")
+        provider_combo.addItem("Google AI Studio (accurate, online)", "google_ai_studio")
+        provider_combo.addItem("CapCap Local AI HY-MT (offline)", "local_hymt")
+        provider_combo.addItem("Google Translate (basic)", "google")
         current_provider = (os.getenv("OPENAI_PROVIDER") or "google").strip().lower()
         if current_provider == "gemini":
             current_provider = "google_ai_studio"
-        if current_provider not in {"google", "google_ai_studio", "openai", "ollama"}:
-            current_provider = "google"
+        if current_provider == "local_qwen":
+            current_provider = "local_hymt"
+        if current_provider not in {"google", "google_ai_studio", "local_hymt"}:
+            current_provider = "google_ai_studio"
         idx = provider_combo.findData(current_provider)
         if idx >= 0:
             provider_combo.setCurrentIndex(idx)
@@ -287,10 +288,9 @@ class ModelSettingsMixin:
             model_edit.setPlaceholderText("")
             is_ai = p != "google"
             is_google_ai_studio = p == "google_ai_studio"
-            is_openai = p == "openai"
-            is_ollama = p == "ollama"
+            is_local = p == "local_hymt"
             is_google = p == "google"
-            _toggle_visible(key_section_widget, is_google_ai_studio or is_openai)
+            _toggle_visible(key_section_widget, is_google_ai_studio)
             _toggle_visible(base_url_label, not remote_mode and is_ai)
             _toggle_visible(base_url_edit, not remote_mode and is_ai)
             _toggle_visible(test_btn, not remote_mode and is_ai)
@@ -311,22 +311,19 @@ class ModelSettingsMixin:
                 if not model_edit.text().strip():
                     model_edit.setText("gemini-2.5-flash")
                 provider_hint.setText("Use a Google AI Studio Gemini API key: https://aistudio.google.com/apikey")
-            elif is_openai:
+            elif is_local:
+                from services.local_translation_config import selected_model_info
+                selected = selected_model_info()
                 model_label.setText("AI Model:")
-                key, model, base_url = _provider_values(p)
-                key_edit.setText(key)
-                model_edit.setText(model)
-                base_url_edit.setText(base_url or "https://api.openai.com/v1/")
-                if not model_edit.text().strip():
-                    model_edit.setText("gpt-4o-mini")
-                provider_hint.setText("Get an API key at https://platform.openai.com/api-keys")
-            elif p == "ollama":
-                model_label.setText("AI Model:")
-                base_url_edit.setText("http://localhost:11434/v1")
+                base_url_edit.setText(str(selected.get("path") or "Chưa chọn file GGUF"))
                 key_edit.clear()
-                model_edit.setText("gemma4:31b-cloud")
-                provider_hint.setText("Requires a running Ollama server. Default model: gemma4:31b-cloud")
-            model_edit.setReadOnly(False)
+                model_edit.setText(str(selected.get("label") or selected.get("filename") or "Local GGUF"))
+                provider_hint.setText(
+                    "Không cần Ollama/API key. Chọn model và nơi lưu trong Language > Translation Engine; "
+                    "dùng Manage Resources để tải model."
+                )
+            model_edit.setReadOnly(is_local)
+            base_url_edit.setReadOnly(is_local)
             dialog.layout().invalidate()
             dialog.adjustSize()
 
@@ -341,9 +338,19 @@ class ModelSettingsMixin:
         layout.addLayout(test_row)
 
         def test_ai_connection():
-            url = base_url_edit.text().strip()
             provider = provider_combo.currentData()
-            key = key_edit.text().strip() or ("ollama" if provider == "ollama" else "")
+            if provider == "local_hymt":
+                test_status.setText("Starting Local AI...")
+                test_status.repaint()
+                try:
+                    from services.local_translation_runtime import get_local_translation_runtime
+                    get_local_translation_runtime().ensure_ready()
+                    test_status.setText("Local AI is ready.")
+                except Exception as exc:
+                    test_status.setText(f"Failed: {exc}")
+                return
+            url = base_url_edit.text().strip()
+            key = key_edit.text().strip()
             model = model_edit.text().strip()
             if not url:
                 test_status.setText("Enter a server URL first.")
@@ -368,11 +375,7 @@ class ModelSettingsMixin:
                 )
                 test_status.setText(f"Connected: {model}")
             except Exception as e:
-                if provider == "ollama":
-                    self.log(f"[Ollama] Connection test failed: {e}")
-                    test_status.setText("Unable to connect to Ollama. Please check your connection and settings.")
-                else:
-                    test_status.setText(f"Failed: {e}")
+                test_status.setText(f"Failed: {e}")
 
         test_btn.clicked.connect(test_ai_connection)
 
@@ -512,13 +515,10 @@ class ModelSettingsMixin:
                     "GOOGLE_AI_STUDIO_MODEL": new_model or "gemini-2.5-flash",
                     "GOOGLE_AI_STUDIO_BASE_URL": new_base_url or "https://generativelanguage.googleapis.com/v1beta/openai/",
                 }
-            elif new_provider == "ollama":
+            elif new_provider == "local_hymt":
                 updates = {
-                    "AI_POLISHER_PROVIDER": "ollama",
-                    "OPENAI_PROVIDER": "ollama",
-                    "OPENAI_API_KEY": "ollama",
-                    "OPENAI_MODEL": new_model,
-                    "OPENAI_BASE_URL": new_base_url or "http://localhost:11434/v1",
+                    "AI_POLISHER_PROVIDER": "local_hymt",
+                    "OPENAI_PROVIDER": "local_hymt",
                 }
             else:
                 updates = {

@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTextEdit,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -849,9 +848,14 @@ def build_preview_panel(gui):
     gui.play_btn.setFixedSize(34, 32)
     gui.stop_btn.setFixedSize(34, 32)
     gui.preview_btn.setFixedSize(34, 32)
+    for button in (gui.play_btn, gui.stop_btn, gui.preview_btn):
+        button.setObjectName("studioPreviewTransportButton")
 
-    gui.blur_add_btn.setToolTip("Add a blur region")
-    gui.blur_add_btn.setFixedSize(44, 32)
+    gui.blur_add_btn.setToolTip(
+        "Add a blur region. Drag and resize the frame over any subtitle or area to hide."
+    )
+    gui.blur_add_btn.setFixedHeight(32)
+    gui.blur_add_btn.setMinimumWidth(52)
     gui.blur_add_btn.setEnabled(False)
 
     gui.ocr_region_btn.setToolTip("Edit OCR subtitle region")
@@ -887,7 +891,8 @@ def build_preview_panel(gui):
     gui.blur_area_btn.setVisible(False)
     # Dedicated Logo / Watermark button (beside the Blur button)
     gui.add_logo_btn = QPushButton("Logo")
-    gui.add_logo_btn.setFixedSize(44, 32)
+    gui.add_logo_btn.setFixedHeight(32)
+    gui.add_logo_btn.setMinimumWidth(54)
     gui.add_logo_btn.setEnabled(False)
     gui.add_logo_btn.setToolTip("Add a logo or watermark image to the video")
     gui.add_logo_btn.clicked.connect(
@@ -896,19 +901,23 @@ def build_preview_panel(gui):
     # Dedicated Mask button (beside the Logo button). Adds a new
     # rectangular mask to the M1 track.
     gui.add_mask_btn = QPushButton("Mask")
-    gui.add_mask_btn.setFixedSize(44, 32)
+    gui.add_mask_btn.setFixedHeight(32)
+    gui.add_mask_btn.setMinimumWidth(56)
     gui.add_mask_btn.setEnabled(False)
     gui.add_mask_btn.setToolTip("Add a rectangular mask to the video")
     gui.add_mask_btn.clicked.connect(
         lambda: gui.on_add_timeline_layer("mask") if hasattr(gui, "on_add_timeline_layer") else None
     )
     gui.add_text_btn = QPushButton("Text")
-    gui.add_text_btn.setFixedSize(44, 32)
+    gui.add_text_btn.setFixedHeight(32)
+    gui.add_text_btn.setMinimumWidth(52)
     gui.add_text_btn.setEnabled(False)
     gui.add_text_btn.setToolTip("Add editable text to the video")
     gui.add_text_btn.clicked.connect(
         lambda: gui.on_add_timeline_layer("text") if hasattr(gui, "on_add_timeline_layer") else None
     )
+    for button in (gui.blur_add_btn, gui.add_logo_btn, gui.add_mask_btn, gui.add_text_btn, gui.ocr_translator_btn):
+        button.setObjectName("studioPreviewEffectButton")
     blur_group.addWidget(gui.blur_add_btn)
     blur_group.addWidget(gui.add_logo_btn)
     blur_group.addWidget(gui.add_mask_btn)
@@ -1040,6 +1049,8 @@ def build_preview_panel(gui):
     gui.timeline_delete_btn.setFixedHeight(26)
     gui.timeline_delete_btn.setMinimumWidth(60)
     gui.timeline_delete_btn.setEnabled(False)
+    for button in (gui.timeline_undo_btn, gui.timeline_redo_btn, gui.timeline_split_btn, gui.timeline_delete_btn):
+        button.setObjectName("studioTimelineButton")
     gui.timeline_undo_btn.clicked.connect(gui.undo_last_timeline_timing_edit)
     gui.timeline_redo_btn.clicked.connect(gui.redo_last_timeline_timing_edit)
     gui.timeline_split_btn.clicked.connect(gui.split_selected_timeline_segment)
@@ -1050,6 +1061,7 @@ def build_preview_panel(gui):
     gui.timeline_selection_mode_btn.setFixedHeight(26)
     gui.timeline_selection_mode_btn.setMinimumWidth(60)
     gui.timeline_selection_mode_btn.setToolTip("Enable Selection Range Mode")
+    gui.timeline_selection_mode_btn.setObjectName("studioTimelineButton")
     gui.timeline_selection_mode_btn.setStyleSheet(
         "QPushButton:checked { background:#1e2a40; border-color:#3b82f6; color:#60a5fa; }"
     )
@@ -1103,6 +1115,7 @@ def build_preview_panel(gui):
     gui.timeline_layers_btn.setFixedHeight(26)
     gui.timeline_layers_btn.setMinimumWidth(64)
     gui.timeline_layers_btn.setToolTip("Show or hide layers on the timeline only")
+    gui.timeline_layers_btn.setObjectName("studioTimelineButton")
     gui.timeline_layers_menu = QMenu(gui.timeline_layers_btn)
     gui.timeline_layers_menu.setStyleSheet(
         "QMenu { background: #141824; color: #e2e8f0; border: 1px solid #2a3347; padding: 4px; border-radius: 6px; }"
@@ -1129,6 +1142,8 @@ def build_preview_panel(gui):
     gui.timeline_zoom_in_btn.setFixedSize(26, 26)
     gui.timeline_zoom_reset_btn = QPushButton("Fit")
     gui.timeline_zoom_reset_btn.setFixedSize(36, 26)
+    for button in (gui.timeline_zoom_out_btn, gui.timeline_zoom_in_btn, gui.timeline_zoom_reset_btn):
+        button.setObjectName("studioTimelineButton")
     gui.timeline_zoom_out_btn.clicked.connect(gui.timeline.zoom_out)
     gui.timeline_zoom_in_btn.clicked.connect(gui.timeline.zoom_in)
     gui.timeline_zoom_reset_btn.clicked.connect(gui.timeline.reset_zoom)
@@ -1138,6 +1153,7 @@ def build_preview_panel(gui):
     gui.add_layer_btn.setMinimumWidth(68)
     gui.add_layer_btn.setToolTip("Add a new layer")
     gui.add_layer_btn.setEnabled(False)
+    gui.add_layer_btn.setObjectName("studioTimelineAddButton")
     gui._layer_menu = QMenu(gui.add_layer_btn)
     gui._layer_menu.setStyleSheet(
         "QMenu { background: #141824; color: #e2e8f0; border: 1px solid #2a3347; padding: 4px; border-radius: 6px; }"

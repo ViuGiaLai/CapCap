@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from app.layers.base import LayerType
-from app.layers.dub_subtitle import DubSubtitleLayer
 from app.layers.audio import AudioLayer
+from app.layers.base import LayerType
 from app.layers.blur import BlurLayer
+from app.layers.dub_subtitle import DubSubtitleLayer
 from app.layers.timeline import Timeline, Track
 
 
@@ -270,6 +269,39 @@ def sync_blur_regions_to_layers(
     # Keep B1 rows the same compact height as M1/L1 in the editor.
     blur_track = find_or_create_track(timeline, "B1", LayerType.BLUR, 60)
     blur_track.height = 60
+    existing_layers = list(blur_track.layers)
+
+    # Moving a region emits continuously. Preserve the existing layer object
+    # (especially its id, timing, selection, and inspector settings) while
+    # only its geometry changes. Rebuilding the whole track on every mouse
+    # move invalidated the selected B1 layer and made Blur impossible to edit
+    # reliably.
+    if len(existing_layers) == len(blur_regions) and all(
+        isinstance(layer, BlurLayer) for layer in existing_layers
+    ):
+        for index, (layer, br) in enumerate(zip(existing_layers, blur_regions)):
+            layer.name = str(br.get("name", layer.name or f"Blur {index + 1}"))
+            layer.position_x = float(br.get("x", br.get("position_x", layer.position_x)))
+            layer.position_y = float(br.get("y", br.get("position_y", layer.position_y)))
+            layer.width = float(br.get("width", layer.width))
+            layer.height = float(br.get("height", layer.height))
+            # Geometry-only preview events do not carry timing/style. Keep
+            # those values unless an explicit payload provides them.
+            if "start" in br:
+                layer.start = float(br["start"])
+            if "end" in br:
+                layer.end = float(br["end"])
+            if "blur_strength" in br or "intensity" in br:
+                layer.blur_strength = float(br.get("blur_strength", br.get("intensity", layer.blur_strength)))
+            if "blur_opacity" in br:
+                layer.blur_opacity = float(br["blur_opacity"])
+            if "pixelate" in br:
+                layer.pixelate = bool(br["pixelate"])
+            if "pixelate_size" in br:
+                layer.pixelate_size = int(br["pixelate_size"])
+            layer.z_index = index
+        return
+
     blur_track.layers.clear()
 
     for i, br in enumerate(blur_regions):
@@ -294,8 +326,8 @@ def ensure_v1_a1_tracks(timeline: Timeline, video_path: str, duration: float) ->
     """Ensure V1 (video) and A1 (audio) tracks exist after video import."""
     if duration <= 0:
         return
-    from app.layers.video import VideoLayer
     from app.layers.transform import Transform
+    from app.layers.video import VideoLayer
 
     v1 = find_or_create_track(timeline, "V1 Video", LayerType.VIDEO, 80)
     v1.visible = True

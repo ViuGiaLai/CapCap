@@ -6,7 +6,7 @@ import time
 import shutil
 import re
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QMetaObject, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -1098,7 +1098,6 @@ class LauncherWindow(QDialog):
 
     def _on_split_video(self):
         from PySide6.QtWidgets import QMessageBox, QProgressDialog, QInputDialog
-        from PySide6.QtCore import QThread, Signal
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Long Video to Split", "",
             "Video Files (*.mp4 *.mkv *.avi *.mov *.webm);;All Files (*)"

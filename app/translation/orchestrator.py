@@ -8,6 +8,7 @@ from .models import TranslationResult
 from .prompt_loader import render_prompt
 from .providers import (
     GoogleWebTranslatorProvider,
+    LocalGGUFTranslatorProvider,
     OpenAICompatiblePolisherProvider,
 )
 from .srt_utils import clone_with_texts, parse_srt, split_text_batches, to_srt, validate_texts
@@ -77,18 +78,22 @@ class TranslationOrchestrator:
                         used_fallback=bool(warnings),
                     )
                 except Exception as exc:
-                    if isinstance(exc, AIBatchTranslationError):
-                        msg = "AI batch translation failed. Falling back to Google Translate."
-                    else:
-                        msg = "AI Provider is unavailable. Falling back to Google Translate..."
-                    print(f"[AI Translation] WARNING: {msg} ({exc})")
-                    warnings.append(msg)
+                    return TranslationResult(
+                        success=False,
+                        errors=[f"{self._describe_ai_provider(provider_type)} failed: {exc}"],
+                        warnings=warnings,
+                        stage="ai_direct",
+                        primary_provider=provider_type,
+                    )
             else:
                 selected_provider = str(os.getenv("OPENAI_PROVIDER") or "google").strip().lower()
                 if selected_provider != "google":
-                    msg = "AI Provider is unavailable. Falling back to Google Translate..."
-                    print(f"[AI Translation] WARNING: {msg}")
-                    warnings.append(msg)
+                    return TranslationResult(
+                        success=False,
+                        errors=[f"AI provider '{selected_provider}' is not configured."],
+                        stage="configuration",
+                        primary_provider=selected_provider,
+                    )
                 else:
                     print("[AI Translation] Google Translate selected.")
 
@@ -225,12 +230,12 @@ class TranslationOrchestrator:
         provider_type = configured_provider
         if provider_type in {"gemini", "google"}:  # backward compatibility
             provider_type = "google_ai_studio"
+        if provider_type == "local_qwen":
+            provider_type = "local_hymt"
+        if provider_type == "local_hymt":
+            return provider_type, LocalGGUFTranslatorProvider()
         definitions = {
             "google_ai_studio": ("Google AI Studio (Gemini)", "GOOGLE_AI_STUDIO", "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-flash"),
-            "deepseek": ("DeepSeek AI", "DEEPSEEK", "https://api.deepseek.com/v1", "deepseek-chat"),
-            "openai": ("OpenAI", "OPENAI", "https://api.openai.com/v1/", "gpt-4o-mini"),
-            "ollama": ("Ollama (Local)", "OLLAMA", "http://localhost:11434/v1", "qwen2.5:7b"),
-            "custom": ("Custom OpenAI API", "CUSTOM_AI", "https://api.openai.com/v1/", "gpt-4o-mini"),
         }
         if provider_type not in definitions:
             provider_type = "google_ai_studio"
@@ -249,10 +254,7 @@ class TranslationOrchestrator:
     def _describe_ai_provider(self, provider_type: str) -> str:
         names = {
             "google_ai_studio": "Google Gemini",
-            "deepseek": "DeepSeek AI",
-            "openai": "OpenAI",
-            "ollama": "Ollama",
-            "custom": "Custom AI",
+            "local_hymt": "CapCap Local AI HY-MT",
         }
         return f"{names.get(provider_type, 'AI')} ({getattr(self._resolve_ai_provider()[1], 'model_name', '')})"
 
@@ -276,10 +278,12 @@ class TranslationOrchestrator:
         # on a cue count though: long subtitle files can still exceed a
         # provider's practical context/output budget.  The same boundaries
         # are used for source and draft text, preventing misaligned rewrites.
+        is_local = provider_type == "local_hymt"
         batches, full_context_request = self._build_ai_batches(
             source_texts=source_texts,
             translated_texts=translated_texts,
-            requested_max_segments=polish_batch_size,
+            requested_max_segments=min(polish_batch_size, 48) if is_local else polish_batch_size,
+            force_ordered=is_local,
         )
         if not full_context_request:
             print(
@@ -294,7 +298,7 @@ class TranslationOrchestrator:
                 src_lang=src_lang,
                 target_lang=target_lang,
                 style_instruction=style_instruction,
-                max_workers=1 if full_context_request else min(len(batches), 4),
+                max_workers=1 if is_local or full_context_request else min(len(batches), 4),
             )
         except TranslationValidationError as exc:
             if not full_context_request:

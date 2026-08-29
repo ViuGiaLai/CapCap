@@ -1,6 +1,6 @@
 import os
 import shutil
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication, QMessageBox
 try:
     from utils.display_utils import cleanup_temp_preview_files as cleanup_temp_preview_files_impl, show_processed_files as show_processed_files_impl
