@@ -9,7 +9,7 @@ VIUStudio is a Windows desktop video-localization editor for creating Vietnamese
 
 We're continuously improving VIUStudio.
 
-[View the development roadmap](https://github.com/users/notepower2k1/projects/2)
+[View the development roadmap](https://github.com/users/ViuGiaLai/projects/2)
 
 ## Highlights
 
@@ -29,7 +29,7 @@ We're continuously improving VIUStudio.
 ## Run from Source
 
 ```bash
-git clone https://github.com/notepower2k1/VIUStudio.git
+git clone https://github.com/ViuGiaLai/VIUStudio.git
 cd VIUStudio
 python -m venv venv
 venv\Scripts\activate
