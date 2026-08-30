@@ -685,6 +685,7 @@ def build_start_group(gui, left_layout):
     gui.source_video_list.setObjectName("sourceVideoList")
     gui.source_video_list.setMaximumHeight(118)
     gui.source_video_list.currentRowChanged.connect(gui._update_source_video_buttons)
+    gui.source_video_list.itemClicked.connect(lambda _item: gui.select_source_video_in_timeline())
     gui.source_video_list.itemDoubleClicked.connect(lambda _item: gui.select_source_video_in_timeline())
     source_layout.addWidget(gui.source_video_list)
     source_buttons = QHBoxLayout()

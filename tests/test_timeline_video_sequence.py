@@ -4,6 +4,8 @@ import tempfile
 import unittest
 import sys
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app"))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
@@ -55,6 +57,95 @@ class TimelineVideoSequenceTests(unittest.TestCase):
         self.assertEqual(clips[0].source_duration, 6.0)
         self.assertEqual(clips[1].timeline_start, 3.0)
         self.assertEqual(timeline.duration, 11.0)
+
+    def test_preview_seek_uses_actual_player_source_not_stale_cache(self):
+        """A stale preview cache must never seek V1 using V2 local time."""
+        from ui.features.multi_video_timeline import MultiVideoTimelineMixin
+
+        class _Player:
+            def __init__(self):
+                self._source_path = ""
+                self.position_ms = 0
+
+            def setSource(self, url):
+                self._source_path = url.toLocalFile()
+
+            def setPosition(self, position):
+                self.position_ms = int(position)
+
+        class _TimelineWidget:
+            def __init__(self, model):
+                self._timeline = model
+                self._playhead = 0.0
+
+            def set_playhead(self, seconds):
+                self._playhead = float(seconds)
+
+            def set_position(self, position):
+                self._playhead = float(position) / 1000.0
+
+        class _Gui(MultiVideoTimelineMixin):
+            def __init__(self, model):
+                self.timeline = _TimelineWidget(model)
+                self.media_player = _Player()
+                self._timeline_preview_source = ""
+                self._timeline_global_position_ms = 0
+
+            def update_duration_label(self, *_args):
+                pass
+
+            def refresh_timed_layer_preview(self, *_args):
+                pass
+
+            def update_playback_subtitle_highlight(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            first_path = os.path.join(temp_dir, "first.fixture")
+            second_path = os.path.join(temp_dir, "second.fixture")
+            for path in (first_path, second_path):
+                with open(path, "wb"):
+                    pass
+            timeline = Timeline()
+            append_video(timeline, first_path, 10.0)
+            append_video(timeline, second_path, 10.0)
+            gui = _Gui(timeline)
+            gui._timeline_preview_source = second_path  # stale optimistic cache
+            gui.media_player._source_path = first_path  # player was reset by another preview path
+
+            gui.seek_timeline_video(12.5)
+
+            self.assertEqual(os.path.abspath(gui.media_player._source_path), os.path.abspath(second_path))
+            self.assertEqual(gui.media_player.position_ms, 2500)
+
+    def test_clicking_video_clip_emits_global_timeline_seek(self):
+        import importlib.util
+
+        from PySide6.QtWidgets import QApplication
+
+        timeline_path = os.path.join(
+            os.path.dirname(__file__), "..", "ui", "views", "editor", "timeline.py"
+        )
+        spec = importlib.util.spec_from_file_location("test_editor_timeline", timeline_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        EditorTimeline = module.EditorTimeline
+
+        app = QApplication.instance() or QApplication([])
+        widget = EditorTimeline()
+        model = Timeline()
+        clip = append_video(model, "episode.mp4", 20.0)
+        widget._timeline = model
+        widget._duration = 20.0
+        requested = []
+        widget.seekRequestedMs.connect(requested.append)
+
+        widget._seek_to_video_layer_click(clip, 12.5)
+
+        self.assertEqual(requested, [12500])
+        self.assertAlmostEqual(widget._playhead, 12.5)
+        widget.deleteLater()
+        app.processEvents()
 
 
 class TimelineSequenceExportTests(unittest.TestCase):

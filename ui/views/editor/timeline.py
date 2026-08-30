@@ -7,7 +7,6 @@ from PySide6.QtWidgets import QApplication, QFrame, QGraphicsScene, QGraphicsVie
 
 from app.layers.base import LayerType
 from app.layers.timeline import Timeline, Track
-from app.runtime_paths import subprocess_hidden_kwargs
 
 
 class EditorTimeline(QGraphicsView):
@@ -1795,6 +1794,23 @@ class EditorTimeline(QGraphicsView):
                     return track, layer
         return None, None
 
+    def _seek_to_video_layer_click(self, layer, seconds: float) -> None:
+        """Navigate preview when the user clicks a V1/Vn clip body.
+
+        A clip body is still draggable; this only makes a simple click an
+        explicit preview seek.  It also works on a locked track, because
+        locking must prevent edits, not inspection or playback navigation.
+        """
+        layer_type = str(getattr(getattr(layer, "type", ""), "value", getattr(layer, "type", ""))).lower()
+        if layer_type != "video":
+            return
+        start = max(0.0, float(getattr(layer, "start", 0.0) or 0.0))
+        end = max(start, float(self._get_effective_layer_end(layer)))
+        target = min(end, max(start, float(seconds)))
+        self.set_playhead(target)
+        self.seekRequested.emit(target)
+        self.seekRequestedMs.emit(int(target * 1000))
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             pos = event.position()
@@ -1887,6 +1903,10 @@ class EditorTimeline(QGraphicsView):
 
             elif lid:
                 track, layer = self._find_layer_by_id(lid)
+                # Clicking inside a video clip must preview the exact source
+                # at this global Timeline time. Previously V1 clicks only
+                # selected the layer, leaving the preview on the first video.
+                self._seek_to_video_layer_click(layer, self._pos_to_time(pos.x(), scroll_x))
                 if bool(getattr(track, "locked", False)):
                     self._selected_layer_id = lid
                     self.layerSelected.emit(lid)

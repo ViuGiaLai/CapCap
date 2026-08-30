@@ -72,12 +72,17 @@ class MultiVideoTimelineMixin:
         widget = getattr(self, "source_video_list", None)
         row = widget.currentRow() if widget is not None else -1
         count = widget.count() if widget is not None else 0
-        if hasattr(self, "move_up_source_video_btn"):
-            self.move_up_source_video_btn.setEnabled(row > 0)
-        if hasattr(self, "move_down_source_video_btn"):
-            self.move_down_source_video_btn.setEnabled(0 <= row < count - 1)
-        if hasattr(self, "remove_source_video_btn"):
-            self.remove_source_video_btn.setEnabled(row >= 0 and count > 1)
+        # The Media UI owns these controls.  Keep the names aligned with the
+        # widgets created in start_panel so reorder/remove are available as
+        # soon as a source is selected.
+        for name, enabled in (
+            ("source_video_up_btn", row > 0),
+            ("source_video_down_btn", 0 <= row < count - 1),
+            ("source_video_remove_btn", row >= 0 and count > 1),
+        ):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(enabled)
 
     def add_videos_to_timeline(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
@@ -154,9 +159,14 @@ class MultiVideoTimelineMixin:
         clip, local_seconds = resolve_timeline_time(model, global_seconds)
         if clip is None or not os.path.isfile(clip.source):
             return
+        # The cached source is only a hint.  Other preview features can swap
+        # the player source asynchronously, so trust the player's real
+        # source as well.  Without this check a seek on V2 could calculate
+        # V2's local timestamp but apply it to V1.
         current = os.path.abspath(str(getattr(self, "_timeline_preview_source", "") or ""))
+        player_source = os.path.abspath(str(getattr(self.media_player, "_source_path", "") or ""))
         wanted = os.path.abspath(clip.source)
-        if current != wanted:
+        if current != wanted or player_source != wanted:
             self._timeline_preview_source = wanted
             self.media_player.setSource(QUrl.fromLocalFile(wanted))
             if hasattr(self, "sync_preview_audio_track_to_output"):
@@ -188,8 +198,17 @@ class MultiVideoTimelineMixin:
         preview_source = os.path.abspath(str(getattr(self, "last_preview_video_path", "") or ""))
         if preview_source and current_source == preview_source:
             return False
-        source = os.path.abspath(str(getattr(self, "_timeline_preview_source", "") or ""))
-        clip = next((item for item in clips if os.path.abspath(item["source"]) == source), clips[0])
+        cached_source = os.path.abspath(str(getattr(self, "_timeline_preview_source", "") or ""))
+        # Position callbacks originate from the active player source.  Prefer
+        # it over the cache so the global playhead cannot jump back to V1
+        # after a source switch.
+        source = current_source or cached_source
+        clip = next((item for item in clips if os.path.abspath(item["source"]) == source), None)
+        if clip is None:
+            clip = next((item for item in clips if os.path.abspath(item["source"]) == cached_source), None)
+        if clip is None:
+            return False
+        self._timeline_preview_source = os.path.abspath(clip["source"])
         local_seconds = max(0.0, float(local_position_ms) / 1000.0)
         global_seconds = float(clip["timeline_start"]) + max(
             0.0, (local_seconds - float(clip["source_start"])) / max(0.01, float(clip["speed"]))
