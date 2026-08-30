@@ -14,7 +14,7 @@ def log_message(gui, message: str):
     # None. Logging must never interrupt media/timeline initialization just
     # because there is no attached console.
     # Prefer the active stream. ``ui.gui`` replaces it with a tee that writes
-    # the packaged application's persistent CapCap\temp\capcap_runtime.log.
+    # the packaged application's persistent VIUStudio\temp\viustudio_runtime.log.
     # Writing to ``__stdout__`` first bypassed that file entirely.
     stream = getattr(sys, "stdout", None) or getattr(sys, "__stdout__", None)
     if stream is not None:

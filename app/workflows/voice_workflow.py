@@ -10,7 +10,7 @@ from translation import render_prompt
 
 # Force-load from app/utils/ (ui/utils/ may shadow it)
 _vpu_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils", "voice_preview_utils.py")
-_vpu_spec = importlib.util.spec_from_file_location("capcap_voice_preview_utils", _vpu_path)
+_vpu_spec = importlib.util.spec_from_file_location("viustudio_voice_preview_utils", _vpu_path)
 _vpu = importlib.util.module_from_spec(_vpu_spec)
 _vpu_spec.loader.exec_module(_vpu)
 clamp_requested_speed = _vpu.clamp_requested_speed
@@ -81,7 +81,7 @@ class VoiceWorkflow:
     MAX_TTS_WORKERS = 6
     # Piper synthesis uses the Python piper library in-process, so threads can
     # share the loaded model without GIL contention on the ONNX inference side.
-    # 6 workers for a 12-core machine; override with CAPCAP_PIPER_TTS_WORKERS env.
+    # 6 workers for a 12-core machine; override with VIUSTUDIO_PIPER_TTS_WORKERS env.
     PIPER_TTS_WORKERS = 6
     AI_REWRITE_RATIO = 1.05
     SMART_RETRY_RATIO = 1.15
@@ -1261,7 +1261,7 @@ class VoiceWorkflow:
         if pending_jobs:
             pending_providers = {self._voice_provider(str(job["voice_name"])) for job in pending_jobs}
             if pending_providers == {"piper"}:
-                configured_workers = int(os.getenv("CAPCAP_PIPER_TTS_WORKERS", self.PIPER_TTS_WORKERS) or self.PIPER_TTS_WORKERS)
+                configured_workers = int(os.getenv("VIUSTUDIO_PIPER_TTS_WORKERS", self.PIPER_TTS_WORKERS) or self.PIPER_TTS_WORKERS)
                 cpu_count = os.cpu_count() or 4
                 if len(pending_jobs) >= 500:
                     long_project_workers = min(configured_workers, max(8, cpu_count - 2))

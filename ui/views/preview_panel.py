@@ -206,7 +206,7 @@ class OcrRegionOverlay(QWidget):
         if not self._is_requested_visible():
             self.hide()
             return
-        cpu_mode = os.getenv("CAPCAP_DEVICE", "cuda").strip().lower() == "cpu"
+        cpu_mode = os.getenv("VIUSTUDIO_DEVICE", "cuda").strip().lower() == "cpu"
         engine = os.getenv("TRANSCRIPTION_ENGINE", "sensevoice" if cpu_mode else "whisper").strip().lower()
         alternate_ocr_active = bool(getattr(self._main_window, "_alternate_ocr_range_pending", None))
         if engine != "ocr" and not alternate_ocr_active:

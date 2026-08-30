@@ -34,7 +34,7 @@ def _acquire_single_instance() -> bool:
         # A stable name makes separate launches of the packaged EXE share the
         # same kernel mutex, while avoiding the Global namespace's permission
         # requirements on locked-down Windows accounts.
-        name = "Local\\CapCap.SingleInstance"
+        name = "Local\\VIUStudio.SingleInstance"
         handle = kernel32.CreateMutexW(None, False, name)
         if not handle:
             return True
@@ -50,7 +50,7 @@ from PySide6.QtWidgets import QApplication
 # Keep the worker entrypoint before the GUI import.  In a windowed PyInstaller
 # build importing main_window first can initialize Qt/UI resources and hide the
 # actual worker startup error before the remote API server is reached.
-if __name__ == "__main__" and ("--worker-server" in sys.argv or os.getenv("CAPCAP_RUN_REMOTE_API_SERVER") == "1"):
+if __name__ == "__main__" and ("--worker-server" in sys.argv or os.getenv("VIUSTUDIO_RUN_REMOTE_API_SERVER") == "1"):
     from remote_api_server import main as remote_api_server_main
 
     remote_api_server_main()
@@ -82,9 +82,9 @@ class _RuntimeLogCollector:
             )
             log_dir = os.path.join(root, "temp")
             os.makedirs(log_dir, exist_ok=True)
-            self._file_path = os.path.join(log_dir, "capcap_runtime.log")
+            self._file_path = os.path.join(log_dir, "viustudio_runtime.log")
             with open(self._file_path, "w", encoding="utf-8") as handle:
-                handle.write("[CapCap] Runtime log started.\n")
+                handle.write("[VIUStudio] Runtime log started.\n")
         except OSError:
             self._file_path = ""
 

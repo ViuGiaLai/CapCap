@@ -20,7 +20,7 @@ from app.services.auto_recap_engine import AutoRecapConfig
 
 
 class AutoRecapSettingsDialog(QDialog):
-    """Consumer-focused Settings Dialog for CapCap Auto Edit Recap."""
+    """Consumer-focused Settings Dialog for VIUStudio Auto Edit Recap."""
 
     config_changed = Signal(object)
 

@@ -1,4 +1,4 @@
-﻿name: Build and Release CapCap
+﻿name: Build and Release VIUStudio
 
 on:
   push:
@@ -61,7 +61,7 @@ jobs:
           # Download Piper base voice models
           try {
             $piperZip = "$env:TEMP\piper.zip"
-            Invoke-WebRequest -Uri "https://huggingface.co/Hacht/CapCapResource/resolve/main/piper.zip" -OutFile $piperZip -TimeoutSec 120
+            Invoke-WebRequest -Uri "https://huggingface.co/Hacht/VIUStudioResource/resolve/main/piper.zip" -OutFile $piperZip -TimeoutSec 120
             if (Test-Path $piperZip) {
               Expand-Archive -Path $piperZip -DestinationPath "models/piper" -Force
             }
@@ -74,8 +74,8 @@ jobs:
       - name: Build with PyInstaller
         shell: pwsh
         run: |
-          $env:CAPCAP_WINDOWED_BUILD = "1"
-          pyinstaller --noconfirm CapCap.spec
+          $env:VIUSTUDIO_WINDOWED_BUILD = "1"
+          pyinstaller --noconfirm VIUStudio.spec
 
       - name: Install Inno Setup
         shell: pwsh
@@ -88,14 +88,14 @@ jobs:
           $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "1.0.0" }
           $cleanVersion = $tag.TrimStart("v")
           $env:APP_VERSION = $cleanVersion
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\CapCap_setup.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\VIUStudio_setup.iss
 
       - name: Create Release Zip Archive (Portable)
         shell: pwsh
         run: |
           $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "latest" }
-          $zipName = "dist\CapCap-$tag-Windows-Portable.zip"
-          Compress-Archive -Path "dist\CapCap\*" -DestinationPath $zipName -Force
+          $zipName = "dist\VIUStudio-$tag-Windows-Portable.zip"
+          Compress-Archive -Path "dist\VIUStudio\*" -DestinationPath $zipName -Force
           Write-Host "Created portable archive: $zipName"
 
       - name: Publish GitHub Release

@@ -286,26 +286,26 @@ class FilterSubtitleStyleMixin:
 
     @staticmethod
     def _test_remote_api_connection(base_url: str, token: str) -> dict:
-        previous_url = os.environ.get("CAPCAP_REMOTE_API_URL", "")
-        previous_token = os.environ.get("CAPCAP_REMOTE_API_TOKEN", "")
+        previous_url = os.environ.get("VIUSTUDIO_REMOTE_API_URL", "")
+        previous_token = os.environ.get("VIUSTUDIO_REMOTE_API_TOKEN", "")
         try:
-            os.environ["CAPCAP_REMOTE_API_URL"] = (base_url or "").strip()
+            os.environ["VIUSTUDIO_REMOTE_API_URL"] = (base_url or "").strip()
             if token:
-                os.environ["CAPCAP_REMOTE_API_TOKEN"] = token.strip()
+                os.environ["VIUSTUDIO_REMOTE_API_TOKEN"] = token.strip()
             else:
-                os.environ.pop("CAPCAP_REMOTE_API_TOKEN", None)
+                os.environ.pop("VIUSTUDIO_REMOTE_API_TOKEN", None)
             from remote_api import remote_api_get
 
             return remote_api_get("/health", timeout=10)
         finally:
             if previous_url:
-                os.environ["CAPCAP_REMOTE_API_URL"] = previous_url
+                os.environ["VIUSTUDIO_REMOTE_API_URL"] = previous_url
             else:
-                os.environ.pop("CAPCAP_REMOTE_API_URL", None)
+                os.environ.pop("VIUSTUDIO_REMOTE_API_URL", None)
             if previous_token:
-                os.environ["CAPCAP_REMOTE_API_TOKEN"] = previous_token
+                os.environ["VIUSTUDIO_REMOTE_API_TOKEN"] = previous_token
             else:
-                os.environ.pop("CAPCAP_REMOTE_API_TOKEN", None)
+                os.environ.pop("VIUSTUDIO_REMOTE_API_TOKEN", None)
 
     def _highlight_color_hex(self) -> str:
         mapping = {

@@ -39,7 +39,7 @@ class RecapBenchmarkMetrics:
         )
         return f"""
 ================================================================================
-📊 CapCap Auto Edit Recap Benchmark Report
+📊 VIUStudio Auto Edit Recap Benchmark Report
 ================================================================================
 ⏱️ Stage Timings:
   • Stage 1 (Analyzing Video)     : {self.analysis_time_sec:.3f} s

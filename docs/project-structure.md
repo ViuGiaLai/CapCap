@@ -1,7 +1,7 @@
 # Project Structure
 
 ```text
-CapCap/
+VIUStudio/
 ├── ui/
 │   ├── gui.py                 # Application entry point
 │   ├── main_window.py         # Main-window behavior and signal handling

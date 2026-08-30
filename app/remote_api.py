@@ -9,15 +9,15 @@ DEFAULT_REMOTE_API_URL = "http://127.0.0.1:8765"
 
 
 def remote_api_base_url() -> str:
-    return str(os.getenv("CAPCAP_REMOTE_API_URL", DEFAULT_REMOTE_API_URL) or DEFAULT_REMOTE_API_URL).strip().rstrip("/")
+    return str(os.getenv("VIUSTUDIO_REMOTE_API_URL", DEFAULT_REMOTE_API_URL) or DEFAULT_REMOTE_API_URL).strip().rstrip("/")
 
 
 def remote_api_token() -> str:
-    return str(os.getenv("CAPCAP_REMOTE_API_TOKEN", "") or "").strip()
+    return str(os.getenv("VIUSTUDIO_REMOTE_API_TOKEN", "") or "").strip()
 
 
 def remote_api_timeout_seconds() -> int:
-    raw = str(os.getenv("CAPCAP_REMOTE_API_TIMEOUT", "600") or "600").strip()
+    raw = str(os.getenv("VIUSTUDIO_REMOTE_API_TIMEOUT", "600") or "600").strip()
     try:
         return max(15, int(raw))
     except Exception:
@@ -28,7 +28,7 @@ def remote_api_headers() -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     token = remote_api_token()
     if token:
-        headers["X-CapCap-Token"] = token
+        headers["X-VIUStudio-Token"] = token
     return headers
 
 

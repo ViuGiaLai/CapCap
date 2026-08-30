@@ -139,7 +139,7 @@ class ModelSettingsMixin:
         whisper_combo = QComboBox(dialog)
         whisper_combo.addItem("Base", "base")
         whisper_combo.addItem("Small (Fast)", "small")
-        if os.environ.get("CAPCAP_DEVICE", "cuda").strip().lower() == "cuda":
+        if os.environ.get("VIUSTUDIO_DEVICE", "cuda").strip().lower() == "cuda":
             whisper_combo.addItem("Medium (Auto)", "medium")
         current_whisper = str(getattr(self, "selected_whisper_model_name", "auto") or "auto").strip().lower()
         if current_whisper == "auto":
@@ -162,7 +162,7 @@ class ModelSettingsMixin:
         remote_url_layout = QVBoxLayout()
         remote_url_label = QLabel("PC API URL:")
         remote_url_edit = QLineEdit(dialog)
-        remote_url_edit.setText(os.getenv("CAPCAP_REMOTE_API_URL", "http://127.0.0.1:8765"))
+        remote_url_edit.setText(os.getenv("VIUSTUDIO_REMOTE_API_URL", "http://127.0.0.1:8765"))
         remote_url_layout.addWidget(remote_url_label)
         remote_url_layout.addWidget(remote_url_edit)
         remote_url_label.setVisible(remote_mode)
@@ -173,7 +173,7 @@ class ModelSettingsMixin:
         remote_token_label = QLabel("API Token (optional):")
         remote_token_edit = QLineEdit(dialog)
         remote_token_edit.setEchoMode(QLineEdit.Password)
-        remote_token_edit.setText(os.getenv("CAPCAP_REMOTE_API_TOKEN", ""))
+        remote_token_edit.setText(os.getenv("VIUSTUDIO_REMOTE_API_TOKEN", ""))
         remote_token_layout.addWidget(remote_token_label)
         remote_token_layout.addWidget(remote_token_edit)
         remote_token_label.setVisible(remote_mode)
@@ -419,7 +419,7 @@ class ModelSettingsMixin:
                     remote_url_edit.text().strip(),
                     remote_token_edit.text().strip(),
                 )
-                service_name = str(payload.get("service", "capcap-remote-api") or "capcap-remote-api")
+                service_name = str(payload.get("service", "viustudio-remote-api") or "viustudio-remote-api")
                 profile_name = str(payload.get("profile", "local") or "local")
                 QMessageBox.information(
                     dialog,
@@ -495,8 +495,8 @@ class ModelSettingsMixin:
 
         if remote_mode:
             updates = {
-                "CAPCAP_REMOTE_API_URL": remote_url_edit.text().strip() or "http://127.0.0.1:8765",
-                "CAPCAP_REMOTE_API_TOKEN": remote_token_edit.text().strip(),
+                "VIUSTUDIO_REMOTE_API_URL": remote_url_edit.text().strip() or "http://127.0.0.1:8765",
+                "VIUSTUDIO_REMOTE_API_TOKEN": remote_token_edit.text().strip(),
             }
         else:
             if new_provider == "google":

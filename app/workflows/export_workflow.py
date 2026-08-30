@@ -438,7 +438,7 @@ class ExportWorkflow:
             return ass_path
         styles, events = [], []
         for index, layer in enumerate(text_layers):
-            style_name = f"CapCapText{index}"
+            style_name = f"VIUStudioText{index}"
             styles.append(
                 f"Style: {style_name},{layer['font_name']},{layer['font_size']},{self._ass_color(layer['font_color'])},"
                 # Keep this field order exactly aligned with the ASS

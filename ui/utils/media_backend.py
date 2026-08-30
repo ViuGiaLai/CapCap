@@ -524,7 +524,7 @@ class MpvMediaPlayerBackend(QObject):
         self._blur_region = None
         self._mask_region = None
         self._color_filter_state = {}
-        self._managed_vf_label = "capcap-managed"
+        self._managed_vf_label = "viustudio-managed"
         self._gpu_lut = None
         self.supports_native_lut = False
         self._mute_original = False

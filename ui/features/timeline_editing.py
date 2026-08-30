@@ -498,7 +498,7 @@ class TimelineEditingMixin:
         whisper_model_combo = QComboBox(whisper_box)
         whisper_model_combo.addItem("Base", "base")
         whisper_model_combo.addItem("Small (Fast)", "small")
-        if os.environ.get("CAPCAP_DEVICE", "cuda").strip().lower() == "cuda":
+        if os.environ.get("VIUSTUDIO_DEVICE", "cuda").strip().lower() == "cuda":
             whisper_model_combo.addItem("Medium (Quality)", "medium")
         current_model = str(self.get_whisper_model_name() or "small").strip().lower()
         model_index = whisper_model_combo.findData(current_model)

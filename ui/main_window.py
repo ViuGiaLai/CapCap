@@ -45,13 +45,13 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, MultiVideoTimelineMixin, AutoRe
     def __init__(self):
         super().__init__()
         self._current_video_path = ""
-        title = "CapCap Video Translator"
+        title = "VIUStudio Video Translator"
         if is_remote_profile():
             title += " (Remote)"
         self.setWindowTitle(title)
-        self.settings = QSettings("CapCap", "VideoTranslatorGUI")
+        self.settings = QSettings("VIUStudio", "VideoTranslatorGUI")
         self.setAcceptDrops(True)
-        self.logo_path = asset_path("capcap.png")
+        self.logo_path = asset_path("viustudio.png")
         if os.path.exists(self.logo_path):
             self.setWindowIcon(QIcon(self.logo_path))
         self.setWindowFlag(Qt.FramelessWindowHint)

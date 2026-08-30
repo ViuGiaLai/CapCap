@@ -176,12 +176,12 @@ def _build_filter_slider_row(title: str, slider: QSlider, value_label: QLabel):
 
 def _update_device_label(gui):
     import os
-    cpu_mode = os.getenv("CAPCAP_DEVICE", "cuda").strip().lower() == "cpu"
+    cpu_mode = os.getenv("VIUSTUDIO_DEVICE", "cuda").strip().lower() == "cpu"
     if cpu_mode:
         gui.device_mode_label.setText("⚙ CPU Mode")
         gui.device_mode_label.setStyleSheet("font-size: 11px; font-weight: 600; color: #f59e0b;")
     else:
-        gpu_name = os.getenv("CAPCAP_GPU_NAME", "").strip()
+        gpu_name = os.getenv("VIUSTUDIO_GPU_NAME", "").strip()
         if gpu_name:
             gui.device_mode_label.setText(f"⚡ {gpu_name}")
         else:

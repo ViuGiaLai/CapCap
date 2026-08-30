@@ -61,7 +61,7 @@ class _ReusableDetectorPreProcess:
 def _enable_reusable_detector_preprocess(engine):
     """Install the validated detector-only optimization on one OCR engine."""
     detector = getattr(engine, "text_det", None)
-    if detector is None or getattr(detector, "_capcap_reusable_preprocess", False):
+    if detector is None or getattr(detector, "_viustudio_reusable_preprocess", False):
         return engine
     original_get_preprocess = detector.get_preprocess
     shared_buffers = {}
@@ -71,7 +71,7 @@ def _enable_reusable_detector_preprocess(engine):
         return _ReusableDetectorPreProcess(target, shared_buffers)
 
     detector.get_preprocess = get_preprocess
-    detector._capcap_reusable_preprocess = True
+    detector._viustudio_reusable_preprocess = True
     return engine
 
 MAX_CROP_WIDTH = 960

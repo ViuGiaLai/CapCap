@@ -28,7 +28,7 @@ def setup_media_player(gui):
                     gui,
                     "Advanced Video Preview Unavailable",
                     f"Advanced Video Preview is unavailable.\n\nReason: {summary}\n\n"
-                    "CapCap will use the compatible preview instead. See Logs for technical details.",
+                    "VIUStudio will use the compatible preview instead. See Logs for technical details.",
                 )
 
             QTimer.singleShot(0, _show_preview_warning)

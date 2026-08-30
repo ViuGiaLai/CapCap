@@ -73,12 +73,11 @@ def _build_header_bar(gui):
     if os.path.exists(getattr(gui, "logo_path", "")):
         logo_pixmap = QPixmap(gui.logo_path)
         if not logo_pixmap.isNull():
-            white_logo = _tint_pixmap(logo_pixmap, QColor("#FFFFFF"))
-            logo_label.setPixmap(white_logo.scaled(26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            logo_label.setPixmap(logo_pixmap.scaled(26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation))
     layout.addWidget(logo_label)
     gui.header_logo_label = logo_label
 
-    brand_label = QLabel("CapCap")
+    brand_label = QLabel("VIUStudio")
     brand_label.setObjectName("heroTitle")
     brand_label.setStyleSheet("color: #ffffff; font-size: 16px; font-weight: 700;")
     layout.addWidget(brand_label)

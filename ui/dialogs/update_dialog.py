@@ -18,19 +18,19 @@ except ImportError:
 
 
 class UpdateDialog(QDialog):
-    """Dialog displayed when a new version of CapCap is available."""
+    """Dialog displayed when a new version of VIUStudio is available."""
 
     def __init__(self, release_info: dict, parent=None):
         super().__init__(parent)
         self.release_info = release_info
-        self.setWindowTitle("Update Available - CapCap")
+        self.setWindowTitle("Update Available - VIUStudio")
         self.setMinimumWidth(480)
         self.resize(500, 380)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        title = QLabel(f"🎉 CapCap v{release_info.get('version')} is Available!")
+        title = QLabel(f"🎉 VIUStudio v{release_info.get('version')} is Available!")
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #6ee7b7;")
         layout.addWidget(title)
 
@@ -62,6 +62,6 @@ class UpdateDialog(QDialog):
         layout.addLayout(btn_row)
 
     def _open_download(self):
-        url = self.release_info.get("html_url", "https://github.com/ViuGiaLai/CapCap/releases")
+        url = self.release_info.get("html_url", "https://github.com/ViuGiaLai/VIUStudio/releases")
         webbrowser.open(url)
         self.accept()

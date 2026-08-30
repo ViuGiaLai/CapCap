@@ -8,7 +8,7 @@ from ui.dialogs.auto_recap_dialog import AutoRecapSettingsDialog
 
 
 class AutoRecapFeatureMixin:
-    """Mixin class providing UI integration and feature actions for CapCap Auto Edit Recap."""
+    """Mixin class providing UI integration and feature actions for VIUStudio Auto Edit Recap."""
 
     def init_auto_recap_feature(self):
         """Initializes default Auto Recap configuration and EDL decision state."""

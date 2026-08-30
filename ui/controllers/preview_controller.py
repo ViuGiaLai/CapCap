@@ -283,7 +283,7 @@ class PreviewController:
             clip_end = min(float(duration_seconds), layer_end - start_seconds)
             if clip_end <= clip_start:
                 continue
-            style_name = f"CapCapText{index}"
+            style_name = f"VIUStudioText{index}"
             background_color = layer.get("background_color", "")
             styles.append(
                 f"Style: {style_name},{layer['font_name']},{max(1, int(round(layer['font_size'] * 0.85)))},{self._ass_color(layer['font_color'])},"

@@ -567,8 +567,8 @@ class TranslationOrchestrator:
         # Translation can expand compact CJK dialogue considerably.  This
         # leaves response room without assuming a specific destination language.
         response_tokens = max(512, math.ceil(max(source_token_estimate, draft_token_estimate) * 1.8) + (10 * len(source_texts)))
-        context_limit = max(4096, _env_int("CAPCAP_AI_TRANSLATION_CONTEXT_TOKENS", 24000))
-        output_limit = max(1024, _env_int("CAPCAP_AI_TRANSLATION_MAX_OUTPUT_TOKENS", 8192))
+        context_limit = max(4096, _env_int("VIUSTUDIO_AI_TRANSLATION_CONTEXT_TOKENS", 24000))
+        output_limit = max(1024, _env_int("VIUSTUDIO_AI_TRANSLATION_MAX_OUTPUT_TOKENS", 8192))
         if not force_ordered and input_tokens + response_tokens <= context_limit and response_tokens <= output_limit:
             print(
                 "[AI Translation] Full-context request: "
@@ -578,11 +578,11 @@ class TranslationOrchestrator:
                      min(output_limit, max(1024, response_tokens)))], True)
 
         try:
-            configured_max = int(os.getenv("CAPCAP_AI_TRANSLATION_MAX_SEGMENTS", "80"))
+            configured_max = int(os.getenv("VIUSTUDIO_AI_TRANSLATION_MAX_SEGMENTS", "80"))
         except ValueError:
             configured_max = 80
         max_segments = max(1, min(int(requested_max_segments or 80), max(1, configured_max)))
-        max_chars = _env_int("CAPCAP_AI_TRANSLATION_MAX_CHARS", 18000)
+        max_chars = _env_int("VIUSTUDIO_AI_TRANSLATION_MAX_CHARS", 18000)
         # Draft rewriting sends both source and translated text in the prompt.
         max_chars = max(2000, max_chars // (2 if translated_texts is not None else 1))
 

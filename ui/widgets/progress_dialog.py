@@ -165,7 +165,7 @@ class PipelineProgressDialog(QDialog):
         super().__init__(parent)
         self._stopped = False
         self._drag_pos = None
-        self.setWindowTitle("CapCap AI Pipeline")
+        self.setWindowTitle("VIUStudio AI Pipeline")
         self.setFixedSize(580, 680)
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
         self.setWindowModality(Qt.NonModal)

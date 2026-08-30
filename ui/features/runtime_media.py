@@ -76,7 +76,7 @@ class RuntimeMediaMixin:
         clear_log_impl(self)
 
     def export_runtime_logs(self):
-        default_name = f"capcap_logs_{time.strftime('%Y%m%d_%H%M%S')}.txt"
+        default_name = f"viustudio_logs_{time.strftime('%Y%m%d_%H%M%S')}.txt"
         default_path = os.path.join(self.workspace_root, default_name)
         file_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -396,7 +396,7 @@ class RuntimeMediaMixin:
         missing_lines = "\n".join(f"- {label}" for _resource_id, label in missing)
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("CapCap Cannot Start This Step")
+        box.setWindowTitle("VIUStudio Cannot Start This Step")
         box.setText(f"{action_label} cannot start because a required local component is unavailable.")
         box.setInformativeText(
             "The exact cause is listed below. Use Manage Resources for downloadable "

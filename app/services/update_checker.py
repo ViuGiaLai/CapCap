@@ -10,7 +10,7 @@ except ImportError:
 
 
 class UpdateCheckerThread(QThread):
-    """Background thread to check GitHub Releases for CapCap updates."""
+    """Background thread to check GitHub Releases for VIUStudio updates."""
 
     update_available = Signal(dict)
     no_update_available = Signal(str)
@@ -18,13 +18,13 @@ class UpdateCheckerThread(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.api_url = "https://api.github.com/repos/ViuGiaLai/CapCap/releases/latest"
+        self.api_url = "https://api.github.com/repos/ViuGiaLai/VIUStudio/releases/latest"
 
     def run(self):
         try:
             req = urllib.request.Request(
                 self.api_url,
-                headers={"User-Agent": f"CapCap-App/{APP_VERSION}"}
+                headers={"User-Agent": f"VIUStudio-App/{APP_VERSION}"}
             )
             with urllib.request.urlopen(req, timeout=10) as response:
                 if response.status != 200:

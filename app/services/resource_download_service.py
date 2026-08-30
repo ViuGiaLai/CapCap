@@ -19,8 +19,8 @@ class ResourceDownloadService:
         "medium": "models--Systran--faster-whisper-medium.zip",
     }
 
-    HF_RESOURCE_REPO = os.getenv("CAPCAP_RESOURCE_REPO", "Hacht/CapCapResource").strip() or "Hacht/CapCapResource"
-    HF_RESOURCE_REVISION = os.getenv("CAPCAP_RESOURCE_REVISION", "main").strip() or "main"
+    HF_RESOURCE_REPO = os.getenv("VIUSTUDIO_RESOURCE_REPO", "Hacht/VIUStudioResource").strip() or "Hacht/VIUStudioResource"
+    HF_RESOURCE_REVISION = os.getenv("VIUSTUDIO_RESOURCE_REVISION", "main").strip() or "main"
     SENSEVOICE_REPO = os.getenv(
         "SENSEVOICE_MODEL_REPO",
         "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
@@ -415,7 +415,7 @@ class ResourceDownloadService:
                     **subprocess_hidden_kwargs(),
                 )
                 if result.returncode != 0:
-                    issues.append(("ffmpeg", "FFmpeg could not start. Reinstall or re-extract CapCap."))
+                    issues.append(("ffmpeg", "FFmpeg could not start. Reinstall or re-extract VIUStudio."))
             except Exception as exc:
                 issues.append(("ffmpeg", f"FFmpeg could not start: {exc}"))
 
@@ -424,7 +424,7 @@ class ResourceDownloadService:
         # front and give the user a recovery path instead of a generic 500.
         for directory_name in ("projects", "temp"):
             target_dir = os.path.join(self.workspace_root, directory_name)
-            probe_path = os.path.join(target_dir, f".capcap_write_probe_{uuid.uuid4().hex}")
+            probe_path = os.path.join(target_dir, f".viustudio_write_probe_{uuid.uuid4().hex}")
             try:
                 os.makedirs(target_dir, exist_ok=True)
                 with open(probe_path, "x", encoding="utf-8") as handle:
@@ -438,8 +438,8 @@ class ResourceDownloadService:
                     pass
                 issues.append((
                     f"workspace:{directory_name}",
-                    f"CapCap cannot write its {directory_name} folder ({target_dir}): {exc}. "
-                    "Move CapCap to a writable folder or adjust folder permissions.",
+                    f"VIUStudio cannot write its {directory_name} folder ({target_dir}): {exc}. "
+                    "Move VIUStudio to a writable folder or adjust folder permissions.",
                 ))
         return issues
 
@@ -547,7 +547,7 @@ class ResourceDownloadService:
                 "kind": "whisper_cpu",
                 "status": "installed" if self.is_resource_installed("whisper:base") else "missing",
                 "target_dir": self._whisper_cache_root(),
-                "download_url": "https://huggingface.co/Hacht/CapCapResource/blob/main/zipResource/models--Systran--faster-whisper-base.zip",
+                "download_url": "https://huggingface.co/Hacht/VIUStudioResource/blob/main/zipResource/models--Systran--faster-whisper-base.zip",
                 "expected_filename": self.WHISPER_ZIP_FILES["base"],
                 "auto_download_supported": False,
                 "description": "Speech-recognition model for CPU transcription.",
@@ -558,7 +558,7 @@ class ResourceDownloadService:
                 "kind": "whisper_cpu",
                 "status": "installed" if self.is_resource_installed("whisper:small") else "missing",
                 "target_dir": self._whisper_cache_root(),
-                "download_url": "https://huggingface.co/Hacht/CapCapResource/blob/main/zipResource/models--Systran--faster-whisper-small.zip",
+                "download_url": "https://huggingface.co/Hacht/VIUStudioResource/blob/main/zipResource/models--Systran--faster-whisper-small.zip",
                 "expected_filename": self.WHISPER_ZIP_FILES["small"],
                 "auto_download_supported": False,
                 "description": "Faster speech-recognition model for CPU transcription.",

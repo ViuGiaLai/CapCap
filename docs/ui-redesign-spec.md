@@ -1,4 +1,4 @@
-# Đặc tả nâng cấp toàn bộ UI/UX CapCap
+# Đặc tả nâng cấp toàn bộ UI/UX VIUStudio
 
 > Trạng thái: **Bản đề xuất để duyệt trước khi triển khai**  
 > Phiên bản tài liệu: 1.1 — cập nhật sau vòng phản biện định hướng recap  
@@ -10,7 +10,7 @@
 
 ## 1. Mục tiêu của lần nâng cấp
 
-CapCap cần chuyển từ giao diện “nhiều bảng điều khiển kỹ thuật” sang một sản phẩm biên tập video chuyên nghiệp, dễ học và dễ thao tác lâu dài. Giao diện mới phải tạo cảm giác thống nhất như một editor hoàn chỉnh, không phải tập hợp nhiều form và nút chức năng.
+VIUStudio cần chuyển từ giao diện “nhiều bảng điều khiển kỹ thuật” sang một sản phẩm biên tập video chuyên nghiệp, dễ học và dễ thao tác lâu dài. Giao diện mới phải tạo cảm giác thống nhất như một editor hoàn chỉnh, không phải tập hợp nhiều form và nút chức năng.
 
 Các mục tiêu chính:
 
@@ -125,7 +125,7 @@ Editor hiện được chia thành:
 
 ### 3.1 Tuyên bố thiết kế
 
-**CapCap Studio** là một editor tập trung, nhanh và tin cậy: nội dung ở giữa, ngữ cảnh ở hai bên, tiến trình ở trên, thời gian ở dưới.
+**VIUStudio Studio** là một editor tập trung, nhanh và tin cậy: nội dung ở giữa, ngữ cảnh ở hai bên, tiến trình ở trên, thời gian ở dưới.
 
 Ba nguyên tắc chủ đạo:
 
@@ -245,7 +245,7 @@ Preview > Timeline > Inspector > Task Panel
 
 Bên trái:
 
-- Logo CapCap.
+- Logo VIUStudio.
 - Nút quay lại Projects.
 - Tên dự án, có ellipsis khi dài.
 - Chấm trạng thái: Saved / Saving / Unsaved / Error.
@@ -725,7 +725,7 @@ Nếu cần phần nâng cao, dùng tiêu đề cụ thể theo nội dung hoặ
 
 ## 7. Design system
 
-## 7.1 Màu sắc — theme “CapCap Studio Dark”
+## 7.1 Màu sắc — theme “VIUStudio Studio Dark”
 
 ### Surface
 
@@ -1295,18 +1295,18 @@ Trừ khi được phê duyệt riêng, lần triển khai này không bao gồm
 
 ### Còn cần chốt trước khi triển khai
 
-1. Có dùng theme **CapCap Studio Dark** với accent indigo `#7C8CFF` hay muốn một hướng màu khác.
+1. Có dùng theme **VIUStudio Studio Dark** với accent indigo `#7C8CFF` hay muốn một hướng màu khác.
 2. UI tiếp tục dùng tiếng Anh, chuyển sang tiếng Việt, hay chuẩn bị song ngữ ngay từ đầu.
 3. Export dùng modal dialog hay right-side sheet; tài liệu đề xuất dialog/sheet chuyên dụng.
-4. Có giữ tên sản phẩm “CapCap” hay dùng nhãn giao diện “CapCap Studio”.
+4. Có giữ tên sản phẩm “VIUStudio” hay dùng nhãn giao diện “VIUStudio Studio”.
 5. Có cho phép xây component gallery/screenshot baseline trước khi dựng màn hình thật hay không.
 
 ### Đề xuất mặc định
 
-- Dùng CapCap Studio Dark.
+- Dùng VIUStudio Studio Dark.
 - Chuẩn bị code cho localization nhưng giữ English làm ngôn ngữ mặc định trong lần đầu.
 - Export dùng dialog lớn không modal trong tương lai nếu kiến trúc cho phép; giai đoạn đầu có thể dùng modal để giảm rủi ro.
-- Giữ thương hiệu hiển thị “CapCap”; “Studio Dark” chỉ là tên design system nội bộ.
+- Giữ thương hiệu hiển thị “VIUStudio”; “Studio Dark” chỉ là tên design system nội bộ.
 - Bắt buộc có component gallery và baseline trước khi migration Editor.
 
 ---

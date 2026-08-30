@@ -28,7 +28,7 @@ except ImportError:
     import importlib.util
     _vpu_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "app", "utils", "voice_preview_utils.py")
     if os.path.exists(_vpu_path):
-        _spec = importlib.util.spec_from_file_location("capcap_voice_preview_utils", _vpu_path)
+        _spec = importlib.util.spec_from_file_location("viustudio_voice_preview_utils", _vpu_path)
         _vpu = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_vpu)
         clamp_requested_speed = _vpu.clamp_requested_speed
@@ -145,7 +145,7 @@ class AlternateRangeTranscriptionWorker(QThread):
                 )
             else:
                 import tempfile
-                temp_audio = os.path.join(tempfile.gettempdir(), f"capcap_range_{int(self.start_time * 1000)}_{int(self.end_time * 1000)}.wav")
+                temp_audio = os.path.join(tempfile.gettempdir(), f"viustudio_range_{int(self.start_time * 1000)}_{int(self.end_time * 1000)}.wav")
                 ffmpeg = bin_path("ffmpeg", "ffmpeg.exe")
                 subprocess.run([
                     ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-ss", str(self.start_time),
@@ -449,7 +449,10 @@ class TimelineWaveformWorker(QThread):
                             ffmpeg, "-y", "-loglevel", "error", "-i", self.video_path,
                             "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", temp_audio,
                         ]
-                    subprocess.run(command, check=True, timeout=300, **subprocess_hidden_kwargs())
+                    # Long media extraction is streaming and memory bounded.  A
+                    # five-hour source can legitimately take more than the old
+                    # fixed five-minute timeout on slower disks.
+                    subprocess.run(command, check=True, timeout=7200, **subprocess_hidden_kwargs())
                 if temp_audio and os.path.exists(temp_audio):
                     audio_path = temp_audio
 
@@ -457,46 +460,9 @@ class TimelineWaveformWorker(QThread):
                 self.finished.emit(self.request_signature, [], 0.0, "")
                 return
 
-            from audio_mixer import _require_pydub
+            from audio_waveform import build_waveform_envelope
 
-            _require_pydub()
-            from pydub import AudioSegment
-            import numpy as np
-
-            audio = AudioSegment.from_file(audio_path).set_channels(1)
-            samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
-            duration_s = max(0.0, len(audio) / 1000.0)
-
-            if not samples.size:
-                self.finished.emit(self.request_signature, [], duration_s, "")
-                return
-
-            samples = samples.astype(np.float32)
-            peak = float(np.max(np.abs(samples))) if samples.size else 0.0
-            if peak <= 0.0:
-                self.finished.emit(self.request_signature, [], duration_s, "")
-                return
-            samples /= max(1.0, peak)
-
-            # Build a lightweight envelope: fixed number of buckets regardless of video length.
-            # This keeps the timeline readable without the FFT cost of a full spectrum view.
-            # Keep this compact enough for instant drawing, but retain enough
-            # peaks for long source videos to look like a real waveform.
-            # These values are computed once in the background, never while
-            # playback is running.
-            bucket_count = int(min(1200, max(240, round(duration_s * 12.0))))
-            chunk_size = max(256, int(np.ceil(samples.size / max(1, bucket_count))))
-            waveform = []
-            for start in range(0, samples.size, chunk_size):
-                chunk = samples[start:start + chunk_size]
-                if not chunk.size:
-                    waveform.append(0.0)
-                    continue
-                abs_chunk = np.abs(chunk)
-                peak_value = float(np.max(abs_chunk)) if abs_chunk.size else 0.0
-                rms_value = float(np.sqrt(np.mean(np.square(chunk)))) if chunk.size else 0.0
-                value = max(peak_value, rms_value * 1.15)
-                waveform.append(min(1.0, max(0.03, value ** 0.85)))
+            waveform, duration_s = build_waveform_envelope(audio_path)
 
             self.finished.emit(self.request_signature, waveform, duration_s, "")
         except Exception as exc:
@@ -691,13 +657,13 @@ class PrepareWorkflowWorker(QThread):
             from runtime_profile import is_remote_profile
             if self.force_remote_api or is_remote_profile():
                 from remote_api import remote_api_post
-                old_url = os.environ.get("CAPCAP_REMOTE_API_URL")
-                old_token = os.environ.get("CAPCAP_REMOTE_API_TOKEN")
+                old_url = os.environ.get("VIUSTUDIO_REMOTE_API_URL")
+                old_token = os.environ.get("VIUSTUDIO_REMOTE_API_TOKEN")
                 try:
                     if self.remote_api_url:
-                        os.environ["CAPCAP_REMOTE_API_URL"] = self.remote_api_url
+                        os.environ["VIUSTUDIO_REMOTE_API_URL"] = self.remote_api_url
                     if self.remote_api_token:
-                        os.environ["CAPCAP_REMOTE_API_TOKEN"] = self.remote_api_token
+                        os.environ["VIUSTUDIO_REMOTE_API_TOKEN"] = self.remote_api_token
                     response = remote_api_post(
                         "/v1/prepare",
                         {
@@ -725,13 +691,13 @@ class PrepareWorkflowWorker(QThread):
                     self.finished.emit(str(response.get("project_state_path", "")), "")
                 finally:
                     if old_url is None:
-                        os.environ.pop("CAPCAP_REMOTE_API_URL", None)
+                        os.environ.pop("VIUSTUDIO_REMOTE_API_URL", None)
                     else:
-                        os.environ["CAPCAP_REMOTE_API_URL"] = old_url
+                        os.environ["VIUSTUDIO_REMOTE_API_URL"] = old_url
                     if old_token is None:
-                        os.environ.pop("CAPCAP_REMOTE_API_TOKEN", None)
+                        os.environ.pop("VIUSTUDIO_REMOTE_API_TOKEN", None)
                     else:
-                        os.environ["CAPCAP_REMOTE_API_TOKEN"] = old_token
+                        os.environ["VIUSTUDIO_REMOTE_API_TOKEN"] = old_token
             else:
                 from workflows.prepare_workflow import PrepareWorkflow
                 workflow = PrepareWorkflow(self.workspace_root)

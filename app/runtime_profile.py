@@ -8,7 +8,7 @@ REMOTE_PROFILE = "remote"
 
 
 def current_runtime_profile() -> str:
-    profile = str(os.getenv("CAPCAP_RUNTIME_PROFILE", LOCAL_PROFILE) or LOCAL_PROFILE).strip().lower()
+    profile = str(os.getenv("VIUSTUDIO_RUNTIME_PROFILE", LOCAL_PROFILE) or LOCAL_PROFILE).strip().lower()
     if profile == REMOTE_PROFILE:
         return REMOTE_PROFILE
     return LOCAL_PROFILE

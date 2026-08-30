@@ -15,7 +15,7 @@ def _preview_host_is_available(view: QWidget | None) -> bool:
     MPV owns a native child surface, therefore edit overlays must remain Qt
     tool windows to stay above it.  A tool window is not automatically hidden
     on every minimize/hide path in Windows, so never show one unless both the
-    preview and its owning CapCap window are currently visible.
+    preview and its owning VIUStudio window are currently visible.
     """
     if view is None or not view.isVisible():
         return False
@@ -105,7 +105,7 @@ class _SubtitleOverlayWidget(QWidget):
             QEvent.WindowStateChange,
         ):
             # This native-surface overlay is an independent tool window;
-            # always hide it when the CapCap host stops being present.
+            # always hide it when the VIUStudio host stops being present.
             self.hide()
         return super().eventFilter(watched, event)
 

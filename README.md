@@ -1,13 +1,13 @@
-# <img src="assets/capcap.png"  style="width: 5%; height: auto;"> CapCap 
+# <img src="assets/viustudio_logo.jpg" style="width: 300px; height: auto;"> 
 
-![CapCap Editor Preview](assets/preview.JPG)
+![VIUStudio Editor Preview](assets/preview.JPG)
 ### [Demo + Tutorial](https://www.tiktok.com/@nguyenthach617/video/7674305087023369493)
 
-CapCap is a Windows desktop video-localization editor for creating Vietnamese or English subtitles, translated video, voice-over, and timed visual layers.
+VIUStudio is a Windows desktop video-localization editor for creating Vietnamese or English subtitles, translated video, voice-over, and timed visual layers.
 
 ## Upcoming Features
 
-We're continuously improving CapCap.
+We're continuously improving VIUStudio.
 
 [View the development roadmap](https://github.com/users/notepower2k1/projects/2)
 
@@ -29,8 +29,8 @@ We're continuously improving CapCap.
 ## Run from Source
 
 ```bash
-git clone https://github.com/notepower2k1/CapCap.git
-cd CapCap
+git clone https://github.com/notepower2k1/VIUStudio.git
+cd VIUStudio
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements-local.txt
@@ -39,9 +39,9 @@ python ui/gui.py
 
 Copy `.env_example` to `.env` only if you need manual provider or remote-server configuration. Most settings are available in the app.
 
-## Support CapCap
+## Support VIUStudio
 
-If CapCap is useful to you, you can support development:
+If VIUStudio is useful to you, you can support development:
 
 ### Donate in Vietnam
 

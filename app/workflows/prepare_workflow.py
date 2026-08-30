@@ -27,6 +27,7 @@ class PrepareWorkflow:
     ASR_NORMALIZE_TARGET_DB = -25.0
     ASR_NORMALIZE_MAX_GAIN_DB = 12.0
     ASR_NORMALIZE_PEAK_DB = -2.0
+    LONG_MEDIA_OPTIONAL_ANALYSIS_MAX_SECONDS = 30 * 60
 
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root
@@ -135,7 +136,7 @@ class PrepareWorkflow:
         try:
             stat = os.stat(source)
             fingerprint = hashlib.sha256(
-                f"v1|{os.path.abspath(source)}|{stat.st_size}|{stat.st_mtime_ns}|"
+                f"v2-long-media-sample|{os.path.abspath(source)}|{stat.st_size}|{stat.st_mtime_ns}|"
                 f"{self.ASR_NORMALIZE_TRIGGER_DB}|{self.ASR_NORMALIZE_TARGET_DB}|"
                 f"{self.ASR_NORMALIZE_MAX_GAIN_DB}|{self.ASR_NORMALIZE_PEAK_DB}".encode("utf-8")
             ).hexdigest()
@@ -161,7 +162,7 @@ class PrepareWorkflow:
             return source
         try:
             probe = subprocess.run(
-                [ffmpeg, "-hide_banner", "-i", source, "-af", "volumedetect", "-f", "null", "-"],
+                [ffmpeg, "-hide_banner", "-t", "300", "-i", source, "-af", "volumedetect", "-f", "null", "-"],
                 capture_output=True,
                 check=False, timeout=30, **subprocess_text_kwargs(),
             )
@@ -207,7 +208,7 @@ class PrepareWorkflow:
                         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", normalized_path,
                     ],
                     capture_output=True,
-                    check=True, timeout=300, **subprocess_text_kwargs(),
+                    check=True, timeout=7200, **subprocess_text_kwargs(),
                 )
                 profile["path"] = normalized_path
                 print(
@@ -340,6 +341,35 @@ class PrepareWorkflow:
         )
         return regrouped_segments
 
+    def _transcribe_long_sensevoice_chunked(
+        self, *, audio_path: str, project_state, model_dir: str, language: str,
+    ) -> list[dict]:
+        """Run SenseVoice on bounded 20-second chunks instead of a full WAV."""
+        chunk_dir = self.project_service.build_path(project_state, "audio", "sensevoice_chunks")
+        chunks = self.chunking_service.build_chunks(
+            audio_path,
+            chunk_dir,
+            target_chunk_duration=self.CHUNK_TARGET_DURATION_SECONDS,
+            max_chunk_duration=self.CHUNK_MAX_DURATION_SECONDS,
+            overlap_seconds=self.CHUNK_OVERLAP_SECONDS,
+            silence_noise=self.CHUNK_SILENCE_NOISE,
+            silence_duration=self.CHUNK_SILENCE_DURATION_SECONDS,
+            min_speech_duration=0.05,
+        )
+        chunk_results = []
+        for index, chunk in enumerate(chunks):
+            segments = self.engine_runtime.transcribe_audio_sensevoice(
+                chunk.audio_path, model_dir, language=language,
+            )
+            chunk_results.append({"chunk": chunk, "segments": list(segments or [])})
+            if (index + 1) % 25 == 0 or index + 1 == len(chunks):
+                print(f"[SenseVoice] Processed {index + 1}/{len(chunks)} long-media chunks.")
+        from services import AsrMergeService
+        merged = AsrMergeService().merge_chunk_results(chunk_results)
+        return self.segment_regroup_service.regroup(
+            merged, max_gap_seconds=0.25, max_duration_seconds=5.0,
+        )
+
     def _should_enable_asr_translate_streaming(self, *, translator_ai: bool) -> bool:
         if not bool(translator_ai):
             return True
@@ -362,7 +392,7 @@ class PrepareWorkflow:
             return False
         if is_remote_profile():
             return True
-        return str(os.getenv("CAPCAP_DEVICE", "") or "").strip().lower() == "cuda"
+        return str(os.getenv("VIUSTUDIO_DEVICE", "") or "").strip().lower() == "cuda"
 
     @staticmethod
     def _apply_speaker_labels(segments: list[dict], speaker_turns: list[dict]) -> list[dict]:
@@ -445,7 +475,7 @@ class PrepareWorkflow:
             if readiness_issues:
                 details = "\n".join(f"- {detail}" for _code, detail in readiness_issues)
                 raise RuntimeError(
-                    "CapCap startup readiness check failed. Resolve the following before retrying:\n"
+                    "VIUStudio startup readiness check failed. Resolve the following before retrying:\n"
                     f"{details}"
                 )
 
@@ -506,7 +536,7 @@ class PrepareWorkflow:
                 subprocess.run(
                     [ffmpeg_bin, "-y", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
                      "-ar", "16000", "-ac", "1", audio_output_path],
-                    capture_output=True, timeout=300, **subprocess_hidden_kwargs(),
+                    capture_output=True, timeout=7200, **subprocess_hidden_kwargs(),
                 )
             project_state.set_artifact("extracted_audio", audio_output_path)
             project_state.set_step_status("extract_audio", "completed")
@@ -646,6 +676,22 @@ class PrepareWorkflow:
 
             working_audio_path = audio_output_path
             audio_mode_key = str(audio_handling_mode or "fast").strip().lower()
+            extracted_duration = self.chunking_service.probe_wav_duration(audio_output_path)
+            if (
+                mode in ("voice", "both")
+                and audio_mode_key == "clean"
+                and extracted_duration > self.LONG_MEDIA_OPTIONAL_ANALYSIS_MAX_SECONDS
+            ):
+                print(
+                    "[Long Media] Clean Voice stem separation is disabled above "
+                    f"{self.LONG_MEDIA_OPTIONAL_ANALYSIS_MAX_SECONDS / 60:.0f} minutes because the "
+                    "current ONNX separator loads complete stems in RAM. Using Fast Mode to keep "
+                    "the app responsive and prevent an out-of-memory exit."
+                )
+                audio_mode_key = "fast"
+                project_state.set_setting("effective_audio_handling_mode", "fast-long-media-safe")
+            else:
+                project_state.set_setting("effective_audio_handling_mode", audio_mode_key)
             print(f"[Audio Handling] Selected mode: {audio_mode_key}")
             if mode in ("voice", "both") and audio_mode_key == "clean":
                 print("\n--- Step 1.5: Separating vocals/background ---")
@@ -701,7 +747,7 @@ class PrepareWorkflow:
                         processed_vocal_path,
                     ]
                     subprocess.run(
-                        ffmpeg_cmd, check=True, capture_output=True, timeout=300,
+                        ffmpeg_cmd, check=True, capture_output=True, timeout=7200,
                         **subprocess_hidden_kwargs(),
                     )
                     working_audio_path = processed_vocal_path
@@ -735,6 +781,16 @@ class PrepareWorkflow:
             diarization_executor = None
             diarization_signature = ""
             diarization_started = 0.0
+            if (
+                speaker_diarization
+                and extracted_duration > self.LONG_MEDIA_OPTIONAL_ANALYSIS_MAX_SECONDS
+            ):
+                speaker_diarization = False
+                project_state.set_setting("speaker_diarization_long_media_skipped", True)
+                print(
+                    "[Long Media] Speaker diarization skipped: the installed offline model requires "
+                    "the full waveform in RAM. ASR and translation will continue normally."
+                )
             if speaker_diarization:
                 print("\n--- Step 1.75: Detecting speakers (Sherpa-ONNX) ---")
                 if step_callback:
@@ -857,14 +913,23 @@ class PrepareWorkflow:
                 audio_duration = self.chunking_service.probe_wav_duration(working_audio_path)
                 print(f"[ASR] Working audio duration: {audio_duration:.2f}s")
                 if is_sensevoice:
-                    print("[ASR] Using SenseVoice single-pass transcription with Silero VAD.")
                     if importlib.util.find_spec("sherpa_onnx") is None:
                         raise RuntimeError("sherpa-onnx is not installed. Run: pip install sherpa-onnx")
-                    raw_segments = self.engine_runtime.transcribe_audio_sensevoice(
-                        working_audio_path,
-                        sensevoice_model_dir,
-                        language=source_language,
-                    )
+                    if audio_duration >= self.CHUNKED_ASR_MIN_DURATION_SECONDS:
+                        print("[ASR] Using memory-bounded chunked SenseVoice for long media.")
+                        raw_segments = self._transcribe_long_sensevoice_chunked(
+                            audio_path=working_audio_path,
+                            project_state=project_state,
+                            model_dir=sensevoice_model_dir,
+                            language=source_language,
+                        )
+                    else:
+                        print("[ASR] Using SenseVoice single-pass transcription with Silero VAD.")
+                        raw_segments = self.engine_runtime.transcribe_audio_sensevoice(
+                            working_audio_path,
+                            sensevoice_model_dir,
+                            language=source_language,
+                        )
                 elif is_remote_profile():
                     print("[ASR] Remote API mode: using single-pass transcription and sending full working audio to the PC server.")
                     raw_segments = self.engine_runtime.transcribe_audio(

@@ -197,7 +197,7 @@ def _calibrated_libass_metric_scale(font_name: str, font_size: int, font_scale: 
         _LIBASS_METRIC_CALIBRATIONS[key] = fallback
         return fallback
 
-    probe_text = "CapCap WMWM 0123456789 AaEeGg ÀÁÂĂĐÊÔƠƯ àáâăđêôơư"
+    probe_text = "VIUStudio WMWM 0123456789 AaEeGg ÀÁÂĂĐÊÔƠƯ àáâăđêôơư"
     pillow_width = float(metric_font.getlength(probe_text))
     if pillow_width <= 1.0:
         _LIBASS_METRIC_CALIBRATIONS[key] = fallback

@@ -202,7 +202,7 @@ class ProjectCard(QFrame):
         self.window().accept()
 
 
-def _extract_waveform_audio(video_path: str, temp_root: str) -> str:
+def _extract_waveform_audio(video_path: str, temp_root: str, duration_s: float = 0.0) -> str:
     video_hash = hashlib.md5(video_path.encode("utf-8")).hexdigest()[:12]
     audio_path = os.path.join(temp_root, f"waveform_{video_hash}.wav")
     if os.path.exists(audio_path):
@@ -215,7 +215,9 @@ def _extract_waveform_audio(video_path: str, temp_root: str) -> str:
         subprocess.run(
             [_ffmpeg_path(), "-y", "-loglevel", "error", "-i", video_path,
              "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path],
-            check=True, timeout=60, **subprocess_hidden_kwargs(),
+            check=True,
+            timeout=max(180, min(7200, int(max(0.0, duration_s) * 0.5 + 120))),
+            **subprocess_hidden_kwargs(),
         )
         print(f"[Launcher] Waveform audio extracted: {audio_path}")
     except Exception as exc:
@@ -227,9 +229,7 @@ def _extract_waveform_audio(video_path: str, temp_root: str) -> str:
 def _prepare_timeline_visual_cache(video_path: str, temp_root: str) -> None:
     """Build the editor's static V1/A1 cache before opening the editor."""
     try:
-        import numpy as np
         import subprocess
-        import wave
 
         source = os.path.abspath(video_path)
         stat = os.stat(source)
@@ -271,25 +271,13 @@ def _prepare_timeline_visual_cache(video_path: str, temp_root: str) -> None:
 
         def build_waveform():
             waveform = []
-            audio_path = _extract_waveform_audio(source, temp_root)
+            audio_path = _extract_waveform_audio(source, temp_root, duration_s)
             waveform_duration = duration_s
             if audio_path and os.path.exists(audio_path):
-                with wave.open(audio_path, "rb") as audio_file:
-                    frame_count = audio_file.getnframes()
-                    sample_rate = max(1, audio_file.getframerate())
-                    raw_samples = audio_file.readframes(frame_count)
-                samples = np.frombuffer(raw_samples, dtype=np.int16).astype(np.float32)
-                waveform_duration = max(waveform_duration, frame_count / sample_rate)
-                peak = float(np.max(np.abs(samples))) if samples.size else 0.0
-                if peak > 0:
-                    samples /= peak
-                    bucket_count = int(min(1200, max(240, round(waveform_duration * 12.0))))
-                    chunk_size = max(256, int(np.ceil(samples.size / max(1, bucket_count))))
-                    for start in range(0, samples.size, chunk_size):
-                        chunk = samples[start:start + chunk_size]
-                        peak_value = float(np.max(np.abs(chunk))) if chunk.size else 0.0
-                        rms_value = float(np.sqrt(np.mean(np.square(chunk)))) if chunk.size else 0.0
-                        waveform.append(min(1.0, max(0.03, max(peak_value, rms_value * 1.15) ** 0.85)))
+                from app.audio_waveform import build_waveform_envelope
+
+                waveform, audio_duration = build_waveform_envelope(audio_path)
+                waveform_duration = max(waveform_duration, audio_duration)
             return waveform, waveform_duration
 
         def build_thumbnail(index_and_time):
@@ -311,7 +299,7 @@ def _prepare_timeline_visual_cache(video_path: str, temp_root: str) -> None:
         from concurrent.futures import ThreadPoolExecutor
         import threading
         print(f"[Launcher] Preparing {thumb_count} timeline thumbnails with 2 workers + waveform worker")
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="capcap-thumbs") as thumbnail_pool:
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="viustudio-thumbs") as thumbnail_pool:
             # Keep waveform CPU/audio work independent from the two thumbnail
             # slots so all three tasks can progress concurrently.
             waveform_result = []
@@ -321,7 +309,7 @@ def _prepare_timeline_visual_cache(video_path: str, temp_root: str) -> None:
                     waveform_result.extend(build_waveform())
                 except Exception as exc:
                     waveform_error.append(exc)
-            waveform_thread = threading.Thread(target=run_waveform, name="capcap-waveform", daemon=True)
+            waveform_thread = threading.Thread(target=run_waveform, name="viustudio-waveform", daemon=True)
             waveform_thread.start()
             thumbnails = [item for item in thumbnail_pool.map(build_thumbnail, enumerate(timestamps)) if item]
             waveform_thread.join()
@@ -348,11 +336,11 @@ class LauncherWindow(QDialog):
 
         from runtime_paths import asset_path
         from PySide6.QtGui import QIcon
-        logo = asset_path("capcap.png")
+        logo = asset_path("viustudio.png")
         if os.path.exists(logo):
             self.setWindowIcon(QIcon(logo))
 
-        self.setWindowTitle("CapCap - Video Translator")
+        self.setWindowTitle("VIUStudio - Video Translator")
         self.setMinimumSize(860, 560)
         self.setStyleSheet("""
             QDialog {
@@ -409,7 +397,7 @@ class LauncherWindow(QDialog):
         header.setContentsMargins(18, 16, 18, 16)
         header.setSpacing(16)
 
-        title = QLabel("CapCap")
+        title = QLabel("VIUStudio")
         title.setStyleSheet("font-size: 24px; font-weight: 800; color: #eaf4ff; letter-spacing: 0.3px;")
         subtitle = QLabel("Video Translation & Voiceover Studio")
         subtitle.setStyleSheet("font-size: 12px; color: #7a8fa8; font-weight: 500;")
@@ -577,7 +565,7 @@ class LauncherWindow(QDialog):
         self.open_project_btn.setMinimumWidth(145)
         self.open_project_btn.setCursor(Qt.PointingHandCursor)
         self.open_project_btn.setStyleSheet(sec_btn_style)
-        self.open_project_btn.setToolTip("Open the CapCap projects folder")
+        self.open_project_btn.setToolTip("Open the VIUStudio projects folder")
         self.open_project_btn.clicked.connect(self._on_open_project_folder)
         action_row_two.addWidget(self.open_project_btn)
 
@@ -690,7 +678,7 @@ class LauncherWindow(QDialog):
             mb = QMessageBox(
                 QMessageBox.Warning,
                 "Video Too Long",
-                f"This video is {h}h {m}m long.\nCapCap works best with videos under 2 hours.\n\n"
+                f"This video is {h}h {m}m long.\nVIUStudio works best with videos under 2 hours.\n\n"
                 "Use 'Split Video' to cut it into 2-hour segments first.",
                 QMessageBox.Ok,
                 self,
@@ -743,9 +731,9 @@ class LauncherWindow(QDialog):
     def _save_device_env():
         device = getattr(LauncherWindow, "_selected_device", "cuda")
         gpu_name = getattr(LauncherWindow, "_gpu_name", "")
-        print(f"[Launcher] Saving CAPCAP_DEVICE={device}, GPU={gpu_name}")
-        os.environ["CAPCAP_DEVICE"] = device
-        os.environ["CAPCAP_GPU_NAME"] = gpu_name
+        print(f"[Launcher] Saving VIUSTUDIO_DEVICE={device}, GPU={gpu_name}")
+        os.environ["VIUSTUDIO_DEVICE"] = device
+        os.environ["VIUSTUDIO_GPU_NAME"] = gpu_name
         # ``__file__`` points inside _internal in a PyInstaller build. The
         # writable package root is the only place both later GUI launches and
         # the spawned worker can consistently read.
@@ -757,12 +745,12 @@ class LauncherWindow(QDialog):
                     lines = f.readlines()
             found = False
             for i, line in enumerate(lines):
-                if line.startswith("CAPCAP_DEVICE="):
-                    lines[i] = f"CAPCAP_DEVICE={device}\n"
+                if line.startswith("VIUSTUDIO_DEVICE="):
+                    lines[i] = f"VIUSTUDIO_DEVICE={device}\n"
                     found = True
                     break
             if not found:
-                lines.append(f"CAPCAP_DEVICE={device}\n")
+                lines.append(f"VIUSTUDIO_DEVICE={device}\n")
             with open(env_path, "w", encoding="utf-8") as f:
                 f.writelines(lines)
         except Exception as e:
@@ -775,7 +763,7 @@ class LauncherWindow(QDialog):
         LauncherWindow._selected_device = normalized
         # The Main UI and its local worker inherit this exact value. Do not
         # wait for thumbnail preprocessing to finish before publishing it.
-        os.environ["CAPCAP_DEVICE"] = normalized
+        os.environ["VIUSTUDIO_DEVICE"] = normalized
 
     def _resource_service(self):
         from runtime_paths import workspace_root
@@ -999,11 +987,11 @@ class LauncherWindow(QDialog):
         from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QTextBrowser, QVBoxLayout, QHBoxLayout
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("About CapCap")
+        dialog.setWindowTitle("About VIUStudio")
         dialog.setMinimumSize(650, 650)
         dialog.setStyleSheet("QDialog { background: #0a101e; color: #d7e3f4; }")
         layout = QVBoxLayout(dialog)
-        title = QLabel("CapCap V7 — Tool Information", dialog)
+        title = QLabel("VIUStudio V7 — Tool Information", dialog)
         title.setStyleSheet("font-size: 18px; font-weight: 800; color: #ffffff;")
         layout.addWidget(title)
 
@@ -1015,28 +1003,28 @@ class LauncherWindow(QDialog):
         )
         browser.setHtml("""
         <h3 style='color:#8ad7ff;'>Description</h3>
-        <p>CapCap is a Windows application that supports both CPU and GPU processing.</p>
+        <p>VIUStudio is a Windows application that supports both CPU and GPU processing.</p>
         <p>GPU mode provides the best overall experience and performance. GPU acceleration currently supports NVIDIA GPUs.</p>
         <p>If CUDA is not detected correctly, first update your NVIDIA GPU driver. If needed, install CUDA 12.4 from:<br>
         <a href='https://developer.nvidia.com/cuda-12-4-0-download-archive'>CUDA 12.4 Download Archive</a></p>
 
         <h3 style='color:#8ad7ff;'>Tutorial / Resource Setup</h3>
-        <p>Download the resource, then place it in the matching CapCap folder:</p>
+        <p>Download the resource, then place it in the matching VIUStudio folder:</p>
         <table cellspacing='6'>
-        <tr><td><b>Whisper models</b></td><td><code>CapCap\\models\\faster_whisper</code></td></tr>
-        <tr><td><b>CUDA / cuDNN runtime</b></td><td><code>CapCap\\bin\\cuda12_fw</code></td></tr>
-        <tr><td><b>SenseVoice</b></td><td>Bundled by default in <code>CapCap\\models\\sensevoice</code></td></tr>
-        <tr><td><b>RapidOCR models</b></td><td>Bundled by default; optional files use <code>CapCap\\rapidocr\\models</code></td></tr>
-        <tr><td><b>Piper voices</b></td><td><code>CapCap\\models\\piper</code> (Vietnamese) or <code>CapCap\\models\\piper-en</code> (English)</td></tr>
-        <tr><td><b>Speaker Detection</b></td><td><code>CapCap\\models\\pyannote</code></td></tr>
+        <tr><td><b>Whisper models</b></td><td><code>VIUStudio\\models\\faster_whisper</code></td></tr>
+        <tr><td><b>CUDA / cuDNN runtime</b></td><td><code>VIUStudio\\bin\\cuda12_fw</code></td></tr>
+        <tr><td><b>SenseVoice</b></td><td>Bundled by default in <code>VIUStudio\\models\\sensevoice</code></td></tr>
+        <tr><td><b>RapidOCR models</b></td><td>Bundled by default; optional files use <code>VIUStudio\\rapidocr\\models</code></td></tr>
+        <tr><td><b>Piper voices</b></td><td><code>VIUStudio\\models\\piper</code> (Vietnamese) or <code>VIUStudio\\models\\piper-en</code> (English)</td></tr>
+        <tr><td><b>Speaker Detection</b></td><td><code>VIUStudio\\models\\pyannote</code></td></tr>
         </table>
         <p>Resource Manager provides download links for supported optional resources. Extract downloaded archives into the folder shown above.</p>
 
         <h3 style='color:#8ad7ff;'>How to Setup</h3>
-        <p>CapCap has two processing modes: <b>CPU Mode</b> and <b>GPU Mode</b>.</p>
+        <p>VIUStudio has two processing modes: <b>CPU Mode</b> and <b>GPU Mode</b>.</p>
         <p><b>CPU Mode:</b> Ready to use immediately without additional downloads. Optional resources add more models, voices, or features.</p>
-        <p><b>GPU Mode:</b> Requires the <b>GPU Acceleration Pack</b>. Download and extract it into <code>CapCap\\bin</code>. Whisper Medium is optional but recommended for better GPU transcription quality.</p>
-        <p>Other resources are optional enhancements. CapCap works without them unless you select a feature that needs one.</p>
+        <p><b>GPU Mode:</b> Requires the <b>GPU Acceleration Pack</b>. Download and extract it into <code>VIUStudio\\bin</code>. Whisper Medium is optional but recommended for better GPU transcription quality.</p>
+        <p>Other resources are optional enhancements. VIUStudio works without them unless you select a feature that needs one.</p>
 
         <h3 style='color:#8ad7ff;'>How to Use</h3>
         <p><b>Left side:</b> Workflow progress, configuration, and options.</p>
@@ -1050,7 +1038,7 @@ class LauncherWindow(QDialog):
         </ol>
 
         <h3 style='color:#8ad7ff;'>Developer Information</h3>
-        <p>GitHub: <a href='https://github.com/ViuGiaLai/CapCap'>github.com/ViuGiaLai/CapCap</a></p>
+        <p>GitHub: <a href='https://github.com/ViuGiaLai/VIUStudio'>github.com/ViuGiaLai/VIUStudio</a></p>
         """)
         layout.addWidget(browser, 1)
 

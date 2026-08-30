@@ -41,7 +41,7 @@ def get_video_duration(video_path: str) -> float:
 
 
 def main():
-    print("🚀 Starting End-to-End Self-Testing of CapCap Auto Edit Recap Engine...")
+    print("🚀 Starting End-to-End Self-Testing of VIUStudio Auto Edit Recap Engine...")
     scratch_dir = os.path.join(ROOT, "scratch")
     os.makedirs(scratch_dir, exist_ok=True)
     

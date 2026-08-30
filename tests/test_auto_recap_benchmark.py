@@ -21,7 +21,7 @@ class TestAutoRecapBenchmark(unittest.TestCase):
 
         self.assertGreater(len(decisions), 0)
         report = metrics.generate_ascii_report()
-        self.assertIn("CapCap Auto Edit Recap Benchmark Report", report)
+        self.assertIn("VIUStudio Auto Edit Recap Benchmark Report", report)
         self.assertIn("Stage 1", report)
         self.assertIn("Stage 5", report)
         self.assertFalse(metrics.ducked_shots > 0)  # No voiceover -> no ducking applied!

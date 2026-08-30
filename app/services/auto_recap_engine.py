@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 @dataclass
 class AutoRecapConfig:
-    """Configuration for CapCap Auto Edit Recap Engine (12 Core Rules)."""
+    """Configuration for VIUStudio Auto Edit Recap Engine (12 Core Rules)."""
     enabled: bool = True
     editing_style: str = "Balanced"  # "Subtle" (105%), "Balanced" (110%), "Dynamic" (115%)
     max_zoom_percent: float = 110.0  # 105%, 110%, 115%
@@ -114,7 +114,7 @@ class FootageReuseManager:
 
 
 class AutoRecapEngine:
-    """Core Engine executing the 12 Rules for Auto Edit Recap in CapCap."""
+    """Core Engine executing the 12 Rules for Auto Edit Recap in VIUStudio."""
 
     def __init__(self, config: Optional[AutoRecapConfig] = None):
         self.config = config or AutoRecapConfig()

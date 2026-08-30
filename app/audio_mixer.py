@@ -1,8 +1,26 @@
 import os
 import subprocess
+import tempfile
 import wave
 
 from runtime_paths import bin_path, subprocess_text_kwargs
+
+
+VOICE_TRACK_IN_MEMORY_MAX_SECONDS = 30 * 60
+VOICE_TRACK_WRITE_CHUNK_SAMPLES = 1_000_000
+
+
+def voice_track_storage_plan(duration_seconds: float, sample_rate: int = 16000) -> dict:
+    """Describe the bounded storage strategy used by voice-track assembly."""
+    samples = max(0, int(float(duration_seconds) * int(sample_rate))) + int(sample_rate)
+    use_disk = float(duration_seconds) > VOICE_TRACK_IN_MEMORY_MAX_SECONDS
+    return {
+        "samples": samples,
+        "backend": "disk_chunks" if use_disk else "memory",
+        "temporary_disk_bytes": samples * 4 if use_disk else 0,
+        "memory_buffer_bytes": 0 if use_disk else samples * 4,
+        "peak_chunk_bytes": min(samples, VOICE_TRACK_WRITE_CHUNK_SAMPLES) * 6,
+    }
 
 
 def _ffmpeg_path():
@@ -402,8 +420,8 @@ def build_voice_track_from_srt_segments(
     """
     Build a single voice track by overlaying each segment wav at its start time.
 
-    Optimized for long videos (>1-3 hours) using pre-allocated numpy audio buffer
-    instead of repeated pydub AudioSegment.overlay() copies.
+    Long projects use a random-access temporary PCM store and chunked output;
+    short projects use a pre-allocated numpy buffer for maximum speed.
     """
     _require_pydub()
     from pydub import AudioSegment
@@ -417,76 +435,193 @@ def build_voice_track_from_srt_segments(
             return s.get(key, default)
         return getattr(s, key, default)
 
+    max_end = 0.0
+    for seg, wav_path in zip(segments, tts_wav_paths):
+        start = float(_seg_val(seg, "start", 0.0) or 0.0)
+        declared_end = float(_seg_val(seg, "end", 0.0) or 0.0)
+        actual_end = declared_end
+        if wav_path and os.path.exists(wav_path):
+            try:
+                actual_end = max(actual_end, start + _probe_wav_duration_seconds(wav_path))
+            except (OSError, wave.Error):
+                pass
+        max_end = max(max_end, declared_end, actual_end)
     if total_duration_ms is None:
-        max_end = 0.0
-        for seg in segments:
-            max_end = max(max_end, float(_seg_val(seg, "end", 0.0) or 0.0))
         total_duration_ms = int(max_end * 1000) + 500
+    else:
+        # A regenerated TTS clip may be slightly longer than its subtitle slot.
+        # Size once before allocating so a disk memmap never needs a costly copy.
+        total_duration_ms = max(int(total_duration_ms), int(max_end * 1000) + 500)
 
     sr = 16000
     total_samples = int(max(0, total_duration_ms) * sr / 1000) + sr  # add 1s safety buffer
-    audio_buffer = np.zeros(total_samples, dtype=np.int32)
-
-    for idx, (seg, wav_path) in enumerate(zip(segments, tts_wav_paths)):
-        if not wav_path or not os.path.exists(wav_path):
-            continue
-        start_ms = int(float(_seg_val(seg, "start", 0.0) or 0.0) * 1000)
-        end_ms = int(float(_seg_val(seg, "end", 0.0) or 0.0) * 1000)
-        max_len = max(0, end_ms - start_ms)
-
-        try:
-            clip = AudioSegment.from_file(wav_path)
-            clip = clip.set_frame_rate(sr).set_channels(1)
-            if gain_db:
-                clip = clip + gain_db
-
-            if max_len > 0:
-                clip_len = len(clip)
-                if clip_len < max_len:
-                    gap_ms = max_len - clip_len
-                    clip_end_ms = start_ms + clip_len
-                    if idx + 1 < len(segments):
-                        next_start_ms = int(float(_seg_val(segments[idx + 1], "start", 0.0) or 0.0) * 1000)
-                        next_gap = next_start_ms - clip_end_ms
-                        if 0 < next_gap <= 20:
-                            overlap_ms = 10
-                            extend_ms = min(next_gap + overlap_ms, clip_len)
-                            clip = clip.fade_out(duration=extend_ms)
-                            clip = clip + AudioSegment.silent(duration=extend_ms, frame_rate=sr)
-                            gap_ms = 0
-                    if gap_ms > 0:
-                        fade_ms = min(gap_ms, 50)
-                        clip = clip.fade_out(duration=fade_ms)
-                        silent_ms = gap_ms - fade_ms
-                        if silent_ms > 0:
-                            clip = clip + AudioSegment.silent(duration=silent_ms, frame_rate=sr)
-
-            clip_samples = np.frombuffer(clip.raw_data, dtype=np.int16)
-            start_sample = int(max(0, start_ms) * sr / 1000)
-            end_sample = start_sample + len(clip_samples)
-
-            if end_sample > len(audio_buffer):
-                # Dynamically expand buffer if needed
-                pad = np.zeros(end_sample - len(audio_buffer) + sr, dtype=np.int32)
-                audio_buffer = np.concatenate([audio_buffer, pad])
-
-            # In-place add samples (mixing overlaps cleanly)
-            audio_buffer[start_sample:end_sample] += clip_samples.astype(np.int32)
-        except Exception as e:
-            print(f"[audio_mixer] Error processing segment {idx} wav: {e}")
-
-    # Clip to int16 range to prevent overflow distortion
-    np.clip(audio_buffer, -32768, 32767, out=audio_buffer)
-    final_pcm = audio_buffer.astype(np.int16).tobytes()
-
     os.makedirs(os.path.dirname(output_wav_path) or ".", exist_ok=True)
-    with wave.open(output_wav_path, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        wf.writeframes(final_pcm)
+    duration_seconds = total_samples / sr
+    use_disk = duration_seconds > VOICE_TRACK_IN_MEMORY_MAX_SECONDS
+    storage_path = ""
+    storage_file = None
+    if use_disk:
+        temp_file = tempfile.NamedTemporaryFile(
+            prefix=".viustudio_voice_",
+            suffix=".i32",
+            dir=os.path.dirname(os.path.abspath(output_wav_path)),
+            delete=False,
+        )
+        storage_path = temp_file.name
+        temp_file.seek(total_samples * 4 - 1)
+        temp_file.write(b"\0")
+        temp_file.close()
+        storage_file = open(storage_path, "r+b", buffering=0)
+        audio_buffer = None
+    else:
+        audio_buffer = np.zeros(total_samples, dtype=np.int32)
+
+    try:
+        for idx, (seg, wav_path) in enumerate(zip(segments, tts_wav_paths)):
+            if not wav_path or not os.path.exists(wav_path):
+                continue
+            start_ms = int(float(_seg_val(seg, "start", 0.0) or 0.0) * 1000)
+            end_ms = int(float(_seg_val(seg, "end", 0.0) or 0.0) * 1000)
+            max_len = max(0, end_ms - start_ms)
+
+            try:
+                clip = AudioSegment.from_file(wav_path)
+                clip = clip.set_frame_rate(sr).set_channels(1)
+                if gain_db:
+                    clip = clip + gain_db
+
+                if max_len > 0:
+                    clip_len = len(clip)
+                    if clip_len < max_len:
+                        gap_ms = max_len - clip_len
+                        clip_end_ms = start_ms + clip_len
+                        if idx + 1 < len(segments):
+                            next_start_ms = int(float(_seg_val(segments[idx + 1], "start", 0.0) or 0.0) * 1000)
+                            next_gap = next_start_ms - clip_end_ms
+                            if 0 < next_gap <= 20:
+                                overlap_ms = 10
+                                extend_ms = min(next_gap + overlap_ms, clip_len)
+                                clip = clip.fade_out(duration=extend_ms)
+                                clip = clip + AudioSegment.silent(duration=extend_ms, frame_rate=sr)
+                                gap_ms = 0
+                        if gap_ms > 0:
+                            fade_ms = min(gap_ms, 50)
+                            clip = clip.fade_out(duration=fade_ms)
+                            silent_ms = gap_ms - fade_ms
+                            if silent_ms > 0:
+                                clip = clip + AudioSegment.silent(duration=silent_ms, frame_rate=sr)
+
+                clip_samples = np.frombuffer(clip.raw_data, dtype=np.int16)
+                start_sample = int(max(0, start_ms) * sr / 1000)
+                end_sample = min(total_samples, start_sample + len(clip_samples))
+                if end_sample > start_sample:
+                    usable = end_sample - start_sample
+                    incoming = clip_samples[:usable].astype(np.int32)
+                    if storage_file is not None:
+                        storage_file.seek(start_sample * 4)
+                        existing_raw = storage_file.read(usable * 4)
+                        existing = np.frombuffer(existing_raw, dtype=np.int32).copy()
+                        existing += incoming
+                        storage_file.seek(start_sample * 4)
+                        storage_file.write(existing.tobytes())
+                    else:
+                        audio_buffer[start_sample:end_sample] += incoming
+            except Exception as e:
+                print(f"[audio_mixer] Error processing segment {idx} wav: {e}")
+
+        # Write in small chunks.  The previous full-buffer astype().tobytes()
+        # temporarily allocated another ~550 MB for a five-hour mono track.
+        with wave.open(output_wav_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            if storage_file is not None:
+                storage_file.seek(0)
+            for start in range(0, total_samples, VOICE_TRACK_WRITE_CHUNK_SAMPLES):
+                count = min(VOICE_TRACK_WRITE_CHUNK_SAMPLES, total_samples - start)
+                if storage_file is not None:
+                    raw = storage_file.read(count * 4)
+                    chunk = np.frombuffer(raw, dtype=np.int32)
+                else:
+                    chunk = np.asarray(audio_buffer[start:start + count])
+                pcm = np.clip(chunk, -32768, 32767).astype(np.int16)
+                wf.writeframes(pcm.tobytes())
+    finally:
+        if storage_file is not None:
+            storage_file.close()
+        if storage_path:
+            try:
+                os.remove(storage_path)
+            except OSError:
+                pass
 
     return output_wav_path
+
+
+def _long_audio_timeout_seconds(*paths: str) -> int:
+    duration = 0.0
+    for path in paths:
+        try:
+            duration = max(duration, _probe_wav_duration_seconds(path))
+        except (OSError, wave.Error):
+            continue
+    # Audio-only FFmpeg is normally much faster than real time.  Scale the
+    # guard for slow disks while retaining an upper bound for a hung process.
+    return int(max(300, min(7200, duration * 0.25 + 300)))
+
+
+def _stream_mix_with_ffmpeg(
+    *,
+    first_path: str,
+    second_path: str,
+    output_path: str,
+    first_gain_db: float,
+    second_gain_db: float,
+    sidechain: bool = False,
+    threshold: float = 0.015,
+    ratio: float = 10.0,
+    attack_ms: float = 15.0,
+    release_ms: float = 350.0,
+) -> str:
+    """Mix two audio files with bounded RAM through FFmpeg streaming."""
+    ffmpeg = _ffmpeg_path()
+    if not os.path.exists(ffmpeg):
+        raise FileNotFoundError(f"FFmpeg not found at {ffmpeg}")
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    first_volume = f"volume={float(first_gain_db):+.2f}dB"
+    second_volume = f"volume={float(second_gain_db):+.2f}dB"
+    if sidechain:
+        filter_complex = (
+            f"[0:a]{first_volume}[first];"
+            f"[1:a]{second_volume},asplit=2[second_sc][second_mix];"
+            f"[first][second_sc]sidechaincompress="
+            f"threshold={max(0.0001, float(threshold)):.4f}:"
+            f"ratio={max(1.0, float(ratio)):.2f}:"
+            f"attack={max(0.0, float(attack_ms)):.1f}:"
+            f"release={max(0.0, float(release_ms)):.1f}:makeup=1[ducked];"
+            "[ducked][second_mix]amix=inputs=2:duration=longest:"
+            "dropout_transition=0:normalize=0[mixed]"
+        )
+    else:
+        filter_complex = (
+            f"[0:a]{first_volume}[first];[1:a]{second_volume}[second];"
+            "[first][second]amix=inputs=2:duration=longest:"
+            "dropout_transition=0:normalize=0[mixed]"
+        )
+    command = [
+        ffmpeg, "-y", "-loglevel", "error", "-i", first_path, "-i", second_path,
+        "-filter_complex", filter_complex, "-map", "[mixed]",
+        "-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1", output_path,
+    ]
+    proc = subprocess.run(
+        command,
+        capture_output=True,
+        timeout=_long_audio_timeout_seconds(first_path, second_path),
+        **subprocess_text_kwargs(),
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"FFmpeg streaming audio mix failed:\n{proc.stderr or proc.stdout}")
+    return output_path
 
 
 def mix_voice_with_background(
@@ -511,6 +646,29 @@ def mix_voice_with_background(
 
     mode_key = str(ducking_mode or "off").strip().lower()
     if mode_key in {"timeline", "segments", "subtitle"}:
+        try:
+            long_duration = max(
+                _probe_wav_duration_seconds(background_wav_path),
+                _probe_wav_duration_seconds(voice_wav_path),
+            )
+        except (OSError, wave.Error):
+            long_duration = 0.0
+        if long_duration > VOICE_TRACK_IN_MEMORY_MAX_SECONDS:
+            # Exact timeline ducking uses pydub slicing and copies the complete
+            # track repeatedly.  For long projects use its streaming sidechain
+            # equivalent; voice activity itself drives the same audible result.
+            return _stream_mix_with_ffmpeg(
+                first_path=background_wav_path,
+                second_path=voice_wav_path,
+                output_path=output_wav_path,
+                first_gain_db=background_gain_db,
+                second_gain_db=voice_gain_db,
+                sidechain=True,
+                threshold=ducking_threshold,
+                ratio=ducking_ratio,
+                attack_ms=ducking_attack_ms,
+                release_ms=ducking_release_ms,
+            )
         _require_pydub()
         from pydub import AudioSegment
 
@@ -547,67 +705,26 @@ def mix_voice_with_background(
         return output_wav_path
 
     if mode_key in {"auto", "duck", "ducking", "sidechain"}:
-        ffmpeg = _ffmpeg_path()
-        if not os.path.exists(ffmpeg):
-            raise FileNotFoundError(f"FFmpeg not found at {ffmpeg}")
-
-        os.makedirs(os.path.dirname(output_wav_path) or ".", exist_ok=True)
-        bg_volume = f"volume={float(background_gain_db):+.2f}dB"
-        voice_volume = f"volume={float(voice_gain_db):+.2f}dB"
-        filter_complex = (
-            f"[0:a]{bg_volume}[bg];"
-            f"[1:a]{voice_volume},asplit=2[vc_sc][vc_mix];"
-            f"[bg][vc_sc]sidechaincompress="
-            f"threshold={max(0.0001, float(ducking_threshold)):.4f}:"
-            f"ratio={max(1.0, float(ducking_ratio)):.2f}:"
-            f"attack={max(0.0, float(ducking_attack_ms)):.1f}:"
-            f"release={max(0.0, float(ducking_release_ms)):.1f}:"
-            f"makeup=1[ducked];"
-            "[ducked][vc_mix]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[mixed]"
+        return _stream_mix_with_ffmpeg(
+            first_path=background_wav_path,
+            second_path=voice_wav_path,
+            output_path=output_wav_path,
+            first_gain_db=background_gain_db,
+            second_gain_db=voice_gain_db,
+            sidechain=True,
+            threshold=ducking_threshold,
+            ratio=ducking_ratio,
+            attack_ms=ducking_attack_ms,
+            release_ms=ducking_release_ms,
         )
-        cmd = [
-            ffmpeg,
-            "-y",
-            "-i",
-            background_wav_path,
-            "-i",
-            voice_wav_path,
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            "[mixed]",
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            output_wav_path,
-        ]
-        proc = subprocess.run(cmd, capture_output=True, timeout=300, **subprocess_text_kwargs())
-        if proc.returncode != 0:
-            raise RuntimeError(f"FFmpeg ducking mix failed:\n{proc.stderr or proc.stdout}")
-        return output_wav_path
 
-    _require_pydub()
-    from pydub import AudioSegment
-
-    bg = AudioSegment.from_file(background_wav_path).set_frame_rate(16000).set_channels(1)
-    vc = AudioSegment.from_file(voice_wav_path).set_frame_rate(16000).set_channels(1)
-
-    if background_gain_db:
-        bg = bg + background_gain_db
-    if voice_gain_db:
-        vc = vc + voice_gain_db
-
-    # Ensure output covers the longer one
-    if len(vc) > len(bg):
-        bg = bg + AudioSegment.silent(duration=(len(vc) - len(bg)), frame_rate=16000)
-    elif len(bg) > len(vc):
-        vc = vc + AudioSegment.silent(duration=(len(bg) - len(vc)), frame_rate=16000)
-
-    mixed = bg.overlay(vc)
-    os.makedirs(os.path.dirname(output_wav_path) or ".", exist_ok=True)
-    mixed.export(output_wav_path, format="wav")
-    return output_wav_path
+    return _stream_mix_with_ffmpeg(
+        first_path=background_wav_path,
+        second_path=voice_wav_path,
+        output_path=output_wav_path,
+        first_gain_db=background_gain_db,
+        second_gain_db=voice_gain_db,
+    )
 
 
 def mix_original_with_dub(
@@ -624,24 +741,11 @@ def mix_original_with_dub(
     if not os.path.exists(dub_wav_path):
         raise FileNotFoundError(f"Dub file not found: {dub_wav_path}")
 
-    _require_pydub()
-    from pydub import AudioSegment
-
-    original = AudioSegment.from_file(original_wav_path).set_frame_rate(16000).set_channels(1)
-    dub = AudioSegment.from_file(dub_wav_path).set_frame_rate(16000).set_channels(1)
-
-    if original_gain_db:
-        original = original + original_gain_db
-    if dub_gain_db:
-        dub = dub + dub_gain_db
-
-    if len(dub) > len(original):
-        original = original + AudioSegment.silent(duration=(len(dub) - len(original)), frame_rate=16000)
-    elif len(original) > len(dub):
-        dub = dub + AudioSegment.silent(duration=(len(original) - len(dub)), frame_rate=16000)
-
-    mixed = original.overlay(dub)
-    os.makedirs(os.path.dirname(output_wav_path) or ".", exist_ok=True)
-    mixed.export(output_wav_path, format="wav")
-    return output_wav_path
+    return _stream_mix_with_ffmpeg(
+        first_path=original_wav_path,
+        second_path=dub_wav_path,
+        output_path=output_wav_path,
+        first_gain_db=original_gain_db,
+        second_gain_db=dub_gain_db,
+    )
 

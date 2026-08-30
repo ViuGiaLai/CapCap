@@ -158,7 +158,7 @@ class SubtitleController:
                 QMessageBox.information(
                     self.gui,
                     "Using Existing Translation",
-                    "Translated subtitles are unchanged, so CapCap reused the existing generated result instead of calling AI again.",
+                    "Translated subtitles are unchanged, so VIUStudio reused the existing generated result instead of calling AI again.",
                 )
                 return
 

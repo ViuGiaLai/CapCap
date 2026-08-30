@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-CapCap includes or can distribute third-party libraries, binaries, models, fonts, and other resources. Those components remain under their respective licenses; CapCap's Apache-2.0 license applies only to CapCap's original code and documentation.
+VIUStudio includes or can distribute third-party libraries, binaries, models, fonts, and other resources. Those components remain under their respective licenses; VIUStudio's Apache-2.0 license applies only to VIUStudio's original code and documentation.
 
 ## Runtime libraries
 

@@ -21,7 +21,7 @@ def _init_asr_worker(model_path: str) -> None:
 
 def _init_asr_cpu_worker(model_path: str) -> None:
     """Load an isolated CPU Whisper model in a process-pool worker."""
-    os.environ["CAPCAP_WHISPER_DEVICE"] = "cpu"
+    os.environ["VIUSTUDIO_WHISPER_DEVICE"] = "cpu"
     _init_asr_worker(model_path)
 
 
@@ -296,8 +296,8 @@ class AsrMergeService:
                 runtime = _detect_faster_whisper_runtime()
                 if runtime.get("device") == "cuda" and len(pending_items) > 1:
                     total_duration = max(float(item["chunk"].end_seconds) for item in pending_items)
-                    hybrid_enabled = str(os.getenv("CAPCAP_HYBRID_ASR", "1")).strip().lower() not in {"0", "false", "no", "off"}
-                    hybrid_min_seconds = max(60.0, float(os.getenv("CAPCAP_HYBRID_ASR_MIN_SECONDS", "1200") or 1200))
+                    hybrid_enabled = str(os.getenv("VIUSTUDIO_HYBRID_ASR", "1")).strip().lower() not in {"0", "false", "no", "off"}
+                    hybrid_min_seconds = max(60.0, float(os.getenv("VIUSTUDIO_HYBRID_ASR_MIN_SECONDS", "1200") or 1200))
                     if hybrid_enabled and total_duration >= hybrid_min_seconds and len(pending_items) >= 4:
                         self._transcribe_chunks_hybrid(
                             pending_items,

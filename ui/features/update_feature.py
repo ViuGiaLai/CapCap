@@ -9,13 +9,13 @@ from ui.dialogs.update_dialog import UpdateDialog
 
 
 class UpdateFeatureMixin:
-    """Mixin for update checking and notification features in CapCap."""
+    """Mixin for update checking and notification features in VIUStudio."""
 
     def check_for_updates(self, verbose: bool = False):
         """Check for updates asynchronously in background."""
         if getattr(self, "_update_checker_running", False):
             if verbose:
-                QMessageBox.information(self, "Check in Progress", "CapCap is currently checking for updates...")
+                QMessageBox.information(self, "Check in Progress", "VIUStudio is currently checking for updates...")
             return
 
         self._update_checker_running = True
@@ -31,8 +31,8 @@ class UpdateFeatureMixin:
             if verbose:
                 QMessageBox.information(
                     self,
-                    "CapCap Up to Date",
-                    f"You are using the latest version of CapCap ({get_app_version_string()}).\nNo updates available at this time.",
+                    "VIUStudio Up to Date",
+                    f"You are using the latest version of VIUStudio ({get_app_version_string()}).\nNo updates available at this time.",
                 )
 
         def _on_failed(err_msg: str):

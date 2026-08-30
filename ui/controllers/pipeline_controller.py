@@ -119,7 +119,7 @@ class PipelineController:
         try:
             request = urllib.request.Request(f"{api_url.rstrip('/')}/v1/status")
             if token:
-                request.add_header("X-CapCap-Token", token)
+                request.add_header("X-VIUStudio-Token", token)
             with urllib.request.urlopen(request, timeout=0.35) as response:
                 data = json.loads(response.read().decode("utf-8", errors="replace"))
             phase = str(data.get("phase", "") or "").strip()
@@ -137,19 +137,19 @@ class PipelineController:
         port = self._find_free_local_port()
         token = secrets.token_urlsafe(24)
         env = os.environ.copy()
-        env["CAPCAP_RUNTIME_PROFILE"] = "local"
-        env["CAPCAP_REMOTE_API_HOST"] = "127.0.0.1"
-        env["CAPCAP_REMOTE_API_PORT"] = str(port)
-        env["CAPCAP_REMOTE_API_TOKEN"] = token
-        env["CAPCAP_REMOTE_PRELOAD_MODELS"] = "0"
-        env["CAPCAP_RUN_REMOTE_API_SERVER"] = "1" if getattr(sys, "frozen", False) else "0"
+        env["VIUSTUDIO_RUNTIME_PROFILE"] = "local"
+        env["VIUSTUDIO_REMOTE_API_HOST"] = "127.0.0.1"
+        env["VIUSTUDIO_REMOTE_API_PORT"] = str(port)
+        env["VIUSTUDIO_REMOTE_API_TOKEN"] = token
+        env["VIUSTUDIO_REMOTE_PRELOAD_MODELS"] = "0"
+        env["VIUSTUDIO_RUN_REMOTE_API_SERVER"] = "1" if getattr(sys, "frozen", False) else "0"
         # The worker is a separate frozen Python process.  Force UTF-8 before
         # it starts so any third-party code that still relies on Python's
         # default text encoding cannot inherit a locale-specific ANSI codec.
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        env["CAPCAP_DEVICE"] = (
-            "cuda" if str(processing_device or os.getenv("CAPCAP_DEVICE", "cpu")).strip().lower() == "cuda"
+        env["VIUSTUDIO_DEVICE"] = (
+            "cuda" if str(processing_device or os.getenv("VIUSTUDIO_DEVICE", "cpu")).strip().lower() == "cuda"
             else "cpu"
         )
 
@@ -419,7 +419,7 @@ class PipelineController:
         self.gui.log(f"[Pipeline] Starting prepare workflow for: {video_path}")
         try:
             self.active_processing_device = (
-                "cuda" if os.getenv("CAPCAP_DEVICE", "cpu").strip().lower() == "cuda" else "cpu"
+                "cuda" if os.getenv("VIUSTUDIO_DEVICE", "cpu").strip().lower() == "cuda" else "cpu"
             )
             self._start_local_worker_server(self.active_processing_device)
             self.gui.log(

@@ -65,7 +65,7 @@ def build_guidance_state(
 
     if pipeline_active:
         badge = "Processing"
-        headline = "CapCap is processing the current pipeline."
+        headline = "VIUStudio is processing the current pipeline."
 
     readiness = " • ".join(
         [

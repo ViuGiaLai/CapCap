@@ -1,8 +1,8 @@
-# How to Use CapCap
+# How to Use VIUStudio
 
 ## Basic workflow
 
-1. Open CapCap and select CPU or GPU mode in the launcher.
+1. Open VIUStudio and select CPU or GPU mode in the launcher.
 2. Create or open a video project. **Prepare** becomes complete once the video is ready.
 3. In **Settings**, choose a Subtitle Source: Audio (SenseVoice or Whisper) or Video (OCR). This choice is saved with the project, not globally.
 4. Set source/target language and choose a translation provider.

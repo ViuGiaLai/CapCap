@@ -548,7 +548,7 @@ class WorkflowActionsMixin:
 
     def get_whisper_model_name(self) -> str:
         selected = str(getattr(self, "selected_whisper_model_name", "auto") or "auto").strip().lower()
-        is_gpu_mode = os.environ.get("CAPCAP_DEVICE", "cuda").strip().lower() == "cuda"
+        is_gpu_mode = os.environ.get("VIUSTUDIO_DEVICE", "cuda").strip().lower() == "cuda"
         if not is_gpu_mode and selected == "medium":
             selected = "auto"
         if selected and selected != "auto":

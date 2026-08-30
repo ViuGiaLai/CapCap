@@ -11,7 +11,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 
-os.environ.setdefault("CAPCAP_RUNTIME_PROFILE", "local")
+os.environ.setdefault("VIUSTUDIO_RUNTIME_PROFILE", "local")
 
 
 def _configure_worker_text_streams() -> None:
@@ -40,7 +40,7 @@ def _configure_worker_text_streams() -> None:
 
 _configure_worker_text_streams()
 
-_QUIET = os.getenv("CAPCAP_QUIET", "").strip().lower() in ("1", "true", "yes")
+_QUIET = os.getenv("VIUSTUDIO_QUIET", "").strip().lower() in ("1", "true", "yes")
 _GPU_LOCK = threading.Lock()
 
 
@@ -95,8 +95,8 @@ def _json_response(handler: BaseHTTPRequestHandler, status_code: int, payload: d
             raise
 
 
-class CapCapRemoteHandler(BaseHTTPRequestHandler):
-    server_version = "CapCapRemote/1.0"
+class VIUStudioRemoteHandler(BaseHTTPRequestHandler):
+    server_version = "VIUStudioRemote/1.0"
 
     def do_GET(self):
         try:
@@ -106,8 +106,8 @@ class CapCapRemoteHandler(BaseHTTPRequestHandler):
                     200,
                     {
                         "ok": True,
-                        "service": "capcap-remote-api",
-                        "profile": os.getenv("CAPCAP_RUNTIME_PROFILE", "local"),
+                        "service": "viustudio-remote-api",
+                        "profile": os.getenv("VIUSTUDIO_RUNTIME_PROFILE", "local"),
                     },
                 )
                 return
@@ -169,10 +169,10 @@ class CapCapRemoteHandler(BaseHTTPRequestHandler):
             tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip()
             _log("[Remote API] Request failed:")
             _log(tb)
-            log_paths = [os.path.join(tempfile.gettempdir(), "capcap_remote_api_errors.log")]
+            log_paths = [os.path.join(tempfile.gettempdir(), "viustudio_remote_api_errors.log")]
             try:
                 from runtime_paths import temp_path
-                log_paths.insert(0, temp_path("capcap_remote_api_errors.log"))
+                log_paths.insert(0, temp_path("viustudio_remote_api_errors.log"))
             except Exception:
                 pass
             for log_path in dict.fromkeys(log_paths):
@@ -186,7 +186,7 @@ class CapCapRemoteHandler(BaseHTTPRequestHandler):
             if isinstance(exc, UnicodeError) or "charmap codec" in error_message.lower():
                 error_message = (
                     "Windows text encoding failed while reading an external tool response. "
-                    "Please update CapCap; technical details were saved to capcap_remote_api_errors.log."
+                    "Please update VIUStudio; technical details were saved to viustudio_remote_api_errors.log."
                 )
             _json_response(self, 500, {"ok": False, "error": error_message})
 
@@ -197,7 +197,7 @@ class CapCapRemoteHandler(BaseHTTPRequestHandler):
         expected = remote_api_token()
         if not expected:
             return
-        supplied = str(self.headers.get("X-CapCap-Token", "") or "").strip()
+        supplied = str(self.headers.get("X-VIUStudio-Token", "") or "").strip()
         if supplied != expected:
             raise PermissionError("Invalid remote API token.")
 
@@ -216,7 +216,7 @@ class CapCapRemoteHandler(BaseHTTPRequestHandler):
         audio_bytes = base64.b64decode(audio_b64.encode("ascii"))
         audio_filename = str(payload.get("audio_filename", "remote_input.wav") or "remote_input.wav")
         suffix = os.path.splitext(audio_filename)[1] or ".wav"
-        tmp_dir = os.path.join(tempfile.gettempdir(), "capcap_remote_api")
+        tmp_dir = os.path.join(tempfile.gettempdir(), "viustudio_remote_api")
         os.makedirs(tmp_dir, exist_ok=True)
         fd, temp_audio_path = tempfile.mkstemp(prefix="asr_", suffix=suffix, dir=tmp_dir)
         os.close(fd)
@@ -286,7 +286,7 @@ class CapCapRemoteHandler(BaseHTTPRequestHandler):
         except Exception:
             speed = 1.0
 
-        tmp_dir = os.path.join(tempfile.gettempdir(), "capcap_remote_tts")
+        tmp_dir = os.path.join(tempfile.gettempdir(), "viustudio_remote_tts")
         os.makedirs(tmp_dir, exist_ok=True)
         fd, temp_wav_path = tempfile.mkstemp(prefix="tts_", suffix=".wav", dir=tmp_dir)
         os.close(fd)
@@ -417,26 +417,26 @@ def _unload_models():
 
 
 def main() -> None:
-    host = str(os.getenv("CAPCAP_REMOTE_API_HOST", "0.0.0.0") or "0.0.0.0").strip()
-    port_raw = str(os.getenv("CAPCAP_REMOTE_API_PORT", "8765") or "8765").strip()
+    host = str(os.getenv("VIUSTUDIO_REMOTE_API_HOST", "0.0.0.0") or "0.0.0.0").strip()
+    port_raw = str(os.getenv("VIUSTUDIO_REMOTE_API_PORT", "8765") or "8765").strip()
     try:
         port = int(port_raw)
     except Exception:
         port = 8765
 
-    preload_models = str(os.getenv("CAPCAP_REMOTE_PRELOAD_MODELS", "1") or "1").strip().lower()
+    preload_models = str(os.getenv("VIUSTUDIO_REMOTE_PRELOAD_MODELS", "1") or "1").strip().lower()
     if preload_models not in {"0", "false", "no", "off"}:
         _log("[Remote API] Pre-loading Whisper model on main thread...")
-        model_name = os.getenv("CAPCAP_WHISPER_MODEL_NAME", "base")
+        model_name = os.getenv("VIUSTUDIO_WHISPER_MODEL_NAME", "base")
         try:
             from whisper_processor import _load_whisper_model
             _load_whisper_model(model_name)
             _log(f"[Remote API] Whisper '{model_name}' loaded on main thread.")
         except Exception as exc:
             _log(f"[Remote API] Whisper pre-load failed (will load on demand): {exc}")
-            _log("[Remote API] Tip: set CAPCAP_WHISPER_DEVICE=cpu in .env if CUDA hangs in thread.")
+            _log("[Remote API] Tip: set VIUSTUDIO_WHISPER_DEVICE=cpu in .env if CUDA hangs in thread.")
 
-    server = ThreadingHTTPServer((host, port), CapCapRemoteHandler)
+    server = ThreadingHTTPServer((host, port), VIUStudioRemoteHandler)
     _log(f"[Remote API] Listening on http://{host}:{port}")
     server.serve_forever()
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 APP_VERSION = "1.2.0"
-APP_NAME = "CapCap Video & Auto Edit Recap"
+APP_NAME = "VIUStudio Video & Auto Edit Recap"
 AUTO_RECAP_VERSION = "1.0.0"
 
-RELEASE_NOTES = """✨ CapCap v1.2.0 - Auto Edit Recap Release
+RELEASE_NOTES = """✨ VIUStudio v1.2.0 - Auto Edit Recap Release
 
 Hạng mục tính năng mới:
 • ✨ Auto Edit Recap Engine (12 Core Rules V1): Chia ranh giới hiệu ứng không bỏ nội dung, Zoom/Pan/Crop, Speed Accent, Freeze Frame & Audio Ducking.

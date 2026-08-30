@@ -2,11 +2,11 @@
 setlocal
 cd /d "%~dp0"
 
-echo [CapCap] Starting local client...
+echo [VIUStudio] Starting local client...
 python ui\gui.py
 
 if errorlevel 1 (
     echo.
-    echo [CapCap] Local client exited with an error.
+    echo [VIUStudio] Local client exited with an error.
     pause
 )

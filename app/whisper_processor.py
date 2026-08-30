@@ -182,8 +182,8 @@ def _faster_whisper_cache_dir():
 
 
 def _detect_faster_whisper_runtime() -> dict:
-    forced_device = str(os.environ.get("CAPCAP_WHISPER_DEVICE", "") or "").strip().lower()
-    cpu_mode = os.environ.get("CAPCAP_DEVICE", "cuda").strip().lower() == "cpu"
+    forced_device = str(os.environ.get("VIUSTUDIO_WHISPER_DEVICE", "") or "").strip().lower()
+    cpu_mode = os.environ.get("VIUSTUDIO_DEVICE", "cuda").strip().lower() == "cpu"
     runtime = {
         "device": "cpu",
         "compute_type": "int8",
@@ -303,7 +303,7 @@ def _load_whisper_model(model_name):
             # WhisperModel does not publicly expose its selected device. Keep
             # the resolved runtime with the cached instance so batched GPU
             # inference cannot accidentally run after a CPU fallback.
-            setattr(model, "_capcap_runtime_device", runtime["device"])
+            setattr(model, "_viustudio_runtime_device", runtime["device"])
             _WHISPER_MODEL_CACHE[cache_key] = model
             return model
         except Exception as exc:
@@ -337,7 +337,7 @@ def _load_whisper_model(model_name):
                 if fb_error[0]:
                     raise fb_error[0]
                 model = fb_result[0]
-                setattr(model, "_capcap_runtime_device", "cpu")
+                setattr(model, "_viustudio_runtime_device", "cpu")
                 _WHISPER_MODEL_CACHE[fallback_key] = model
                 return model
             raise
@@ -371,9 +371,9 @@ def _gpu_memory_mb() -> int:
 
 def _whisper_gpu_batch_size() -> int:
     """Return the configured GPU batch size, or a VRAM-safe auto value."""
-    if str(os.getenv("CAPCAP_WHISPER_GPU_BATCHED", "1") or "1").strip().lower() in {"0", "false", "no", "off"}:
+    if str(os.getenv("VIUSTUDIO_WHISPER_GPU_BATCHED", "1") or "1").strip().lower() in {"0", "false", "no", "off"}:
         return 0
-    raw = str(os.getenv("CAPCAP_WHISPER_GPU_BATCH_SIZE", "auto") or "auto").strip().lower()
+    raw = str(os.getenv("VIUSTUDIO_WHISPER_GPU_BATCH_SIZE", "auto") or "auto").strip().lower()
     if raw in {"0", "off", "false", "no"}:
         return 0
     if raw not in {"", "auto", "default"}:
@@ -431,7 +431,7 @@ def transcribe_audio_with_model(model, audio_path, *, language="auto", task="tra
     with _WHISPER_TRANSCRIBE_LOCK:
         batch_size = (
             _whisper_gpu_batch_size()
-            if use_batched and getattr(model, "_capcap_runtime_device", "") == "cuda"
+            if use_batched and getattr(model, "_viustudio_runtime_device", "") == "cuda"
             else 0
         )
         if batch_size > 1:
@@ -469,7 +469,7 @@ def transcribe_audio_with_model(model, audio_path, *, language="auto", task="tra
                 segments, _info = _transcribe_with_vad_fallback(model.transcribe, audio_path, transcribe_kwargs)
                 raw_segments = list(segments)
         else:
-            if use_batched and getattr(model, "_capcap_runtime_device", "") == "cuda":
+            if use_batched and getattr(model, "_viustudio_runtime_device", "") == "cuda":
                 print("[Whisper] Standard GPU inference (batched inference disabled).")
             segments, _info = _transcribe_with_vad_fallback(model.transcribe, audio_path, transcribe_kwargs)
             raw_segments = list(segments)
