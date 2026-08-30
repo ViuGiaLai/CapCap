@@ -25,8 +25,47 @@ def is_available() -> bool:
 def _lang_code(code: str) -> str:
     if not code or code in ("auto", ""):
         return "auto"
-    m = {"vi": "zh", "en": "en", "ja": "ja", "ko": "ko", "zh": "zh", "yue": "yue"}
+    # SenseVoice does not have a Vietnamese language lock. Mapping Vietnamese
+    # to Chinese forces the wrong decoder vocabulary; automatic detection is
+    # safer for unsupported languages.
+    m = {"vi": "auto", "en": "en", "ja": "ja", "ko": "ko", "zh": "zh", "yue": "yue"}
     return m.get(code.split("-")[0].strip().lower(), "auto")
+
+
+def _pad_and_merge_vad_segments(
+    segments: list[dict],
+    audio_duration: float,
+    *,
+    merge_gap: float = 0.18,
+    start_padding: float = 0.22,
+    end_padding: float = 0.18,
+) -> list[dict]:
+    """Keep short word onsets from being clipped by hard VAD boundaries."""
+    ordered = []
+    for segment in segments or []:
+        start = max(0.0, float(segment.get("start", 0.0) or 0.0))
+        end = min(float(audio_duration), float(segment.get("end", start) or start))
+        if end > start:
+            ordered.append([start, end])
+    ordered.sort(key=lambda value: value[0])
+    merged: list[list[float]] = []
+    for start, end in ordered:
+        if merged and start - merged[-1][1] <= merge_gap:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+
+    padded = []
+    for index, (start, end) in enumerate(merged):
+        padded_start = max(0.0, start - start_padding)
+        padded_end = min(float(audio_duration), end + end_padding)
+        if index and padded_start < padded[-1]["end"]:
+            boundary = (start + merged[index - 1][1]) * 0.5
+            padded[-1]["end"] = min(padded[-1]["end"], boundary)
+            padded_start = max(padded_start, boundary)
+        if padded_end > padded_start:
+            padded.append({"start": round(padded_start, 3), "end": round(padded_end, 3)})
+    return padded
 
 
 def load_model(model_dir: str, language: str = "auto"):
@@ -79,7 +118,10 @@ def transcribe_audio(audio_path: str, model_dir: str, *, language: str = "auto")
 
     from vad_processor import get_speech_segments
 
-    segments = get_speech_segments(audio, 16000)
+    segments = _pad_and_merge_vad_segments(
+        get_speech_segments(audio, 16000),
+        float(len(audio)) / 16000.0,
+    )
     results = []
     for seg in segments:
         start_s = int(seg["start"] * 16000)

@@ -2,6 +2,7 @@ from importlib import import_module
 
 __all__ = [
     "AsrMergeService",
+    "AsrOcrReconciliationService",
     "ChunkingService",
     "EngineRuntime",
     "GUIProjectBridge",
@@ -17,6 +18,7 @@ __all__ = [
 
 _MODULE_MAP = {
     "AsrMergeService": ".asr_merge_service",
+    "AsrOcrReconciliationService": ".asr_ocr_reconciliation_service",
     "ChunkingService": ".chunking_service",
     "EngineRuntime": ".engine_runtime",
     "GUIProjectBridge": ".gui_project_bridge",

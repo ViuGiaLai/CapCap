@@ -293,12 +293,11 @@ class ResourceDownloadService:
                 matches.append(str(child))
         return matches
 
-    _OCR_REQUIRED_MODELS = [
-        "ch_PP-OCRv4_det_mobile.onnx",
-        "ch_PP-OCRv4_rec_mobile.onnx",
-        "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
-        "ppocr_keys_v1.txt",
+    _OCR_MODEL_SETS = [
+        ("ch_PP-OCRv4_det_mobile.onnx", "ch_PP-OCRv4_rec_mobile.onnx"),
+        ("PP-OCRv6_det_small.onnx", "PP-OCRv6_rec_small.onnx"),
     ]
+    _OCR_CLASSIFIER_MODEL = "ch_ppocr_mobile_v2.0_cls_mobile.onnx"
 
     def _ocr_model_dir(self) -> str:
         # Do not make a lightweight availability check depend on importing the
@@ -330,11 +329,14 @@ class ResourceDownloadService:
         if not models_dir:
             return "missing"
         models_path_dir = os.path.join(models_dir, "models")
-        missing = [
-            m for m in self._OCR_REQUIRED_MODELS
-            if not os.path.isfile(os.path.join(models_path_dir, m))
-        ]
-        return "missing" if missing else "installed"
+        detector_and_recognizer_ready = any(
+            all(os.path.isfile(os.path.join(models_path_dir, name)) for name in model_set)
+            for model_set in self._OCR_MODEL_SETS
+        )
+        classifier_ready = os.path.isfile(
+            os.path.join(models_path_dir, self._OCR_CLASSIFIER_MODEL)
+        )
+        return "installed" if detector_and_recognizer_ready and classifier_ready else "missing"
 
     def is_ocr_ready(self) -> bool:
         return self._ocr_model_status() == "installed"

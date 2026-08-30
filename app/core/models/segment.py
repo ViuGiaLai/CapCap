@@ -69,6 +69,9 @@ class Segment:
         speaker = str(data.get("speaker", "") or "").strip()
         if speaker:
             metadata["speaker"] = speaker
+        for key in ("asr_text_original", "ocr_text", "text_source"):
+            if data.get(key):
+                metadata[key] = data.get(key)
         return cls(
             id=segment_id,
             start=float(data.get("start", 0.0) or 0.0),

@@ -161,17 +161,25 @@ def _load_ocr_engine():
         models_dir = next((path for path in candidates if path and os.path.isdir(path)), "")
         print(f"[OCR] Model directory: {models_dir or '<not found>'}")
 
-        required_models = [
-            "ch_PP-OCRv4_det_mobile.onnx",
-            "ch_PP-OCRv4_rec_mobile.onnx",
-            "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+        supported_model_sets = [
+            ("ch_PP-OCRv4_det_mobile.onnx", "ch_PP-OCRv4_rec_mobile.onnx"),
+            ("PP-OCRv6_det_small.onnx", "PP-OCRv6_rec_small.onnx"),
         ]
-        missing = [m for m in required_models if not models_dir or not os.path.isfile(os.path.join(models_dir, m))]
-        if missing:
+        classifier = "ch_ppocr_mobile_v2.0_cls_mobile.onnx"
+        selected_set = next(
+            (
+                model_set for model_set in supported_model_sets
+                if models_dir and all(os.path.isfile(os.path.join(models_dir, name)) for name in model_set)
+            ),
+            None,
+        )
+        classifier_ready = bool(models_dir and os.path.isfile(os.path.join(models_dir, classifier)))
+        if selected_set is None or not classifier_ready:
+            expected = " or ".join(" + ".join(model_set) for model_set in supported_model_sets)
             raise RuntimeError(
                 "OCR models not found inside the rapidocr package. "
                 "Reinstall the rapidocr package or open Settings → Manage Resources for hints.\n\n"
-                f"Missing: {', '.join(missing)}\n"
+                f"Expected detector/recognizer: {expected}; classifier: {classifier}\n"
                 f"Looked in: {models_dir or 'rapidocr package directory'}"
             )
 
@@ -191,7 +199,7 @@ def _load_ocr_engine():
                     **base_params,
                     "EngineConfig.onnxruntime.use_cuda": True,
                 })
-                print("[OCR] RapidOCR engine loaded (PP-OCRv4 ONNX, CUDA GPU)")
+                print(f"[OCR] RapidOCR engine loaded ({selected_set[0]}, CUDA GPU)")
             except Exception as exc:
                 # This covers a genuine RapidOCR initialization failure after
                 # the provider itself loaded successfully.
@@ -458,11 +466,16 @@ def transcribe_video_ocr(video_path, *, region="bottom", fps=None, ocr_engine=No
         skip_count = 0
         unchanged_skip_count = 0
         blank_skip_count = 0
-        step = max(0, int(start_seconds * fps))
+        # ``fps`` is the requested sampling rate, not the video's frame rate.
+        # Multiplying a sampling index by a rounded ``frame_step`` drifts far
+        # enough to skip a requested time range (30 FPS sampled at 4 FPS used
+        # to seek 80.5s as 85.9s). Anchor every range at its exact source frame.
+        start_frame = max(0, int(round(start_seconds * video_fps)))
+        sample_index = 0
         sampled_count = 0
 
         while True:
-            frame_idx = step * frame_step
+            frame_idx = start_frame + sample_index * frame_step
             decode_started = time.perf_counter()
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, img = cap.read()
@@ -498,7 +511,7 @@ def transcribe_video_ocr(video_path, *, region="bottom", fps=None, ocr_engine=No
                     ocr_count += 1
                     prev_hash = cur_hash
 
-            step += 1
+            sample_index += 1
 
             if sampled_count % 30 == 0:
                 pct = sampled_count * 100 // total_steps if total_steps > 0 else 0
@@ -527,7 +540,7 @@ def transcribe_video_ocr(video_path, *, region="bottom", fps=None, ocr_engine=No
                 combined = " ".join(seg_text_lines).strip()
                 if combined:
                     segments.append({"start": seg_start, "end": end_ts, "text": combined, "words": []})
-            seg_start = 0.0 if step == 1 else timestamp - frame_interval * 0.5
+            seg_start = start_seconds if sample_index == 1 else max(start_seconds, timestamp - frame_interval * 0.5)
             seg_text_lines = texts
             prev_texts = texts
             profiling["temporal"] += time.perf_counter() - temporal_started
