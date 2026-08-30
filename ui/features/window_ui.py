@@ -267,17 +267,24 @@ class WindowUiMixin:
         if video_view is not None:
             video_view.setMinimumHeight(video_min)
 
-        # Reduce header chrome in compact mode without removing actions.
-        for button in (getattr(self, "run_all_btn", None), getattr(self, "export_btn", None),
-                       getattr(self, "more_actions_btn", None)):
+        # Keep the action group balanced at every DPI.  Fixed, coordinated
+        # widths prevent the overflow button from stretching into a large
+        # empty rectangle when the project title has little room.
+        header_height = 36 if compact_height else 40
+        header_sizes = (
+            ("run_all_btn", 118 if compact_width else 132),
+            ("export_btn", 82 if compact_width else 92),
+            ("preview_5s_btn", 110 if compact_width else 124),
+            ("header_home_btn", 86 if compact_width else 96),
+            ("more_actions_btn", 78 if compact_width else 86),
+        )
+        for attr, button_width in header_sizes:
+            button = getattr(self, attr, None)
             if button is not None:
-                button.setMinimumHeight(34 if compact_height else 42)
+                button.setFixedSize(button_width, header_height)
         preview_button = getattr(self, "preview_5s_btn", None)
         if preview_button is not None:
             preview_button.setVisible(not compact_width)
-        more_button = getattr(self, "more_actions_btn", None)
-        if more_button is not None:
-            more_button.setMinimumWidth(84 if compact_width else 180)
         logo = getattr(self, "header_logo_label", None)
         if logo is not None:
             logo.setVisible(not compact_width)

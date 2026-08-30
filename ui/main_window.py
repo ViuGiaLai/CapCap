@@ -242,47 +242,196 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, MultiVideoTimelineMixin, AutoRe
             /* Generate — primary CTA */
             QPushButton#mainActionBtn, QToolButton#mainActionBtn {
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #2dbd9a, stop:1 #1e9078);
-                color: #071210;
-                border: none;
-                border-bottom: 2px solid #136754;
-                border-radius: 9px;
+                    stop:0 #36d0ad, stop:1 #22a889);
+                color: #061511;
+                border: 1px solid #48dfbd;
+                border-radius: 10px;
                 font-size: 13px;
-                font-weight: 700;
-                padding: 5px 13px;
-                letter-spacing: 0.2px;
+                font-weight: 800;
+                padding: 0px 18px;
+                letter-spacing: 0.4px;
             }
             QPushButton#mainActionBtn:hover, QToolButton#mainActionBtn:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #40d4ae, stop:1 #25a98d);
+                    stop:0 #50e2c0, stop:1 #2fbd9b);
+                border-color: #7af0d2;
             }
             QPushButton#mainActionBtn:pressed, QToolButton#mainActionBtn:pressed {
-                border-bottom: 1px solid #0e4d3c;
-                padding-top: 9px;
+                background-color: #1d9478;
+                border-color: #1d9478;
+            }
+            QPushButton#mainActionBtn:disabled, QToolButton#mainActionBtn:disabled {
+                background-color: #17352f;
+                color: #57766f;
+                border-color: #214b42;
             }
             QToolButton#mainActionBtn::menu-indicator { image: none; width: 0px; }
 
-            /* Secondary header buttons */
+            /* Header actions */
+            QPushButton#headerActionBtn {
+                background-color: #142338;
+                color: #d5e5f5;
+                border: 1px solid #2d4b6b;
+                border-radius: 10px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0px 14px;
+            }
+            QPushButton#headerActionBtn[accent="true"] {
+                background-color: #15304a;
+                color: #9fd7ff;
+                border-color: #2d6f9d;
+            }
+            QPushButton#headerActionBtn:hover,
+            QPushButton#headerActionBtn[accent="true"]:hover {
+                background-color: #1c3a57;
+                border-color: #4b97ca;
+                color: #f2f8ff;
+            }
+            QPushButton#headerActionBtn:pressed { background-color: #10283f; }
+            QPushButton#headerActionBtn:disabled {
+                background-color: #101b29;
+                color: #52657a;
+                border-color: #1c2d40;
+            }
+
+            /* Header navigation and overflow stay visually quieter. */
+            QPushButton#headerNavBtn, QPushButton#headerMenuBtn {
+                background-color: transparent;
+                color: #9eb1c7;
+                border: 1px solid transparent;
+                border-radius: 10px;
+                padding: 0px 12px;
+                font-size: 12px;
+                font-weight: 650;
+            }
+            QPushButton#headerNavBtn:hover, QPushButton#headerMenuBtn:hover {
+                background-color: #15253a;
+                color: #e9f2fb;
+                border-color: #29435f;
+            }
+            QPushButton#headerNavBtn:pressed, QPushButton#headerMenuBtn:pressed {
+                background-color: #102033;
+            }
+            QPushButton#headerMenuBtn::menu-indicator { image: none; width: 0px; }
+
             QPushButton#secondaryActionBtn {
-                background-color: #142032;
-                color: #c8dcf0;
-                border: 1px solid #2e5070;
-                border-bottom: 2px solid #1e3d58;
+                background-color: #142338;
+                color: #c8d8e8;
+                border: 1px solid #29445f;
                 border-radius: 9px;
                 font-size: 12px;
                 font-weight: 700;
-                padding: 5px 12px;
             }
             QPushButton#secondaryActionBtn:hover {
-                background-color: #1a2d44;
-                border-color: #4480b0;
-                color: #e8f4ff;
+                background-color: #1a3049;
+                border-color: #427ba8;
+                color: #eef7ff;
             }
-            QPushButton#secondaryActionBtn:pressed {
-                border-bottom: 1px solid #1a3248;
-                padding-top: 8px;
+
+            QPushButton#titleBarButton, QPushButton#titleBarCloseButton {
+                background-color: transparent;
+                color: #788ba2;
+                border: none;
+                border-radius: 8px;
+                padding: 0px;
+                font-size: 13px;
+                font-weight: 700;
             }
-            QPushButton#secondaryActionBtn::menu-indicator { width: 0px; image: none; }
+            QPushButton#titleBarButton:hover {
+                background-color: #17263a;
+                color: #f1f6fb;
+            }
+            QPushButton#titleBarCloseButton:hover {
+                background-color: #d94b5b;
+                color: #ffffff;
+            }
+
+            /* Compact preview transport and editing tools */
+            QFrame#previewTransportBar {
+                background-color: #0c1725;
+                border: 1px solid #1d3148;
+                border-radius: 10px;
+            }
+            QFrame#previewTransportSeparator {
+                background-color: #22384f;
+                border: none;
+                margin-top: 5px;
+                margin-bottom: 5px;
+            }
+            QPushButton#previewTransportIconBtn {
+                background-color: transparent;
+                border: 1px solid transparent;
+                border-radius: 8px;
+                padding: 0px;
+            }
+            QPushButton#previewTransportIconBtn:hover {
+                background-color: #172a40;
+                border-color: #315578;
+            }
+            QPushButton#previewTransportIconBtn:pressed {
+                background-color: #0f2236;
+                border-color: #3b719e;
+            }
+            QPushButton#previewTransportIconBtn:disabled {
+                background-color: transparent;
+                border-color: transparent;
+            }
+            QPushButton#previewToolBtn {
+                background-color: #111f30;
+                color: #b8c9da;
+                border: 1px solid #263d57;
+                border-radius: 4px;
+                padding: 0px 6px;
+                font-size: 11px;
+                font-weight: 650;
+            }
+            QPushButton#previewToolBtn:hover {
+                background-color: #19304a;
+                color: #eef7ff;
+                border-color: #4077a5;
+            }
+            QPushButton#previewToolBtn:pressed {
+                background-color: #10263b;
+                border-color: #4b91c5;
+            }
+            QPushButton#previewToolBtn[toolKind="ocr"]:checked {
+                background-color: #3b2557;
+                color: #f1ddff;
+                border-color: #a855f7;
+            }
+            QPushButton#previewToolBtn:disabled {
+                background-color: #0e1926;
+                color: #46596d;
+                border-color: #192a3c;
+            }
+            QLabel#previewSpeedLabel {
+                color: #72879e;
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QComboBox#previewSpeedCombo {
+                background-color: #111f30;
+                color: #d7e5f2;
+                border: 1px solid #29445f;
+                border-radius: 4px;
+                padding: 0px 4px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QComboBox#previewSpeedCombo:hover {
+                background-color: #172b42;
+                border-color: #4077a5;
+            }
+            QLabel#previewTimeLabel {
+                background-color: #0e282a;
+                color: #6ee7d6;
+                border: 1px solid #205052;
+                border-radius: 4px;
+                padding: 2px 6px;
+                font-size: 11px;
+                font-weight: 800;
+            }
 
             /* Workflow tab buttons */
             QPushButton#workflowTabBtn {

@@ -29,13 +29,15 @@ class WorkflowActionsMixin:
         # remains optional: if it has not been generated, Export and Fast
         # Preview retain the source audio and burn the translated subtitles.
         # Voice-only projects without subtitles keep their historical rule.
-        can_export = v_ok and (
-            has_subtitle_track
-            or (mode == "voice" and has_voice_audio)
-            or bool(getattr(self, "current_auto_recap_edl", None))
-            or bool(getattr(self, "last_recap_video_path", ""))
-            or bool(self.get_active_segments())
-        )
+        # A loaded video is always exportable. Subtitle/voice work is
+        # optional: when neither exists, Export creates a source-video copy
+        # instead of leaving a valid project with a disabled primary action.
+        export_thread = getattr(self, "export_thread", None)
+        try:
+            export_running = bool(export_thread and export_thread.isRunning())
+        except RuntimeError:
+            export_running = False
+        can_export = v_ok and not export_running
 
         self.extract_btn.setEnabled(v_ok)
         self.vocal_sep_btn.setEnabled(a_ok)

@@ -614,6 +614,11 @@ class MpvMediaPlayerBackend(QObject):
         self.log(f"[Preview] MPV video output: {'gpu-next' if gpu_next_enabled else 'gpu'}")
 
         def _apply_loaded_state_main_thread():
+            if self._position_ms > 0:
+                try:
+                    self._player.command('seek', self._position_ms / 1000.0, 'absolute')
+                except Exception:
+                    pass
             self._apply_current_subtitle()
             self._apply_blur_filter()
 
@@ -1666,3 +1671,4 @@ def prepare_mpv_bundle():
             raise RuntimeError(
                 f"{summary} ({details})"
             ) from exc
+

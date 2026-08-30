@@ -9,6 +9,24 @@ from PySide6.QtGui import QBitmap, QColor, QFont, QFontMetrics, QPainter, QPaint
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 
+def _preview_host_is_available(view: QWidget | None) -> bool:
+    """Return whether a top-level editor overlay may safely be shown.
+
+    MPV owns a native child surface, therefore edit overlays must remain Qt
+    tool windows to stay above it.  A tool window is not automatically hidden
+    on every minimize/hide path in Windows, so never show one unless both the
+    preview and its owning CapCap window are currently visible.
+    """
+    if view is None or not view.isVisible():
+        return False
+    host = view.window()
+    return bool(
+        host
+        and host.isVisible()
+        and not bool(host.windowState() & Qt.WindowMinimized)
+    )
+
+
 class _SubtitleOverlayWidget(QWidget):
     """A real-time overlay widget for MpvVideoView."""
     positionDragStarted = Signal()
@@ -62,6 +80,7 @@ class _SubtitleOverlayWidget(QWidget):
         self._suppressed = False
         self._drag_grab_offset = QPointF()
         self._target_view = parent
+        self._host_window = None
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setCursor(Qt.ArrowCursor)
@@ -69,6 +88,26 @@ class _SubtitleOverlayWidget(QWidget):
 
     def attach_to_view(self, view: QWidget):
         self._target_view = view
+        host = view.window() if view is not None else None
+        if host is self._host_window:
+            return
+        if self._host_window is not None:
+            self._host_window.removeEventFilter(self)
+        self._host_window = host
+        if self._host_window is not None:
+            self._host_window.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if watched is self._host_window and event.type() in (
+            QEvent.WindowDeactivate,
+            QEvent.Hide,
+            QEvent.Close,
+            QEvent.WindowStateChange,
+        ):
+            # This native-surface overlay is an independent tool window;
+            # always hide it when the CapCap host stops being present.
+            self.hide()
+        return super().eventFilter(watched, event)
 
     def set_editable(self, editable: bool):
         """Allow moving this subtitle layer only for a selected TS segment."""
@@ -88,7 +127,12 @@ class _SubtitleOverlayWidget(QWidget):
         # This is a top-level tool window so it can cover MPV's native
         # surface. Never let it be shown above an active modal dialog.
         modal = QApplication.activeModalWidget()
-        if self._suppressed or (modal is not None and modal.isVisible()):
+        if (
+            self._suppressed
+            or not _preview_host_is_available(self._target_view)
+            or (modal is not None and modal.isVisible())
+        ):
+            super().hide()
             return
         super().show()
 
@@ -575,8 +619,7 @@ class _BlurRegionOverlayWindow(QWidget):
     def sync_to_view(self):
         if (
             self._suspended
-            or not self._target_view
-            or not self._target_view.isVisible()
+            or not _preview_host_is_available(self._target_view)
             or not self._regions
             or not self._editable
         ):
@@ -599,10 +642,17 @@ class _BlurRegionOverlayWindow(QWidget):
 
     def eventFilter(self, watched, event):
         if watched is self._main_window:
-            if event.type() == QEvent.WindowDeactivate:
+            event_type = event.type()
+            if event_type in (QEvent.WindowDeactivate, QEvent.Hide, QEvent.Close):
                 self._suspended = True
                 self.hide()
-            elif event.type() == QEvent.WindowActivate:
+            elif event_type == QEvent.WindowStateChange:
+                self._suspended = not _preview_host_is_available(self._target_view)
+                if self._suspended:
+                    self.hide()
+                elif self._editable and self._regions and not self._has_active_popup():
+                    self._queue_sync_to_view()
+            elif event_type == QEvent.WindowActivate:
                 self._suspended = False
                 if self._editable and self._regions and not self._has_active_popup():
                     self._queue_sync_to_view()
@@ -1196,17 +1246,26 @@ class _TextLayerOverlayWindow(QWidget):
         super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-        self._target_view, self._items, self._active_id = None, [], ""
+        self._target_view, self._host_window, self._items, self._active_id = None, None, [], ""
         self._drag_id, self._drag_offset, self._suppressed = "", QPointF(), False
         self._editable = False
         self.hide()
 
-    def attach_to_view(self, view): self._target_view = view
+    def attach_to_view(self, view):
+        self._target_view = view
+        host = view.window() if view is not None else None
+        if host is self._host_window:
+            return
+        if self._host_window is not None:
+            self._host_window.removeEventFilter(self)
+        self._host_window = host
+        if self._host_window is not None:
+            self._host_window.installEventFilter(self)
     def set_suppressed(self, suppressed):
         self._suppressed = bool(suppressed)
         if self._suppressed:
             super().hide()
-        elif self._items and self._target_view and self._target_view.isVisible():
+        elif self._items and _preview_host_is_available(self._target_view):
             self.sync_to_view(); super().show(); self.raise_()
     def set_editable(self, editable):
         """Make the tool overlay interactive only in paused Edit Mode."""
@@ -1220,15 +1279,25 @@ class _TextLayerOverlayWindow(QWidget):
     def set_items(self, items, active_id=""):
         self._items, self._active_id = list(items or []), str(active_id or "")
         self.sync_to_view(); self._update_input_mask(); self.update()
-        if self._items and not self._suppressed and self._target_view and self._target_view.isVisible(): self.show(); self.raise_()
+        if self._items and not self._suppressed and _preview_host_is_available(self._target_view): self.show(); self.raise_()
         elif not self._items: self.hide()
     def sync_to_view(self):
-        if not self._target_view: return
+        if not _preview_host_is_available(self._target_view):
+            self.hide()
+            return
         canvas = self._target_view.get_preview_canvas_rect()
         if canvas.width() > 0 and canvas.height() > 0:
             canvas_rect = canvas.toRect() if hasattr(canvas, "toRect") else canvas
             self.setGeometry(QRect(self._target_view.mapToGlobal(canvas_rect.topLeft()), canvas_rect.size()))
             self._update_input_mask()
+    def eventFilter(self, watched, event):
+        if watched is self._host_window:
+            event_type = event.type()
+            if event_type in (QEvent.WindowDeactivate, QEvent.Hide, QEvent.Close, QEvent.WindowStateChange):
+                self.hide()
+            elif event_type == QEvent.WindowActivate and self._items and not self._suppressed:
+                QTimer.singleShot(0, self.sync_to_view)
+        return super().eventFilter(watched, event)
 
     def _update_input_mask(self):
         """Let clicks pass through unused parts of this full-canvas tool window."""
@@ -1529,7 +1598,7 @@ class MpvVideoView(QWidget):
                 QTimer.singleShot(0, self._restore_subtitle_overlay)
             else:
                 blocked_type = getattr(QEvent.Type, "WindowBlocked", None)
-                if event_type != QEvent.WindowDeactivate and event_type != blocked_type:
+                if event_type not in (QEvent.WindowDeactivate, QEvent.Hide, QEvent.Close, QEvent.WindowStateChange, blocked_type):
                     return super().eventFilter(watched, event)
                 # Modal dialogs do not own this top-level overlay, so hide it
                 # explicitly while the parent window is blocked.
@@ -1539,7 +1608,7 @@ class MpvVideoView(QWidget):
         return super().eventFilter(watched, event)
 
     def _restore_subtitle_overlay(self):
-        if not self.isVisible():
+        if not _preview_host_is_available(self):
             return
         modal = QApplication.activeModalWidget()
         if modal is not None and modal.isVisible():

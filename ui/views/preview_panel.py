@@ -44,10 +44,24 @@ def _import_editor_timeline():
 
 def _set_preview_icon_button(button: QPushButton, icon_path: str, tooltip: str):
     button.setText("")
-    button.setFixedSize(38, 38)
+    button.setObjectName("previewTransportIconBtn")
+    button.setFixedSize(34, 34)
     button.setIcon(load_icon(icon_path, 18))
     button.setIconSize(QSize(18, 18))
-    button.setStyleSheet("QPushButton { padding: 0; }")
+    button.setToolTip(tooltip)
+    button.setCursor(Qt.PointingHandCursor)
+
+
+def _preview_overlay_host_is_available(view: QWidget | None) -> bool:
+    """Prevent native-surface overlays from escaping onto the desktop."""
+    if view is None or not view.isVisible():
+        return False
+    host = view.window()
+    return bool(
+        host
+        and host.isVisible()
+        and not bool(host.windowState() & Qt.WindowMinimized)
+    )
 
 
 class OcrRegionOverlay(QWidget):
@@ -164,9 +178,15 @@ class OcrRegionOverlay(QWidget):
 
     def eventFilter(self, obj, event):
         if obj is self._main_window:
-            if event.type() == QtCore.QEvent.WindowDeactivate:
+            event_type = event.type()
+            if event_type in (
+                QtCore.QEvent.WindowDeactivate,
+                QtCore.QEvent.Hide,
+                QtCore.QEvent.Close,
+                QtCore.QEvent.WindowStateChange,
+            ):
                 self.hide()
-            elif event.type() in (QtCore.QEvent.WindowActivate, QtCore.QEvent.Resize, QtCore.QEvent.Move, QtCore.QEvent.Show):
+            elif event_type in (QtCore.QEvent.WindowActivate, QtCore.QEvent.Resize, QtCore.QEvent.Move, QtCore.QEvent.Show):
                 if self._is_requested_visible():
                     self.sync_to_view()
                 else:
@@ -174,7 +194,7 @@ class OcrRegionOverlay(QWidget):
         return False
 
     def sync_to_view(self):
-        if not self._target_view:
+        if not _preview_overlay_host_is_available(self._target_view):
             self.hide()
             return
         if self._main_window is None and self._target_view.window() is not None:
@@ -416,15 +436,21 @@ class OcrTranslatorOverlay(QWidget):
 
     def eventFilter(self, obj, event):
         if obj is self._main_window:
-            if event.type() == QtCore.QEvent.WindowDeactivate:
+            event_type = event.type()
+            if event_type in (
+                QtCore.QEvent.WindowDeactivate,
+                QtCore.QEvent.Hide,
+                QtCore.QEvent.Close,
+                QtCore.QEvent.WindowStateChange,
+            ):
                 self.hide()
-            elif event.type() in (QtCore.QEvent.WindowActivate, QtCore.QEvent.Resize, QtCore.QEvent.Move, QtCore.QEvent.Show):
+            elif event_type in (QtCore.QEvent.WindowActivate, QtCore.QEvent.Resize, QtCore.QEvent.Move, QtCore.QEvent.Show):
                 if bool(getattr(self._main_window, "_ocr_translator_active", False)):
                     self.sync_to_view()
         return False
 
     def sync_to_view(self):
-        if not self._target_view:
+        if not _preview_overlay_host_is_available(self._target_view):
             self.hide()
             return
         current_window = self._target_view.window()
@@ -803,7 +829,9 @@ def build_preview_panel(gui):
         lambda _t: gui.on_add_timeline_layer("subtitle") if hasattr(gui, "on_add_timeline_layer") else None
     )
     gui.time_label = QLabel("00:00 / 00:00")
-    gui.time_label.setStyleSheet("font-weight: bold; min-width: 100px; color: #6ee7d6;")
+    gui.time_label.setObjectName("previewTimeLabel")
+    gui.time_label.setMinimumWidth(100)
+    gui.time_label.setAlignment(Qt.AlignCenter)
 
     preview_card = QFrame()
     preview_card.setObjectName("statusCard")
@@ -822,10 +850,9 @@ def build_preview_panel(gui):
 
     def _make_sep():
         sep = QFrame()
+        sep.setObjectName("previewTransportSeparator")
         sep.setFrameShape(QFrame.VLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        sep.setFixedWidth(2)
-        sep.setStyleSheet("QFrame { color: #444; }")
+        sep.setFixedWidth(1)
         return sep
 
     gui.play_btn = QPushButton()
@@ -840,39 +867,42 @@ def build_preview_panel(gui):
     gui.ocr_translator_btn = QPushButton("OCR")
     gui.ocr_translator_btn.setCheckable(True)
 
+
+
     _set_preview_icon_button(gui.play_btn, os.path.join(icons_dir, "play.svg"), "Play or pause preview")
     _set_preview_icon_button(gui.stop_btn, os.path.join(icons_dir, "reset.svg"), "Reset preview to the beginning")
     _set_preview_icon_button(gui.preview_btn, os.path.join(icons_dir, "preview.svg"), "Render a fresh preview using current subtitle and audio")
     _set_preview_icon_button(gui.blur_area_btn, os.path.join(icons_dir, "blur.svg"), "Turn blur effect on or off")
-
-    gui.play_btn.setFixedSize(34, 32)
-    gui.stop_btn.setFixedSize(34, 32)
-    gui.preview_btn.setFixedSize(34, 32)
+    gui.play_btn.setFixedSize(28, 28)
+    gui.stop_btn.setFixedSize(28, 28)
+    gui.preview_btn.setFixedSize(28, 28)
 
     gui.blur_add_btn.setToolTip("Add a blur region")
-    gui.blur_add_btn.setFixedHeight(30)
-    gui.blur_add_btn.setMinimumWidth(50)
+    gui.blur_add_btn.setObjectName("previewToolBtn")
+    gui.blur_add_btn.setFixedSize(42, 26)
+    gui.blur_add_btn.setCursor(Qt.PointingHandCursor)
     gui.blur_add_btn.setEnabled(False)
 
     gui.ocr_region_btn.setToolTip("Edit OCR subtitle region")
-    gui.ocr_region_btn.setFixedSize(58, 32)
+    gui.ocr_region_btn.setFixedSize(48, 26)
     gui.ocr_region_btn.hide()
 
-    gui.ocr_translator_btn.setFixedSize(54, 32)
+    gui.ocr_translator_btn.setObjectName("previewToolBtn")
+    gui.ocr_translator_btn.setProperty("toolKind", "ocr")
+    gui.ocr_translator_btn.setFixedSize(42, 26)
+    gui.ocr_translator_btn.setCursor(Qt.PointingHandCursor)
     gui.ocr_translator_btn.setToolTip("Capture and translate visual text from the current video frame")
-    gui.ocr_translator_btn.setStyleSheet(
-        "QPushButton:checked { background: #3b2557; border-color: #a855f7; color: #ffffff; }"
-    )
 
     gui.preview_speed_combo = QComboBox()
+    gui.preview_speed_combo.setObjectName("previewSpeedCombo")
     gui.preview_speed_combo.addItem("0.75x", 0.75)
     gui.preview_speed_combo.addItem("1.0x", 1.0)
     gui.preview_speed_combo.addItem("1.25x", 1.25)
     gui.preview_speed_combo.addItem("1.5x", 1.5)
     gui.preview_speed_combo.addItem("2.0x", 2.0)
     gui.preview_speed_combo.setCurrentIndex(1)
-    gui.preview_speed_combo.setFixedWidth(64)
-    gui.preview_speed_combo.setFixedHeight(30)
+    gui.preview_speed_combo.setFixedSize(60, 26)
+    gui.preview_speed_combo.setCursor(Qt.PointingHandCursor)
 
     play_group = QHBoxLayout()
     play_group.setSpacing(4)
@@ -881,14 +911,14 @@ def build_preview_panel(gui):
     play_group.addWidget(gui.preview_btn)
 
     blur_group = QHBoxLayout()
-    blur_group.setSpacing(4)
-    # The blur ON/OFF toggle is controlled by clicking the B1
-    # track label in the timeline's left strip (like audio mute).
+    blur_group.setSpacing(0)
     gui.blur_area_btn.setVisible(False)
+
     # Dedicated Logo / Watermark button (beside the Blur button)
     gui.add_logo_btn = QPushButton("Logo")
-    gui.add_logo_btn.setFixedHeight(30)
-    gui.add_logo_btn.setMinimumWidth(52)
+    gui.add_logo_btn.setObjectName("previewToolBtn")
+    gui.add_logo_btn.setFixedSize(42, 26)
+    gui.add_logo_btn.setCursor(Qt.PointingHandCursor)
     gui.add_logo_btn.setEnabled(False)
     gui.add_logo_btn.setToolTip("Add a logo or watermark image to the video")
     gui.add_logo_btn.clicked.connect(
@@ -897,21 +927,24 @@ def build_preview_panel(gui):
     # Dedicated Mask button (beside the Logo button). Adds a new
     # rectangular mask to the M1 track.
     gui.add_mask_btn = QPushButton("Mask")
-    gui.add_mask_btn.setFixedHeight(30)
-    gui.add_mask_btn.setMinimumWidth(54)
+    gui.add_mask_btn.setObjectName("previewToolBtn")
+    gui.add_mask_btn.setFixedSize(42, 26)
+    gui.add_mask_btn.setCursor(Qt.PointingHandCursor)
     gui.add_mask_btn.setEnabled(False)
     gui.add_mask_btn.setToolTip("Add a rectangular mask to the video")
     gui.add_mask_btn.clicked.connect(
         lambda: gui.on_add_timeline_layer("mask") if hasattr(gui, "on_add_timeline_layer") else None
     )
     gui.add_text_btn = QPushButton("Text")
-    gui.add_text_btn.setFixedHeight(30)
-    gui.add_text_btn.setMinimumWidth(50)
+    gui.add_text_btn.setObjectName("previewToolBtn")
+    gui.add_text_btn.setFixedSize(42, 26)
+    gui.add_text_btn.setCursor(Qt.PointingHandCursor)
     gui.add_text_btn.setEnabled(False)
     gui.add_text_btn.setToolTip("Add editable text to the video")
     gui.add_text_btn.clicked.connect(
         lambda: gui.on_add_timeline_layer("text") if hasattr(gui, "on_add_timeline_layer") else None
     )
+
     blur_group.addWidget(gui.blur_add_btn)
     blur_group.addWidget(gui.add_logo_btn)
     blur_group.addWidget(gui.add_mask_btn)
@@ -922,13 +955,16 @@ def build_preview_panel(gui):
     speed_group = QHBoxLayout()
     speed_group.setSpacing(4)
     speed_label = QLabel("Speed")
-    speed_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+    speed_label.setObjectName("previewSpeedLabel")
     speed_group.addWidget(speed_label)
     speed_group.addWidget(gui.preview_speed_combo)
 
-    transport_row = QHBoxLayout()
+    transport_bar = QFrame()
+    transport_bar.setObjectName("previewTransportBar")
+    gui.preview_transport_bar = transport_bar
+    transport_row = QHBoxLayout(transport_bar)
     transport_row.setContentsMargins(4, 4, 4, 4)
-    transport_row.setSpacing(8)
+    transport_row.setSpacing(4)
     transport_row.addLayout(play_group)
     transport_row.addWidget(_make_sep())
     transport_row.addLayout(blur_group)
@@ -936,7 +972,7 @@ def build_preview_panel(gui):
     transport_row.addWidget(_make_sep())
     transport_row.addLayout(speed_group)
     transport_row.addWidget(gui.time_label)
-    preview_card_layout.addLayout(transport_row)
+    preview_card_layout.addWidget(transport_bar)
     gui.frame_preview_badge_label.setParent(preview_card)
     gui.frame_preview_badge_label.raise_()
 

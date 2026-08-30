@@ -61,15 +61,24 @@ def toggle_play(gui):
         if hasattr(gui, "audio_preview_player"):
             gui.audio_preview_player.stop()
 
-        video_path = ""
-        if hasattr(gui, "video_path_edit"):
-            video_path = gui.video_path_edit.text().strip()
+        video_path = getattr(gui, "last_preview_video_path", "")
+        if not video_path or not os.path.exists(video_path):
+            if hasattr(gui, "video_path_edit"):
+                video_path = gui.video_path_edit.text().strip()
 
         # If the backend lost its loaded source after UI/state changes, restore it lazily.
         if video_path and os.path.exists(video_path):
             source_path = str(getattr(gui.media_player, "_source_path", "") or "")
             if not source_path:
+                current_timeline_pos = 0
+                try:
+                    if hasattr(gui, "timeline"):
+                        current_timeline_pos = int(gui.timeline._playhead * 1000)
+                except Exception:
+                    pass
                 gui.media_player.setSource(QUrl.fromLocalFile(video_path))
+                if current_timeline_pos > 0:
+                    gui.media_player.setPosition(current_timeline_pos)
 
         has_active_video_filters = bool(hasattr(gui, "has_active_video_filters") and gui.has_active_video_filters())
         filter_workflow_active = bool(hasattr(gui, "is_filter_workflow_active") and gui.is_filter_workflow_active())

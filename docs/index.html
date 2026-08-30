@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CapCap | Windows Desktop Video Localization Editor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        background: '#000000',
+                        surface: '#0A0A0A',
+                        surfaceHover: '#141414',
+                        border: 'rgba(255, 255, 255, 0.08)',
+                        textMuted: '#888888',
+                        primary: '#FFFFFF',
+                        accent: '#5E6AD2',
+                        accentGlow: 'rgba(94, 106, 210, 0.4)'
+                    },
+                    animation: {
+                        'float': 'float 6s ease-in-out infinite',
+                        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'fade-in': 'fadeIn 1s ease-out forwards',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-20px)' },
+                        },
+                        fadeIn: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #000;
+            color: #fff;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* Ambient Background Glow */
+        .ambient-glow {
+            position: absolute;
+            top: -20%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80vw;
+            height: 500px;
+            background: radial-gradient(ellipse at top, rgba(94, 106, 210, 0.15) 0%, rgba(0, 0, 0, 0) 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Glassmorphism Navigation */
+        .nav-blur {
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        /* Stunning Gradient Text */
+        .text-gradient {
+            background: linear-gradient(135deg, #FFFFFF 0%, #A5A5A5 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .text-gradient-accent {
+            background: linear-gradient(135deg, #A8B1FF 0%, #5E6AD2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* Premium Buttons */
+        .btn-primary {
+            background: #FFFFFF;
+            color: #000000;
+            border: 1px solid transparent;
+            transition: all 0.2s ease;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+        }
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 25px rgba(255, 255, 255, 0.2);
+            background: #F0F0F0;
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.03);
+            color: #FFFFFF;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Hero Image Showcase */
+        .hero-showcase {
+            position: relative;
+            border-radius: 12px;
+            padding: 8px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 100%);
+            box-shadow: 0 25px 80px -10px rgba(94, 106, 210, 0.3);
+        }
+        .hero-showcase::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 12px;
+            padding: 1px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.2), rgba(255,255,255,0));
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            pointer-events: none;
+        }
+        .hero-showcase img {
+            border-radius: 8px;
+            border: 1px solid rgba(0,0,0,0.8);
+        }
+
+        /* Feature Cards */
+        .feature-card {
+            background: linear-gradient(180deg, #0A0A0A 0%, #050505 100%);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 32px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .feature-card:hover {
+            border-color: rgba(94, 106, 210, 0.3);
+            transform: translateY(-2px);
+        }
+        .feature-card::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .feature-card:hover::after {
+            opacity: 1;
+        }
+        
+        .icon-box {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: #fff;
+            margin-bottom: 24px;
+        }
+
+        /* Workflow Steps */
+        .workflow-step {
+            position: relative;
+            padding-left: 40px;
+            padding-bottom: 40px;
+        }
+        .workflow-step::before {
+            content: '';
+            position: absolute;
+            left: 11px;
+            top: 30px;
+            bottom: 0;
+            width: 2px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .workflow-step:last-child::before {
+            display: none;
+        }
+        .step-dot {
+            position: absolute;
+            left: 0;
+            top: 4px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #000;
+            border: 2px solid #5E6AD2;
+            box-shadow: 0 0 10px rgba(94, 106, 210, 0.5);
+            z-index: 1;
+        }
+    </style>
+</head>
+<body class="selection:bg-accent selection:text-white">
+
+    <!-- Ambient Glow -->
+    <div class="ambient-glow"></div>
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 nav-blur transition-all duration-300">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded bg-white text-black flex items-center justify-center font-bold text-lg leading-none">
+                        C
+                    </div>
+                    <span class="text-xl font-semibold tracking-tight text-white">CapCap</span>
+                </div>
+                
+                <div class="hidden md:flex space-x-8">
+                    <a href="#features" class="text-sm font-medium text-textMuted hover:text-white transition-colors">Features</a>
+                    <a href="#workflow" class="text-sm font-medium text-textMuted hover:text-white transition-colors">Workflow</a>
+                    <a href="https://github.com/notepower2k1/CapCap" class="text-sm font-medium text-textMuted hover:text-white transition-colors">GitHub</a>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    <a href="https://github.com/notepower2k1/CapCap" class="hidden md:flex items-center gap-2 btn-primary px-5 py-2 rounded-full font-semibold text-sm">
+                        Download Source
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden z-10">
+        <div class="max-w-6xl mx-auto px-6 relative text-center">
+            
+            <div class="animate-fade-in">
+                <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-border bg-white/[0.03] text-xs font-medium text-textMuted mb-8 backdrop-blur-md">
+                    <span class="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+                    Windows Desktop Video Localization
+                </div>
+
+                <h1 class="text-5xl md:text-7xl font-bold tracking-tighter mb-6 leading-[1.1]">
+                    The ultimate editor for <br>
+                    <span class="text-gradient-accent">subtitles & translation</span>
+                </h1>
+                
+                <p class="text-lg md:text-xl text-textMuted max-w-2xl mx-auto mb-10 leading-relaxed">
+                    CapCap is a Windows desktop application for creating Vietnamese or English subtitles, translated video, voice-over, and timed visual layers.
+                </p>
+
+                <div class="flex flex-col sm:flex-row justify-center gap-4 mb-20">
+                    <a href="https://github.com/notepower2k1/CapCap" class="btn-primary px-8 py-3.5 rounded-full font-semibold flex items-center justify-center gap-2 text-base">
+                        <i class="fab fa-windows text-lg"></i>
+                        Run from Source
+                    </a>
+                    <a href="docs/how-to-use.md" class="btn-secondary px-8 py-3.5 rounded-full font-semibold flex items-center justify-center gap-2 text-base">
+                        <i class="fas fa-book text-textMuted"></i>
+                        Read Documentation
+                    </a>
+                </div>
+            </div>
+
+            <!-- UI Showcase -->
+            <div class="mx-auto max-w-5xl animate-fade-in" style="animation-delay: 0.2s;">
+                <div class="hero-showcase">
+                    <img src="assets/capcap_hero_1788057761596.jpg" alt="CapCap Editor Timeline Interface" class="w-full h-auto object-cover opacity-90 hover:opacity-100 transition-opacity">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Detailed Features Grid -->
+    <section id="features" class="py-24 relative z-10 border-t border-border bg-surface">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="mb-16">
+                <h2 class="text-3xl md:text-4xl font-bold tracking-tight mb-4 text-gradient">Everything you need, built-in.</h2>
+                <p class="text-textMuted text-lg max-w-2xl">Advanced transcription, OCR, cloud translation, and powerful TTS engines integrated directly into a professional timeline editor.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                <!-- Feature 1 -->
+                <div class="feature-card group">
+                    <div class="icon-box group-hover:border-accent transition-colors">
+                        <i class="fas fa-wave-square"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">AI Audio Transcription</h3>
+                    <p class="text-textMuted leading-relaxed">
+                        Powered by <strong>Faster-Whisper</strong> or <strong>SenseVoice</strong>. Extracts highly accurate text from audio with built-in optional speaker diarization.
+                    </p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="feature-card group">
+                    <div class="icon-box group-hover:border-accent transition-colors">
+                        <i class="fas fa-closed-captioning"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">OCR Subtitle Extraction</h3>
+                    <p class="text-textMuted leading-relaxed">
+                        Dealing with hard-coded subtitles? CapCap's OCR engine scans video frames to extract burned-in text seamlessly.
+                    </p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="feature-card group">
+                    <div class="icon-box group-hover:border-accent transition-colors">
+                        <i class="fas fa-language"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">Cloud Translation</h3>
+                    <p class="text-textMuted leading-relaxed">
+                        Integrates premium Cloud/API translation providers, with Google Translate as a reliable fallback for global localization.
+                    </p>
+                </div>
+
+                <!-- Feature 4 -->
+                <div class="feature-card group lg:col-span-2 flex flex-col md:flex-row gap-8 items-center bg-[url('assets/capcap_timeline_bg.jpg')] bg-cover bg-center">
+                    <!-- We use the existing translation image as a visual asset here -->
+                    <div class="w-full md:w-1/2">
+                        <img src="assets/capcap_translation_1788057782441.jpg" class="rounded-xl border border-border w-full opacity-80" alt="TTS Voices">
+                    </div>
+                    <div class="w-full md:w-1/2 z-10">
+                        <div class="icon-box">
+                            <i class="fas fa-microphone-lines"></i>
+                        </div>
+                        <h3 class="text-2xl font-semibold mb-3">Advanced TTS & Voice Assignment</h3>
+                        <p class="text-textMuted leading-relaxed mb-4">
+                            Includes <strong>Piper</strong> and <strong>Edge TTS</strong> natively. You can configure optional speaker diarization and assign specific AI voices per speaker for realistic dialogue.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Feature 5 -->
+                <div class="feature-card group">
+                    <div class="icon-box group-hover:border-accent transition-colors">
+                        <i class="fas fa-sliders-h"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">Editor Timeline</h3>
+                    <p class="text-textMuted leading-relaxed text-sm">
+                        A robust timeline supporting: subtitles, blur, logo, mask, text overlays, selection ranges, track locks, and real-time Fast Preview.
+                    </p>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Guided Workflow -->
+    <section id="workflow" class="py-24 relative z-10 border-t border-border bg-[#030303]">
+        <div class="max-w-6xl mx-auto px-6 flex flex-col lg:flex-row gap-16">
+            
+            <div class="lg:w-1/2">
+                <div class="sticky top-32">
+                    <h2 class="text-3xl md:text-4xl font-bold tracking-tight mb-6 text-gradient">The Guided Workflow</h2>
+                    <p class="text-textMuted text-lg mb-8">
+                        CapCap follows a strict linear process to ensure the highest quality localization output without the confusion of scattered tools.
+                    </p>
+                    <div class="relative rounded-2xl overflow-hidden border border-border">
+                        <img src="assets/capcap_transcription_1788057771664.jpg" alt="Transcription Flow" class="w-full h-auto opacity-70">
+                        <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:w-1/2 pt-8">
+                
+                <div class="workflow-step">
+                    <div class="step-dot"></div>
+                    <h3 class="text-2xl font-semibold mb-2">1. Prepare</h3>
+                    <p class="text-textMuted leading-relaxed">Import your source video, set up project directories, and configure your target languages.</p>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-dot"></div>
+                    <h3 class="text-2xl font-semibold mb-2">2. Transcript</h3>
+                    <p class="text-textMuted leading-relaxed">Run Faster-Whisper or OCR to extract the original text and timings from the video.</p>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-dot"></div>
+                    <h3 class="text-2xl font-semibold mb-2">3. Translate</h3>
+                    <p class="text-textMuted leading-relaxed">Process the transcribed text through Cloud APIs to generate accurate translations (e.g. English to Vietnamese).</p>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-dot"></div>
+                    <h3 class="text-2xl font-semibold mb-2">4. TTS (Voice-over)</h3>
+                    <p class="text-textMuted leading-relaxed">Assign Piper or Edge TTS voices to generate synchronized audio for the translated text.</p>
+                </div>
+
+                <div class="workflow-step">
+                    <div class="step-dot"></div>
+                    <h3 class="text-2xl font-semibold mb-2">5. Export</h3>
+                    <p class="text-textMuted leading-relaxed">Render the final video with embedded subtitles, visual layers (blur/mask), and mixed audio tracks.</p>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer CTA -->
+    <footer class="pt-24 pb-12 border-t border-border relative overflow-hidden bg-black z-10">
+        <div class="ambient-glow" style="top: -50%; opacity: 0.5;"></div>
+        
+        <div class="max-w-4xl mx-auto px-6 text-center mb-20 relative z-10">
+            <h2 class="text-3xl md:text-5xl font-bold mb-6 tracking-tight text-gradient">Start localizing today.</h2>
+            <p class="text-textMuted text-lg mb-10">Clone the repository and run CapCap from source on your Windows machine.</p>
+            <div class="flex flex-col items-center gap-4">
+                <a href="https://github.com/notepower2k1/CapCap" class="btn-primary px-8 py-4 rounded-full font-semibold flex items-center justify-center gap-2 text-lg">
+                    <i class="fab fa-github"></i>
+                    View on GitHub
+                </a>
+                <a href="https://github.com/users/notepower2k1/projects/2" class="text-sm text-textMuted hover:text-white transition-colors mt-4">
+                    View Development Roadmap &rarr;
+                </a>
+            </div>
+        </div>
+
+        <div class="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-textMuted relative z-10">
+            <div class="flex items-center gap-2">
+                <span class="font-semibold text-white">CapCap</span>
+                <span>— Apache License 2.0</span>
+            </div>
+            <div class="flex gap-6">
+                <a href="docs/how-to-use.md" class="hover:text-white transition-colors">Documentation</a>
+                <a href="docs/requirements.md" class="hover:text-white transition-colors">Requirements</a>
+                <a href="docs/technical-stack.md" class="hover:text-white transition-colors">Tech Stack</a>
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>

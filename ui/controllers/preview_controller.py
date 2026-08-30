@@ -602,6 +602,7 @@ class PreviewController:
             duration_ms = int(getattr(self.gui.timeline, "duration", 0) or 0)
 
         mode_label = {
+            "original": "Source video",
             "subtitle": "Subtitle only",
             "voice": "Voice only",
             "both": "Subtitle + voice",
@@ -613,7 +614,7 @@ class PreviewController:
         a1_volume = int(self.gui.audio_a1_volume_slider.value()) if hasattr(self.gui, "audio_a1_volume_slider") else 100
         a2_volume = int(self.gui.audio_a2_volume_slider.value()) if hasattr(self.gui, "audio_a2_volume_slider") else 100
         has_original_audio = self._video_has_audio_stream(video_path)
-        if mode_key == "subtitle":
+        if mode_key in {"subtitle", "original"}:
             audio_mode = "Original" if has_original_audio and a1_volume > 0 else "No Audio"
         elif mode_key == "voice":
             audio_mode = "Dubbed" if audio_path and a2_volume > 0 else "No Audio"
@@ -939,7 +940,33 @@ class PreviewController:
                 )
                 return
 
-        mode = self._effective_render_mode_without_tts(self.gui.get_output_mode_key())
+        has_translated_content = bool(
+            getattr(self.gui, "current_translated_segments", None)
+            or str(self.gui.translated_text.toPlainText() if hasattr(self.gui, "translated_text") else "").strip()
+            or (
+                getattr(self.gui, "last_translated_srt_path", "")
+                and os.path.exists(str(getattr(self.gui, "last_translated_srt_path", "")))
+            )
+        )
+        configured_mode = self.gui.get_output_mode_key()
+        selected_audio_path = self.gui.resolve_selected_audio_path()
+        has_selected_voice = bool(selected_audio_path and os.path.exists(selected_audio_path))
+        # Do not make a source video unexportable just because the optional
+        # translation and TTS stages have not been run yet.
+        if not has_translated_content and not has_selected_voice:
+            mode = "original"
+        elif configured_mode == "subtitle":
+            mode = "subtitle" if has_translated_content else "original"
+        elif configured_mode == "voice":
+            mode = "voice" if has_selected_voice else "subtitle"
+        elif has_translated_content and has_selected_voice:
+            mode = "both"
+        elif has_translated_content:
+            mode = "subtitle"
+        else:
+            mode = "voice"
+        if mode == "original":
+            self.gui.log("[Export] No translated subtitles or dubbed audio yet; exporting a source-video copy.")
         original_audio_gain_db = self._original_audio_gain_db_for_render(mode)
         video_name = os.path.splitext(os.path.basename(video_path))[0]
         translated_srt_path = self.gui.last_translated_srt_path
@@ -988,7 +1015,9 @@ class PreviewController:
 
         default_dir = self.gui.final_output_folder_edit.text().strip() or os.path.join(self.gui.workspace_root, "output")
         os.makedirs(default_dir, exist_ok=True)
-        if mode == "subtitle":
+        if mode == "original":
+            suggested_name = f"{video_name}_original.mp4"
+        elif mode == "subtitle":
             suggested_name = f"{video_name}_sub_vi.mp4"
         elif mode == "voice":
             suggested_name = f"{video_name}_voice_vi.mp4"
@@ -1563,6 +1592,13 @@ class PreviewController:
             self.gui.log(f"[Preview] ready={preview_path}")
             self.gui.refresh_video_dimensions(preview_path)
             self.gui.media_player.setSource(QUrl.fromLocalFile(preview_path))
+            try:
+                if hasattr(self.gui, "timeline"):
+                    current_timeline_pos = int(self.gui.timeline._playhead * 1000)
+                    if current_timeline_pos > 0:
+                        self.gui.media_player.setPosition(current_timeline_pos)
+            except Exception:
+                pass
             if getattr(self.gui, "_preview_video_has_burned_subtitles", False):
                 self.gui.media_player.clear_subtitle()
             else:

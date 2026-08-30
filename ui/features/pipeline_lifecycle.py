@@ -1143,6 +1143,21 @@ class PipelineLifecycleMixin:
             super().closeEvent(event)
 
     def toggle_play(self):
+        clips = self.get_timeline_video_clips() if hasattr(self, "get_timeline_video_clips") else []
+        if len(clips) > 1:
+            if self.media_player.is_playing():
+                self.media_player.pause()
+                self.refresh_play_button_icon()
+                self.timeline.set_playing(False)
+            else:
+                if hasattr(self, "ensure_media_backend_ready"):
+                    self.ensure_media_backend_ready()
+                pos_ms = getattr(self, "_timeline_global_position_ms", int(self.timeline._playhead * 1000))
+                self.seek_timeline_video(pos_ms / 1000.0)
+                self.media_player.play()
+                self.timeline.set_playing(True)
+                self.refresh_play_button_icon()
+            return
         toggle_play_impl(self)
 
     def stop_video(self):

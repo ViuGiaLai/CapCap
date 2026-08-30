@@ -1,7 +1,7 @@
 import os
 from bisect import bisect_right
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QFrame, QGraphicsScene, QGraphicsView, QMenu, QPushButton
 
 
@@ -53,8 +53,8 @@ class EditorTimeline(QGraphicsView):
     MIN_DUR = 0.1
     SNAP_THRESHOLD = 0.05
     DEFAULT_PPS = 100
-    MIN_PPS = 30
-    MAX_PPS = 500
+    MIN_PPS = 2
+    MAX_PPS = 2000
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -402,8 +402,12 @@ class EditorTimeline(QGraphicsView):
             self._timeline.duration = self._duration
         self._redraw()
 
+    _video_duration_cache: dict[str, float] = {}
+
     @staticmethod
     def _probe_video_duration(path: str) -> float:
+        if path in EditorTimeline._video_duration_cache:
+            return EditorTimeline._video_duration_cache[path]
         try:
             import subprocess
             from app.video_processor import _ffprobe_path
@@ -417,7 +421,9 @@ class EditorTimeline(QGraphicsView):
                 **subprocess_hidden_kwargs(),
             )
             if result.returncode == 0:
-                return float(result.stdout.strip() or 0)
+                dur = float(result.stdout.strip() or 0)
+                EditorTimeline._video_duration_cache[path] = dur
+                return dur
         except Exception:
             pass
         return 0.0
@@ -585,19 +591,23 @@ class EditorTimeline(QGraphicsView):
         self._redraw()
 
     def zoom_in(self) -> None:
-        self.pixels_per_second = min(self.MAX_PPS, int(self.pixels_per_second * 1.25))
+        new_pps = max(self.pixels_per_second + 1, int(round(self.pixels_per_second * 1.25)))
+        self.pixels_per_second = min(self.MAX_PPS, new_pps)
         self._redraw()
+        self.zoomChanged.emit(self.zoom_percent())
 
     def zoom_out(self) -> None:
-        self.pixels_per_second = max(self.MIN_PPS, int(self.pixels_per_second * 0.8))
+        new_pps = min(self.pixels_per_second - 1, int(self.pixels_per_second * 0.8))
+        self.pixels_per_second = max(self.MIN_PPS, new_pps)
         self._redraw()
+        self.zoomChanged.emit(self.zoom_percent())
 
     def fit_timeline(self) -> None:
         if self._duration > 0:
             w = self.viewport().width() - self.CONTENT_LEFT_PAD - 20 if self.viewport() else 800
             self.pixels_per_second = int(max(self.MIN_PPS, w / self._duration))
         self._redraw()
-        self.zoomChanged.emit(int(self.pixels_per_second / self.DEFAULT_PPS * 100))
+        self.zoomChanged.emit(self.zoom_percent())
 
     def reset_zoom(self) -> None:
         self.pixels_per_second = self.DEFAULT_PPS
@@ -976,13 +986,12 @@ class EditorTimeline(QGraphicsView):
             self._draw_track_layers(painter, track, scroll_x, y, th)
             y += th
 
-        # Playhead spans the full scene height (uses scene coords)
+        # Draw the sticky ruler so it stays on top of scrolled tracks
+        self._draw_ruler_sticky(painter, scroll_x, view_w)
+
+        # Draw selection range and Playhead on top of ruler & tracks
         self._draw_selection_range(painter, scroll_x)
         self._draw_playhead(painter, scroll_x)
-
-        # Draw the sticky ruler LAST so it stays on top of any
-        # scrolled tracks that might overlap the ruler area.
-        self._draw_ruler_sticky(painter, scroll_x, view_w)
 
         painter.end()
 
@@ -996,10 +1005,10 @@ class EditorTimeline(QGraphicsView):
 
         font = QFont("Segoe UI", 9)
         painter.setFont(font)
-        major_interval = self._tick_interval()
+        major_interval, minor_interval = self._tick_interval()
 
         t = 0.0
-        while t <= self._duration + 5:
+        while t <= self._duration + max(major_interval, 5):
             x = self.CONTENT_LEFT_PAD + int(t * self.pixels_per_second) - scroll_x
             if x > view_w:
                 break
@@ -1013,7 +1022,7 @@ class EditorTimeline(QGraphicsView):
                 else:
                     painter.setPen(QColor("#1e2d42"))
                     painter.drawLine(x, ruler_y + self.RULER_HEIGHT - 5, x, ruler_y + self.RULER_HEIGHT)
-            t += 1.0
+            t += minor_interval
 
     def _draw_track_header(self, painter: QPainter, track: Track,
                            y: int, h: int) -> None:
@@ -1084,14 +1093,18 @@ class EditorTimeline(QGraphicsView):
             return []
         return sorted_layers[first:last]
 
-    def _tick_interval(self) -> int:
+    def _tick_interval(self) -> tuple[int, int]:
+        if self.pixels_per_second < 5:
+            return 60, 10
+        if self.pixels_per_second < 15:
+            return 30, 5
         if self.pixels_per_second < 40:
-            return 10
+            return 10, 2
         if self.pixels_per_second < 80:
-            return 5
+            return 5, 1
         if self.pixels_per_second < 150:
-            return 2
-        return 1
+            return 2, 1
+        return 1, 1
 
     def _draw_track_layers(self, painter: QPainter, track: Track,
                            scroll_x: int, y: int, h: int) -> None:
@@ -1201,6 +1214,8 @@ class EditorTimeline(QGraphicsView):
             is_subtitle_track_name = track_name in ("TS1", "S1")
             if layer.type == LayerType.BLUR:
                 self._draw_blur_layer_bar(painter, layer, x, bar_y, w, bar_h, is_selected)
+            elif track.type == LayerType.VIDEO:
+                self._draw_video_layer_bar(painter, layer, x, bar_y, w, bar_h, view_w, is_selected)
             else:
                 self._draw_standard_layer_bar(
                     painter, layer, x, bar_y, w, bar_h, view_w,
@@ -1208,17 +1223,12 @@ class EditorTimeline(QGraphicsView):
                     force_subtitle_track=is_subtitle_track_name,
                     hide_label=(track.type == LayerType.AUDIO),
                 )
-            # V1/A1 visuals are precomputed when media is opened. Drawing
-            # uses only the cached data and clips to the current viewport, so
-            # playback never decodes video or reads audio samples.
-            if track.type == LayerType.VIDEO:
-                self._draw_video_thumbnails(painter, x, bar_y, w, bar_h, view_w)
-            elif track.type == LayerType.AUDIO:
-                self._draw_waveform(painter, x, bar_y, w, bar_h, view_w)
-            if is_selected and track.type in (LayerType.VIDEO, LayerType.AUDIO):
-                painter.setPen(QPen(QColor("#4a8cff"), 2))
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRoundedRect(QRectF(x, bar_y, w, bar_h), 4, 4)
+                if track.type == LayerType.AUDIO:
+                    self._draw_waveform(painter, x, bar_y, w, bar_h, view_w)
+                if is_selected and track.type == LayerType.AUDIO:
+                    painter.setPen(QPen(QColor("#4a8cff"), 2))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawRoundedRect(QRectF(x, bar_y, w, bar_h), 4, 4)
             visible_row_index += 1
 
     def _draw_waveform(self, painter: QPainter, x: int, y: float, w: int,
@@ -1266,16 +1276,145 @@ class EditorTimeline(QGraphicsView):
             painter.drawLine(pixel_x, top_y, pixel_x, bottom_y)
         painter.restore()
 
-    def _draw_video_thumbnails(self, painter: QPainter, x: int, y: float, w: int,
-                               h: float, view_w: int) -> None:
-        thumbnails = self._video_thumbnails
-        if not thumbnails or self._duration <= 0.0 or h <= 8:
+    def _draw_video_layer_bar(self, painter: QPainter, layer, x: int, y: float, w: int,
+                              h: float, view_w: int, is_selected: bool) -> None:
+        if w <= 0 or h <= 0:
             return
         left = max(0, x)
         right = min(view_w, x + w)
         if right <= left:
             return
-        target_h = max(12, int(h - 8))
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        
+        rect = QRectF(x, y, w, h)
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(rect, 4.0, 4.0)
+        
+        # 1. Base background (Deep teal)
+        base_color = QColor("#082c31")
+        painter.fillPath(clip_path, base_color)
+        
+        # Calculate heights for header, filmstrip, and bottom waveform
+        header_h = 22.0 if h >= 40 else (18.0 if h >= 28 else 0.0)
+        show_mini_wave = h >= 54
+        wave_h = 10.0 if show_mini_wave else 0.0
+        thumb_h = max(0.0, h - header_h - wave_h)
+        
+        # 2. Draw Thumbnails Filmstrip in middle
+        if thumb_h >= 8:
+            thumb_y = y + header_h
+            painter.save()
+            painter.setClipPath(clip_path)
+            self._draw_video_thumbnails(painter, x, thumb_y, w, thumb_h, view_w)
+            painter.restore()
+            
+        # 3. Draw Mini Waveform Strip at Bottom (like CapCut)
+        if show_mini_wave:
+            wave_y = y + h - wave_h
+            painter.save()
+            painter.setClipPath(clip_path)
+            painter.fillRect(QRectF(x, wave_y, w, wave_h), QColor("#041f23"))
+            painter.setPen(QPen(QColor("#0f555d"), 1))
+            painter.drawLine(QPointF(x, wave_y), QPointF(x + w, wave_y))
+            
+            center_wave_y = wave_y + wave_h / 2.0
+            painter.setPen(QPen(QColor("#14b8a6"), 1))
+            painter.drawLine(QPointF(x, center_wave_y), QPointF(x + w, center_wave_y))
+            
+            step = 3
+            for px in range(int(max(0, x)), int(min(view_w, x + w)), step):
+                rel_s = (px - x) / max(1.0, float(w))
+                if self._waveform_samples and len(self._waveform_samples) > 0:
+                    s_idx = min(len(self._waveform_samples) - 1, max(0, int(rel_s * len(self._waveform_samples))))
+                    amp = min(wave_h / 2.0 - 1.0, self._waveform_samples[s_idx] * (wave_h / 2.0 - 1.0))
+                else:
+                    amp = ((px % 5 + 1) / 6.0) * (wave_h / 2.0 - 1.5)
+                amp = max(1.0, amp)
+                painter.drawLine(QPointF(px, center_wave_y - amp), QPointF(px, center_wave_y + amp))
+            painter.restore()
+
+        # 4. Draw Header Bar (Top banner with filename & duration badge)
+        if header_h > 0:
+            painter.save()
+            painter.setClipPath(clip_path)
+            
+            header_rect = QRectF(x, y, w, header_h)
+            painter.fillRect(header_rect, QColor("#0a484e"))
+            painter.setPen(QPen(QColor("#0e5f67"), 1))
+            painter.drawLine(QPointF(x, y + header_h), QPointF(x + w, y + header_h))
+            
+            # Duration Badge on Right
+            clip_dur = max(0.0, float(getattr(layer, "end", 0.0)) - float(getattr(layer, "start", 0.0)))
+            total_secs = int(clip_dur)
+            total_frames = int(round((clip_dur - total_secs) * 30.0)) % 30
+            hh = total_secs // 3600
+            mm = (total_secs % 3600) // 60
+            ss = total_secs % 60
+            if hh > 0:
+                dur_str = f"{hh:02d}:{mm:02d}:{ss:02d}:{total_frames:02d}"
+            else:
+                dur_str = f"00:{mm:02d}:{ss:02d}:{total_frames:02d}"
+                
+            badge_font = QFont("Segoe UI", 8, QFont.Bold)
+            badge_fm = QFontMetrics(badge_font)
+            badge_text_w = badge_fm.horizontalAdvance(dur_str)
+            badge_w = badge_text_w + 10
+            badge_h = header_h - 4
+            
+            badge_drawn = False
+            badge_x = x + w - badge_w - 4
+            if w >= badge_w + 50 and badge_x > x:
+                badge_rect = QRectF(badge_x, y + 2, badge_w, badge_h)
+                badge_path = QPainterPath()
+                badge_path.addRoundedRect(badge_rect, 3.0, 3.0)
+                painter.fillPath(badge_path, QColor("#042528"))
+                painter.setPen(QPen(QColor("#0e636b"), 1))
+                painter.drawPath(badge_path)
+                
+                painter.setFont(badge_font)
+                painter.setPen(QColor("#6ee7b7"))
+                painter.drawText(badge_rect, Qt.AlignCenter, dur_str)
+                badge_drawn = True
+
+            # Video Title / Filename on Left
+            title = os.path.basename(getattr(layer, "source", "") or layer.name or "Video")
+            title_font = QFont("Segoe UI", 8, QFont.DemiBold)
+            painter.setFont(title_font)
+            painter.setPen(QColor("#ffffff"))
+            title_fm = QFontMetrics(title_font)
+            
+            max_title_w = (w - badge_w - 14) if badge_drawn else (w - 12)
+            if max_title_w > 15:
+                title_rect = QRectF(x + 6, y, max_title_w, header_h)
+                elided_title = title_fm.elidedText(title, Qt.ElideRight, int(max_title_w))
+                painter.drawText(title_rect, Qt.AlignVCenter | Qt.AlignLeft, elided_title)
+
+            painter.restore()
+
+        # 5. Outer Border / Selection Outline
+        if is_selected:
+            painter.setPen(QPen(QColor("#38bdf8"), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(clip_path)
+        else:
+            painter.setPen(QPen(QColor("#115e66"), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(clip_path)
+
+        painter.restore()
+
+    def _draw_video_thumbnails(self, painter: QPainter, x: int, y: float, w: int,
+                               h: float, view_w: int) -> None:
+        thumbnails = self._video_thumbnails
+        if not thumbnails or self._duration <= 0.0 or h <= 4:
+            return
+        left = max(0, x)
+        right = min(view_w, x + w)
+        if right <= left:
+            return
+        target_h = max(8, int(h))
         painter.save()
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.setClipRect(QRectF(left, y, right - left, h))
@@ -1291,9 +1430,6 @@ class EditorTimeline(QGraphicsView):
                 continue
             source_w = max(1, int(pixmap.width()))
             source_h = max(1, int(pixmap.height()))
-            # Avoid turning one small cached thumbnail into an enormous,
-            # blurry block. Cap horizontal enlargement at 2x its cached
-            # width, then repeat that same frame when the time block is wider.
             max_tile_w = max(48, source_w * 2)
             tile_left = block_left
             while tile_left < block_right:
@@ -1303,31 +1439,27 @@ class EditorTimeline(QGraphicsView):
                     target_ratio = target_w / max(1, target_h)
                     source_ratio = source_w / source_h
                     if source_ratio > target_ratio:
-                        # Centered cover crop: remove equal left/right excess.
                         crop_h = source_h
                         crop_w = crop_h * target_ratio
                         crop_x = (source_w - crop_w) / 2.0
                         crop_y = 0.0
                     else:
-                        # Centered cover crop for tall source frames.
                         crop_w = source_w
                         crop_h = crop_w / target_ratio
                         crop_x = 0.0
                         crop_y = (source_h - crop_h) / 2.0
-                    rect = QRectF(tile_left, y + 4, target_w, target_h)
+                    rect = QRectF(tile_left, y, target_w, target_h)
                     painter.drawPixmap(rect, pixmap, QRectF(crop_x, crop_y, crop_w, crop_h))
                 tile_left = tile_right
-            # A narrow translucent transition softens the hand-off to the
-            # next cached source frame without blurring either thumbnail.
             if left < block_right < right:
                 fade_w = 14
                 edge_fade = QLinearGradient(block_right - fade_w, 0, block_right + fade_w, 0)
                 edge_fade.setColorAt(0.0, QColor(10, 18, 30, 0))
                 edge_fade.setColorAt(0.5, QColor(10, 18, 30, 44))
                 edge_fade.setColorAt(1.0, QColor(10, 18, 30, 0))
-                painter.fillRect(QRectF(block_right - fade_w, y + 4, fade_w * 2, target_h), QBrush(edge_fade))
+                painter.fillRect(QRectF(block_right - fade_w, y, fade_w * 2, target_h), QBrush(edge_fade))
                 painter.setPen(QPen(QColor(207, 232, 239, 42), 1))
-                painter.drawLine(block_right, int(y + 4), block_right, int(y + 4 + target_h))
+                painter.drawLine(block_right, int(y), block_right, int(y + target_h))
         painter.restore()
 
     def _draw_standard_layer_bar(self, painter, layer, x, y, w, h, view_w, is_selected, is_overflow_row: bool = False, force_subtitle_color: bool = False, force_subtitle_track: bool = False, hide_label: bool = False):
@@ -1518,13 +1650,35 @@ class EditorTimeline(QGraphicsView):
 
     def _draw_playhead(self, painter: QPainter, scroll_x: int) -> None:
         x = self.CONTENT_LEFT_PAD + int(self._playhead * self.pixels_per_second) - scroll_x
-        if x < 0 or x > self.viewport().width():
+        if x < -15 or x > self.viewport().width() + 15:
             return
-        painter.setPen(QPen(QColor("#e04040"), 2))
-        painter.drawLine(int(x), 0, int(x), int(self._scene.height()))
-        painter.setBrush(QColor("#e04040"))
-        painter.setPen(Qt.NoPen)
-        painter.drawPolygon([QPointF(x - 6, 0), QPointF(x + 6, 0), QPointF(x, 8)])
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        
+        # 1. Clean, crisp white vertical line extending through entire timeline
+        line_pen = QPen(QColor("#ffffff"), 1.5)
+        line_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(line_pen)
+        painter.drawLine(QPointF(x, 0), QPointF(x, float(self._scene.height())))
+        
+        # 2. Modern CapCut-style top capsule / pill handle in the ruler area
+        # Handle dimensions: width 11px, height 18px, centered on x, from y=2 to y=20
+        handle_w = 11.0
+        handle_h = 18.0
+        handle_x = x - handle_w / 2.0
+        handle_y = 2.0
+        
+        # Capsule background with subtle contrast shadow/border
+        handle_rect = QRectF(handle_x, handle_y, handle_w, handle_h)
+        painter.setPen(QPen(QColor(0, 0, 0, 140), 1.0))
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawRoundedRect(handle_rect, 5.0, 5.0)
+        
+        # Subtle dark center indicator line inside the handle
+        painter.setPen(QPen(QColor("#1e293b"), 1.2))
+        painter.drawLine(QPointF(x, handle_y + 4.5), QPointF(x, handle_y + handle_h - 4.5))
+        
+        painter.restore()
 
     def _draw_selection_range(self, painter: QPainter, scroll_x: int) -> None:
         if not self._selection_range:
@@ -1883,12 +2037,29 @@ class EditorTimeline(QGraphicsView):
                     new_start = min(t, drag["end_time"] - self.MIN_DUR)
                     new_start = max(0.0, new_start)
                     new_start = self._clamp_layer_resize(track, layer, "left", new_start)
+                    
+                    from app.layers.video import VideoLayer
+                    from app.layers.audio import AudioLayer
+                    if isinstance(layer, (VideoLayer, AudioLayer)):
+                        max_left_drag = float(getattr(layer, "source_start", 0.0)) / max(0.01, float(getattr(layer, "speed", 1.0)))
+                        min_allowed = float(drag["start_time"]) - max_left_drag
+                        new_start = max(new_start, min_allowed)
+
                     new_start = min(new_start, drag["end_time"] - self.MIN_DUR)
                     layer.start = new_start
                 elif drag["type"] == "resize_right":
                     new_end = max(t, drag["start_time"] + self.MIN_DUR)
                     new_end = min(new_end, self._duration)
                     new_end = self._clamp_layer_resize(track, layer, "right", new_end)
+                    
+                    from app.layers.video import VideoLayer
+                    from app.layers.audio import AudioLayer
+                    if isinstance(layer, (VideoLayer, AudioLayer)) and getattr(layer, "source", ""):
+                        source_dur = self._probe_video_duration(layer.source)
+                        max_layer_dur = (source_dur - float(getattr(layer, "source_start", 0.0))) / max(0.01, float(getattr(layer, "speed", 1.0)))
+                        max_allowed = float(drag["start_time"]) + max_layer_dur
+                        new_end = min(new_end, max_allowed)
+                        
                     new_end = max(new_end, drag["start_time"] + self.MIN_DUR)
                     layer.end = new_end
                 # Timing is being edited in place, so the cached overlap
@@ -2058,3 +2229,6 @@ class EditorTimeline(QGraphicsView):
                     return layer.id
             return ""
         return ""
+
+
+

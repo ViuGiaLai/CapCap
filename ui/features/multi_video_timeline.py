@@ -33,6 +33,9 @@ class MultiVideoTimelineMixin:
         timeline = getattr(getattr(self, "timeline", None), "_timeline", None)
         if widget is None:
             return
+        if timeline is not None:
+            from app.services.timeline_video_sequence import normalize_v1_sequence
+            normalize_v1_sequence(timeline)
         selected_id = ""
         current = widget.currentItem()
         if current is not None:
@@ -69,14 +72,12 @@ class MultiVideoTimelineMixin:
         widget = getattr(self, "source_video_list", None)
         row = widget.currentRow() if widget is not None else -1
         count = widget.count() if widget is not None else 0
-        for name, enabled in (
-            ("source_video_up_btn", row > 0),
-            ("source_video_down_btn", 0 <= row < count - 1),
-            ("source_video_remove_btn", row >= 0 and count > 1),
-        ):
-            button = getattr(self, name, None)
-            if button is not None:
-                button.setEnabled(enabled)
+        if hasattr(self, "move_up_source_video_btn"):
+            self.move_up_source_video_btn.setEnabled(row > 0)
+        if hasattr(self, "move_down_source_video_btn"):
+            self.move_down_source_video_btn.setEnabled(0 <= row < count - 1)
+        if hasattr(self, "remove_source_video_btn"):
+            self.remove_source_video_btn.setEnabled(row >= 0 and count > 1)
 
     def add_videos_to_timeline(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
@@ -158,12 +159,27 @@ class MultiVideoTimelineMixin:
         if current != wanted:
             self._timeline_preview_source = wanted
             self.media_player.setSource(QUrl.fromLocalFile(wanted))
-        self._timeline_global_position_ms = int(max(0.0, global_seconds) * 1000)
+        global_ms = int(max(0.0, global_seconds) * 1000)
+        self._timeline_global_position_ms = global_ms
+        if hasattr(self, "timeline") and hasattr(self.timeline, "set_position"):
+            self.timeline.set_position(global_ms)
+        clips = self.get_timeline_video_clips(existing_only=True)
+        if clips:
+            total_ms = int(float(clips[-1]["timeline_end"]) * 1000)
+            self.update_duration_label(global_ms, total_ms)
         self.media_player.setPosition(int(local_seconds * 1000))
+        if hasattr(self, "refresh_timed_layer_preview"):
+            self.refresh_timed_layer_preview(global_ms)
+        if hasattr(self, "update_playback_subtitle_highlight"):
+            self.update_playback_subtitle_highlight(global_ms)
 
     def handle_sequence_position_changed(self, local_position_ms: int) -> bool:
         clips = self.get_timeline_video_clips(existing_only=True)
         if len(clips) <= 1:
+            return False
+        current_source = os.path.abspath(str(getattr(getattr(self, "media_player", None), "_source_path", "") or ""))
+        preview_source = os.path.abspath(str(getattr(self, "last_preview_video_path", "") or ""))
+        if preview_source and current_source == preview_source:
             return False
         source = os.path.abspath(str(getattr(self, "_timeline_preview_source", "") or ""))
         clip = next((item for item in clips if os.path.abspath(item["source"]) == source), clips[0])

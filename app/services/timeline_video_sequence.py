@@ -133,6 +133,15 @@ def normalize_v1_sequence(timeline: Timeline, layers: Iterable[VideoLayer] | Non
     cursor = 0.0
     for index, layer in enumerate(ordered):
         duration = max(0.001, float(layer.end) - float(layer.start))
+        if getattr(layer, "source", ""):
+            try:
+                from ui.views.editor.timeline import EditorTimeline
+                source_dur = EditorTimeline._probe_video_duration(layer.source)
+                if source_dur > 0:
+                    max_dur = (source_dur - float(getattr(layer, "source_start", 0.0))) / max(0.01, float(getattr(layer, "speed", 1.0)))
+                    duration = min(duration, max_dur)
+            except Exception:
+                pass
         layer.start = round(cursor, 6)
         layer.end = round(cursor + duration, 6)
         layer.z_index = index

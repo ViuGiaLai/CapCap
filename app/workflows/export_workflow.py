@@ -1,6 +1,7 @@
 import os
 import time
 import re
+import shutil
 
 from services import EngineRuntime, ProjectService
 
@@ -678,7 +679,12 @@ class ExportWorkflow:
 
         tmp_mux_path = ""
         try:
-            if mode == "subtitle":
+            if mode == "original":
+                self._emit_progress(on_progress, 30, "Copying source video...")
+                if os.path.abspath(video_path) == os.path.abspath(output_path):
+                    raise ValueError("Choose a different output filename from the source video.")
+                shutil.copy2(video_path, output_path)
+            elif mode == "subtitle":
                 self._emit_progress(on_progress, 20, "Burning subtitles into the video...")
                 if abs(float(original_audio_gain_db or 0.0)) > 0.001:
                     print(f"[Export] Applying A1 Original audio gain: {float(original_audio_gain_db):.2f} dB")
