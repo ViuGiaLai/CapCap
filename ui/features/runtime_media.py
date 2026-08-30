@@ -605,6 +605,11 @@ class RuntimeMediaMixin:
         return ""
 
     def _resolve_preview_original_video_path(self) -> str:
+        timeline_source = str(getattr(self, "_timeline_preview_source", "") or "")
+        if timeline_source:
+            normalized = self._normalize_local_file_path(timeline_source)
+            if normalized and os.path.exists(normalized):
+                return normalized
         video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
         normalized = self._normalize_local_file_path(video_path)
         return normalized if normalized and os.path.exists(normalized) else ""
@@ -788,8 +793,15 @@ class RuntimeMediaMixin:
 
         Fast mode: full extracted audio (vocals + music)
         Clean mode: background stem only (no vocals, to avoid double voices)
-        Fallback: extracted_audio artifact
+        Fallback: extracted_audio artifact or active source video
         """
+        current_preview_source = os.path.abspath(str(getattr(self, "_timeline_preview_source", "") or ""))
+        main_video = os.path.abspath(str(self._normalize_local_file_path(self.video_path_edit.text().strip()) if hasattr(self, "video_path_edit") else "") or "")
+        
+        # When previewing a secondary clip from multi-video timeline, play its own audio directly
+        if current_preview_source and current_preview_source != main_video and os.path.exists(current_preview_source):
+            return current_preview_source
+
         audio_mode = str(self.get_audio_handling_mode() or "fast").strip().lower()
         candidates: list[str] = []
         if audio_mode == "clean":
@@ -808,16 +820,7 @@ class RuntimeMediaMixin:
             normalized = self._normalize_local_file_path(candidate)
             if normalized and os.path.exists(normalized):
                 return normalized
-        # Final fallback: the source video file itself. mpv runs with
-        # `ao=null` (video-only) and audio is routed through the A1
-        # QMediaPlayer sidecar, so on a freshly opened video (no Generate
-        # run yet, no extracted audio artifact) the sidecar would be empty
-        # and the user hears nothing. QMediaPlayer decodes the audio
-        # track straight out of a video container, so loading the source
-        # video into the A1 sidecar restores the original audio. Once the
-        # pipeline extracts a dedicated audio file, that takes priority
-        # via the candidates above.
-        source_video = self._resolve_preview_original_video_path()
+        source_video = current_preview_source if (current_preview_source and os.path.exists(current_preview_source)) else self._resolve_preview_original_video_path()
         if source_video:
             return source_video
         return ""

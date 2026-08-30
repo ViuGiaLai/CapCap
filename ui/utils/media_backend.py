@@ -782,6 +782,9 @@ class MpvMediaPlayerBackend(QObject):
         
         # Reset applied tracking on source change
         self._applied_subtitle_path = ""
+        # Keep original audio in sync with the newly loaded video source
+        if not self._original_audio_path or not os.path.exists(self._original_audio_path) or self._original_audio_path.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
+            self.set_original_audio_file(source_path)
         # Pause both audio sidecars at 0 until user plays.
         if self._original_loaded_path:
             try:

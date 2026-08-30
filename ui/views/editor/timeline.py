@@ -409,19 +409,49 @@ class EditorTimeline(QGraphicsView):
         if path in EditorTimeline._video_duration_cache:
             return EditorTimeline._video_duration_cache[path]
         try:
+            # TikTok/SnapTikTok downloads often have malformed container headers
+            # that report 12+ minutes. cv2 counts the actual frames.
+            import cv2
+            cap = cv2.VideoCapture(path)
+            if cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                cap.release()
+                if fps > 0 and frames > 0:
+                    dur = frames / fps
+                    # Sanity check: if it's over 0.1s, trust it over ffprobe's format duration
+                    if dur > 0.1:
+                        EditorTimeline._video_duration_cache[path] = dur
+                        return dur
+
+            # Fallback to ffprobe if cv2 fails
             import subprocess
             from app.video_processor import _ffprobe_path
+            from runtime_paths import subprocess_hidden_kwargs
             ffprobe = _ffprobe_path()
             if not os.path.exists(ffprobe):
                 return 0.0
+            
+            # Use stream duration first, it's more accurate than format duration
             result = subprocess.run(
-                [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration",
                  "-of", "csv=p=0", path],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=10,
                 **subprocess_hidden_kwargs(),
             )
-            if result.returncode == 0:
+            dur_str = result.stdout.strip()
+            if dur_str and dur_str != "N/A":
+                dur = float(dur_str)
+            else:
+                result = subprocess.run(
+                    [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                     "-of", "csv=p=0", path],
+                    capture_output=True, text=True, timeout=10,
+                    **subprocess_hidden_kwargs(),
+                )
                 dur = float(result.stdout.strip() or 0)
+                
+            if dur > 0:
                 EditorTimeline._video_duration_cache[path] = dur
                 return dur
         except Exception:
@@ -1382,12 +1412,26 @@ class EditorTimeline(QGraphicsView):
             title_fm = QFontMetrics(title_font)
             
             max_title_w = (w - badge_w - 14) if badge_drawn else (w - 12)
-            if max_title_w > 15:
-                title_rect = QRectF(x + 6, y, max_title_w, header_h)
-                elided_title = title_fm.elidedText(title, Qt.ElideRight, int(max_title_w))
-                painter.drawText(title_rect, Qt.AlignVCenter | Qt.AlignLeft, elided_title)
+            title_rect = QRectF(x + 6, y, max_title_w, header_h)
+            elided_title = title_fm.elidedText(title, Qt.ElideRight, int(max_title_w))
+            painter.drawText(title_rect, Qt.AlignVCenter | Qt.AlignLeft, elided_title)
+        elif w > 30 and h > 15:
+            # Fallback: draw title over the thumbnail strip if no header
+            title = os.path.basename(getattr(layer, "source", "") or layer.name or "Video")
+            title_font = QFont("Segoe UI", 8, QFont.DemiBold)
+            painter.setFont(title_font)
+            title_fm = QFontMetrics(title_font)
+            max_title_w = w - 12
+            elided_title = title_fm.elidedText(title, Qt.ElideRight, int(max_title_w))
+            
+            # Draw text shadow for readability
+            title_rect = QRectF(x + 6, y, max_title_w, h)
+            painter.setPen(QColor(0, 0, 0, 180))
+            painter.drawText(title_rect.translated(1, 1), Qt.AlignVCenter | Qt.AlignLeft, elided_title)
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(title_rect, Qt.AlignVCenter | Qt.AlignLeft, elided_title)
 
-            painter.restore()
+        painter.restore()
 
         # 5. Outer Border / Selection Outline
         if is_selected:
@@ -1427,35 +1471,19 @@ class EditorTimeline(QGraphicsView):
                 continue
             source_w = max(1, int(pixmap.width()))
             source_h = max(1, int(pixmap.height()))
-            max_tile_w = max(48, source_w * 2)
-            tile_left = block_left
-            while tile_left < block_right:
-                tile_right = min(block_right, tile_left + max_tile_w)
-                if tile_right > left and tile_left < right:
-                    target_w = max(1, tile_right - tile_left)
-                    target_ratio = target_w / max(1, target_h)
-                    source_ratio = source_w / source_h
-                    if source_ratio > target_ratio:
-                        crop_h = source_h
-                        crop_w = crop_h * target_ratio
-                        crop_x = (source_w - crop_w) / 2.0
-                        crop_y = 0.0
-                    else:
-                        crop_w = source_w
-                        crop_h = crop_w / target_ratio
-                        crop_x = 0.0
-                        crop_y = (source_h - crop_h) / 2.0
-                    rect = QRectF(tile_left, y, target_w, target_h)
-                    painter.drawPixmap(rect, pixmap, QRectF(crop_x, crop_y, crop_w, crop_h))
+            tile_w = max(16.0, float(target_h) * (float(source_w) / float(source_h)))
+            
+            tile_left = float(block_left)
+            while tile_left < float(block_right):
+                tile_right = min(float(block_right), tile_left + tile_w)
+                if tile_right > float(left) and tile_left < float(right):
+                    span_w = tile_right - tile_left
+                    crop_w = float(source_w) * (span_w / tile_w)
+                    rect = QRectF(tile_left, y, span_w, target_h)
+                    painter.drawPixmap(rect, pixmap, QRectF(0.0, 0.0, crop_w, float(source_h)))
                 tile_left = tile_right
             if left < block_right < right:
-                fade_w = 14
-                edge_fade = QLinearGradient(block_right - fade_w, 0, block_right + fade_w, 0)
-                edge_fade.setColorAt(0.0, QColor(10, 18, 30, 0))
-                edge_fade.setColorAt(0.5, QColor(10, 18, 30, 44))
-                edge_fade.setColorAt(1.0, QColor(10, 18, 30, 0))
-                painter.fillRect(QRectF(block_right - fade_w, y, fade_w * 2, target_h), QBrush(edge_fade))
-                painter.setPen(QPen(QColor(207, 232, 239, 42), 1))
+                painter.setPen(QPen(QColor(10, 18, 30, 80), 1))
                 painter.drawLine(block_right, int(y), block_right, int(y + target_h))
         painter.restore()
 
@@ -1652,8 +1680,8 @@ class EditorTimeline(QGraphicsView):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         
-        # 1. Clean, crisp white vertical line extending through entire timeline
-        line_pen = QPen(QColor("#ffffff"), 1.5)
+        # 1. Clean, crisp red vertical line extending through entire timeline
+        line_pen = QPen(QColor("#ff2e43"), 1.5)
         line_pen.setCapStyle(Qt.RoundCap)
         painter.setPen(line_pen)
         painter.drawLine(QPointF(x, 0), QPointF(x, float(self._scene.height())))
@@ -1668,11 +1696,11 @@ class EditorTimeline(QGraphicsView):
         # Capsule background with subtle contrast shadow/border
         handle_rect = QRectF(handle_x, handle_y, handle_w, handle_h)
         painter.setPen(QPen(QColor(0, 0, 0, 140), 1.0))
-        painter.setBrush(QColor("#ffffff"))
+        painter.setBrush(QColor("#ff2e43"))
         painter.drawRoundedRect(handle_rect, 5.0, 5.0)
         
-        # Subtle dark center indicator line inside the handle
-        painter.setPen(QPen(QColor("#1e293b"), 1.2))
+        # Subtle light center indicator line inside the handle
+        painter.setPen(QPen(QColor("#ffffff"), 1.2))
         painter.drawLine(QPointF(x, handle_y + 4.5), QPointF(x, handle_y + handle_h - 4.5))
         
         painter.restore()

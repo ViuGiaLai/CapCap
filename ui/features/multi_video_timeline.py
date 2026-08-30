@@ -159,10 +159,17 @@ class MultiVideoTimelineMixin:
         if current != wanted:
             self._timeline_preview_source = wanted
             self.media_player.setSource(QUrl.fromLocalFile(wanted))
+            if hasattr(self, "sync_preview_audio_track_to_output"):
+                self.sync_preview_audio_track_to_output(apply_to_player=True, force=True)
+            elif hasattr(self.media_player, "set_original_audio_file"):
+                self.media_player.set_original_audio_file(wanted)
         global_ms = int(max(0.0, global_seconds) * 1000)
         self._timeline_global_position_ms = global_ms
-        if hasattr(self, "timeline") and hasattr(self.timeline, "set_position"):
-            self.timeline.set_position(global_ms)
+        if hasattr(self, "timeline"):
+            if hasattr(self.timeline, "set_playhead"):
+                self.timeline.set_playhead(max(0.0, global_seconds))
+            if hasattr(self.timeline, "set_position"):
+                self.timeline.set_position(global_ms)
         clips = self.get_timeline_video_clips(existing_only=True)
         if clips:
             total_ms = int(float(clips[-1]["timeline_end"]) * 1000)

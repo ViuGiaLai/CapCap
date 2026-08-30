@@ -425,7 +425,7 @@ class TimelineWaveformWorker(QThread):
                 if temp_audio and not os.path.exists(temp_audio):
                     os.makedirs(os.path.dirname(temp_audio), exist_ok=True)
                     ffmpeg = os.path.join(bin_path("ffmpeg"), "ffmpeg.exe")
-                    if len(self.timeline_clips) > 1:
+                    if self.timeline_clips:
                         from audio_mixer import _build_atempo_filter
 
                         command = [ffmpeg, "-y", "-loglevel", "error"]
@@ -537,15 +537,31 @@ class TimelineThumbnailWorker(QThread):
                 self.finished.emit(self.request_signature, [], "")
                 return
 
+            ffmpeg_candidates = [
+                bin_path("ffmpeg", "ffmpeg.exe"),
+                bin_path("ffmpeg.exe"),
+                shutil.which("ffmpeg"),
+                shutil.which("ffmpeg.exe"),
+            ]
+            ffmpeg_path = ""
+            for candidate in ffmpeg_candidates:
+                if candidate and os.path.isfile(candidate):
+                    ffmpeg_path = candidate
+                    break
+
+            if not ffmpeg_path:
+                self.finished.emit(self.request_signature, [], "")
+                return
+
             # Adapt density to media length: short clips need frequent visual
             # landmarks, while long videos stay bounded for fast preparation.
             if self.duration_s <= 60.0:
-                interval_s = max(2.0, self.duration_s / 12.0)
+                interval_s = max(1.5, self.duration_s / 20.0)
             elif self.duration_s <= 300.0:
-                interval_s = max(5.0, self.duration_s / 30.0)
+                interval_s = max(3.0, self.duration_s / 45.0)
             else:
-                interval_s = max(20.0, self.duration_s / 90.0)
-            thumb_count = max(1, min(120, int(math.ceil(self.duration_s / interval_s))))
+                interval_s = max(5.0, self.duration_s / 90.0)
+            thumb_count = max(1, min(150, int(math.ceil(self.duration_s / interval_s))))
             if self.duration_s <= 1.0:
                 timestamps = [0.0]
             else:
@@ -567,10 +583,10 @@ class TimelineThumbnailWorker(QThread):
                 creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
             requests = []
-            if len(self.timeline_clips) > 1:
+            if self.timeline_clips:
                 for clip in self.timeline_clips:
                     clip_duration = max(0.0, float(clip.get("timeline_end", 0.0)) - float(clip.get("timeline_start", 0.0)))
-                    count = max(1, min(24, int(math.ceil(clip_duration / max(2.0, interval_s)))))
+                    count = max(6, min(60, int(math.ceil(clip_duration / max(3.0, interval_s)))))
                     for part in range(count):
                         offset = min(max(0.0, clip_duration - 0.05), part * clip_duration / count)
                         requests.append((

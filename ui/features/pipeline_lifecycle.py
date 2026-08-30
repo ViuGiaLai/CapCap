@@ -1144,7 +1144,7 @@ class PipelineLifecycleMixin:
 
     def toggle_play(self):
         clips = self.get_timeline_video_clips() if hasattr(self, "get_timeline_video_clips") else []
-        if len(clips) > 1:
+        if clips:
             if self.media_player.is_playing():
                 self.media_player.pause()
                 self.refresh_play_button_icon()
@@ -1163,7 +1163,7 @@ class PipelineLifecycleMixin:
     def stop_video(self):
         stop_video_impl(self)
         clips = self.get_timeline_video_clips() if hasattr(self, "get_timeline_video_clips") else []
-        if len(clips) > 1:
+        if clips:
             self.seek_timeline_video(0.0)
 
     def position_changed(self, position):
@@ -1177,7 +1177,7 @@ class PipelineLifecycleMixin:
 
     def duration_changed(self, duration):
         clips = self.get_timeline_video_clips() if hasattr(self, "get_timeline_video_clips") else []
-        if len(clips) > 1:
+        if clips:
             total_ms = int(float(clips[-1]["timeline_end"]) * 1000)
             self.timeline.set_duration(total_ms)
             self.update_duration_label(int(getattr(self, "_timeline_global_position_ms", 0)), total_ms)
@@ -1187,7 +1187,7 @@ class PipelineLifecycleMixin:
 
     def set_position(self, position):
         clips = self.get_timeline_video_clips() if hasattr(self, "get_timeline_video_clips") else []
-        if len(clips) > 1:
+        if clips:
             self.seek_timeline_video(float(position) / 1000.0)
             return
         set_position_impl(self, position)
