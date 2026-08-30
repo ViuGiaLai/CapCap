@@ -663,14 +663,19 @@ class PreviewConfigurationMixin:
     def get_ai_style_instruction(self):
         style_parts = []
         preset_key = ""
+        target_lang = str(self.get_target_language_code() or "vi").strip().lower()
         if hasattr(self, "translation_style_preset_combo"):
             preset_key = str(self.translation_style_preset_combo.currentData() or "").strip()
 
+        if target_lang.startswith("vi"):
+            tutien_prompt = "Thể loại Recap Tu Tiên / Kiếm Hiệp: Dịch chuẩn xưng hô Hán Việt theo vai vế ngữ cảnh (Sư tôn/Đồ nhi, Tiền bối/Vãn bối, Huynh đệ/Tỷ muội, Đạo hữu/Tại hạ, Tông chủ/Trưởng lão). Sử dụng chính xác thuật ngữ tu chân (công pháp, linh đan, đan điền, độ kiếp, pháp bảo, tông môn, linh khí, thần thức). Câu văn ngắn gọn súc tích (khoảng 25-35 ký tự/dòng, tối đa 2 dòng), nhịp điệu nhanh dứt khoát, dễ đọc lướt theo video recap."
+        else:
+            tutien_prompt = f"Cultivation/Wuxia recap in {target_lang}: use established {target_lang} genre terminology, titles and role-based forms of address consistently. Keep names, factions, realms and power-system terms canonical across the video. Use concise, decisive, natural subtitle prose, at most two readable lines. Never insert Vietnamese Hán-Việt terms into this target language."
         preset_prompts = {
-            "tutien_recap": "Thể loại Recap Tu Tiên / Kiếm Hiệp: Dịch chuẩn xưng hô Hán Việt theo vai vế ngữ cảnh (Sư tôn/Đồ nhi, Tiền bối/Vãn bối, Huynh đệ/Tỷ muội, Đạo hữu/Tại hạ, Tông chủ/Trưởng lão). Sử dụng chính xác thuật ngữ tu chân (công pháp, linh đan, đan điền, độ kiếp, pháp bảo, tông môn, linh khí, thần thức). Câu văn ngắn gọn súc tích (khoảng 25-35 ký tự/dòng, tối đa 2 dòng), nhịp điệu nhanh dứt khoát, dễ đọc lướt theo video recap.",
-            "anime": "Thể loại Anime / Manga: Dịch trẻ trung, sinh động, giàu cảm xúc, xưng hô tự nhiên theo tình huống (cậu/tớ, anh/em, mày/tao), giữ nguyên tên nhân vật và thuật ngữ đặc trưng.",
-            "drama": "Thể loại Phim Điện Ảnh / Kịch Tính: Lời thoại sâu sắc, kịch tính, tự nhiên như phim điện ảnh chiếu rạp, giữ đúng sắc thái cảm xúc và bối cảnh nhân vật.",
-            "standard": "Dịch chuẩn xác, tự nhiên, văn phong hiện đại, lưu loát, ngắn gọn, phù hợp làm phụ đề video.",
+            "tutien_recap": tutien_prompt,
+            "anime": f"Anime/Manga in {target_lang}: lively, emotional and natural for the characters' age and relationship. Preserve canonical names and franchise terminology consistently.",
+            "drama": f"Cinematic drama in {target_lang}: natural, emotionally precise dialogue that preserves each character's personality, status and scene context.",
+            "standard": f"Accurate, fluent and concise {target_lang}, written naturally for readable video subtitles.",
         }
         if preset_key in preset_prompts:
             style_parts.append(preset_prompts[preset_key])

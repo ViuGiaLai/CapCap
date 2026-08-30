@@ -10,6 +10,7 @@ from .providers import (
     GoogleWebTranslatorProvider,
     OpenAICompatiblePolisherProvider,
 )
+from .quality_guard import apply_translation_quality_guard
 from .srt_utils import clone_with_texts, parse_srt, split_text_batches, to_srt, validate_texts
 
 
@@ -20,6 +21,23 @@ class AIBatchTranslationError(Exception):
 class TranslationOrchestrator:
     def __init__(self):
         self.google_web = GoogleWebTranslatorProvider()
+
+    @staticmethod
+    def _build_timed_ai_source(segment: dict, index: int) -> str:
+        """Attach non-translatable cue timing so AI can control readability."""
+        try:
+            start = max(0.0, float((segment or {}).get("start", 0.0) or 0.0))
+            end = max(start, float((segment or {}).get("end", start) or start))
+        except (TypeError, ValueError):
+            start, end = 0.0, 0.0
+        duration = max(0.1, end - start)
+        text = " ".join(
+            str((segment or {}).get("text") or "").replace("</CUE>", "").split()
+        ).strip()
+        return (
+            f'<CUE id="{index + 1}" start="{start:.3f}" end="{end:.3f}" '
+            f'duration="{duration:.3f}">{text}</CUE>'
+        )
 
     def translate_segments(
         self,
@@ -38,6 +56,7 @@ class TranslationOrchestrator:
             return TranslationResult(success=False, errors=["No segments to translate."], stage="input")
 
         source_texts = [s.get("text") or "" for s in segments]
+        ai_source_texts = [self._build_timed_ai_source(seg, index) for index, seg in enumerate(segments)]
         normalized_src = self._normalize_source_language(src_lang)
         warnings = []
         optimize_subtitles = False
@@ -54,7 +73,7 @@ class TranslationOrchestrator:
                     translated_texts, providers_used, batch_warnings = self._run_ai_batches(
                         polisher=polisher,
                         provider_type=provider_type,
-                        source_texts=source_texts,
+                        source_texts=ai_source_texts,
                         translated_texts=None,
                         src_lang=normalized_src,
                         target_lang=target_lang,
@@ -66,6 +85,22 @@ class TranslationOrchestrator:
                     if not validate_texts(translated_texts, len(segments)):
                         raise TranslationValidationError("AI translator returned an invalid number of segments.")
 
+                    translated_texts, quality_warnings = apply_translation_quality_guard(
+                        source_segments=segments,
+                        translated_texts=translated_texts,
+                        target_lang=target_lang,
+                    )
+                    translated_texts, quality_warnings = self._repair_ai_quality_issues(
+                        polisher=polisher,
+                        source_segments=segments,
+                        ai_source_texts=ai_source_texts,
+                        translated_texts=translated_texts,
+                        quality_warnings=quality_warnings,
+                        src_lang=normalized_src,
+                        target_lang=target_lang,
+                        style_instruction=merged_style,
+                    )
+                    warnings.extend(quality_warnings)
                     print(f"[AI Translation] Success: completed via {', '.join(providers_used) or 'AI'}")
                     final_segments = clone_with_texts(segments, translated_texts, provider=provider_type, polished=True)
                     return TranslationResult(
@@ -116,6 +151,12 @@ class TranslationOrchestrator:
             if not validate_texts(translated_texts, len(segments)):
                 raise TranslationValidationError("Google web translate returned an invalid number of segments.")
 
+            translated_texts, quality_warnings = apply_translation_quality_guard(
+                source_segments=segments,
+                translated_texts=translated_texts,
+                target_lang=target_lang,
+            )
+            warnings.extend(quality_warnings)
             print("[Translation] Success: Google web translate completed.")
             final_segments = clone_with_texts(segments, translated_texts, provider="google-web", polished=False)
             return TranslationResult(
@@ -307,7 +348,7 @@ class TranslationOrchestrator:
                 src_lang=src_lang,
                 target_lang=target_lang,
                 style_instruction=style_instruction,
-                max_workers=1 if full_context_request else min(len(batches), 4),
+                max_workers=1,
             )
         except TranslationValidationError as exc:
             if not full_context_request:
@@ -331,7 +372,7 @@ class TranslationOrchestrator:
                     src_lang=src_lang,
                     target_lang=target_lang,
                     style_instruction=style_instruction,
-                    max_workers=min(len(fallback_batches), 4),
+                    max_workers=1,
                 )
                 print("[AI Translation] Batch translation completed successfully.")
                 return recovered
@@ -339,12 +380,116 @@ class TranslationOrchestrator:
                 print(f"[AI Translation] AI batch translation failed. Falling back to Google Translate. ({batch_exc})")
                 raise AIBatchTranslationError(str(batch_exc)) from exc
 
+    def _repair_ai_quality_issues(
+        self,
+        *,
+        polisher,
+        source_segments,
+        ai_source_texts,
+        translated_texts,
+        quality_warnings,
+        src_lang,
+        target_lang,
+        style_instruction,
+    ):
+        """Retry only objectively broken cues, with a 2-cue context window."""
+        severe_indices = set()
+        for warning in quality_warnings:
+            if "chữ viết nguồn" not in warning and "thiếu số" not in warning and "bản dịch trống" not in warning:
+                continue
+            match = re.match(r"Cue\s+(\d+):", str(warning))
+            if match:
+                severe_indices.add(int(match.group(1)) - 1)
+        if not severe_indices:
+            return list(translated_texts), list(quality_warnings)
+
+        repaired = list(translated_texts)
+        for index in sorted(severe_indices)[:20]:
+            if index < 0 or index >= len(repaired):
+                continue
+            context_start = max(0, index - 2)
+            context_end = min(len(ai_source_texts), index + 3)
+            nearby = "\n".join(
+                f"- {ai_source_texts[pos]}"
+                for pos in range(context_start, context_end)
+                if pos != index
+            )
+            repair_instruction = (
+                f"{style_instruction}\n\n[mode=translation_quality_repair] "
+                "Repair only the current numbered cue. Its previous draft failed an objective "
+                "check because it retained source-script text or lost a source number. Preserve "
+                "the exact source meaning, names, numbers, negation and speaker register. Use the "
+                "nearby source only for context; never output nearby cues.\n"
+                f"Nearby source context:\n{nearby}"
+            )
+            try:
+                result, _warnings, _provider = polisher.polish_batch(
+                    source_texts=[ai_source_texts[index]],
+                    translated_texts=[repaired[index]],
+                    src_lang=src_lang,
+                    target_lang=target_lang,
+                    style_instruction=repair_instruction,
+                    max_tokens=1024,
+                )
+                if result and str(result[0]).strip():
+                    repaired[index] = str(result[0]).strip()
+            except Exception as exc:
+                print(f"[Translation QA] Cue {index + 1} repair skipped: {exc}")
+
+        repaired, final_warnings = apply_translation_quality_guard(
+            source_segments=list(source_segments),
+            translated_texts=repaired,
+            target_lang=target_lang,
+        )
+        return repaired, final_warnings
+
     @staticmethod
     def _run_ai_batch_requests(*, polisher, batches, src_lang, target_lang, style_instruction, max_workers):
         """Submit validated ordered batches and merge their results by index."""
         warnings = []
         providers_used = set()
         translated_texts_map = {}
+        if max_workers == 1 and len(batches) > 1:
+            recent_pairs: list[tuple[str, str]] = []
+            for idx, (source_batch, translated_batch, max_tokens) in enumerate(batches):
+                continuity_parts = []
+                if recent_pairs:
+                    prior = "\n".join(
+                        f"- {source} => {translation}"
+                        for source, translation in recent_pairs[-5:]
+                    )
+                    continuity_parts.append(
+                        "Continuity reference from the immediately preceding cues. "
+                        "Use only for names, terms, relationships, pronouns and register; "
+                        f"do not output these reference cues:\n{prior}"
+                    )
+                if idx + 1 < len(batches):
+                    following = "\n".join(f"- {text}" for text in batches[idx + 1][0][:3])
+                    continuity_parts.append(
+                        "Upcoming source context. Use only to resolve the current cues; "
+                        f"do not translate or output it:\n{following}"
+                    )
+                request_style = str(style_instruction or "")
+                if continuity_parts:
+                    request_style = request_style + "\n\n" + "\n\n".join(continuity_parts)
+                batch_result, batch_warnings, provider_name = polisher.polish_batch(
+                    source_texts=source_batch,
+                    translated_texts=translated_batch,
+                    src_lang=src_lang,
+                    target_lang=target_lang,
+                    style_instruction=request_style,
+                    max_tokens=max_tokens,
+                )
+                translated_texts_map[idx] = batch_result
+                warnings.extend(batch_warnings)
+                if provider_name:
+                    providers_used.add(provider_name)
+                recent_pairs.extend(zip(source_batch, batch_result))
+            merged = []
+            for idx in range(len(batches)):
+                merged.extend(translated_texts_map[idx])
+            return merged, sorted(providers_used), warnings
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
             future_to_idx = {}
             for idx, (source_batch, translated_batch, max_tokens) in enumerate(batches):

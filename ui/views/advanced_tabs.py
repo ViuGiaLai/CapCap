@@ -187,7 +187,7 @@ def _build_hidden_runtime_widgets(gui):
     gui.transcribe_btn = QPushButton("Create Original Subtitle", gui)
     gui.import_original_srt_btn = QPushButton("Import Original Subtitle", gui)
     gui.import_original_srt_btn.hide()
-    gui.translate_btn = QPushButton("Translate to Vietnamese", gui)
+    gui.translate_btn = QPushButton("Translate subtitles", gui)
 
     gui.bg_music_edit = QLineEdit(gui)
     gui.mixed_audio_edit = QLineEdit(gui)

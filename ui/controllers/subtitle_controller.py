@@ -158,7 +158,7 @@ class SubtitleController:
                 QMessageBox.information(
                     self.gui,
                     "Using Existing Translation",
-                    "Vietnamese subtitles are unchanged, so CapCap reused the existing generated result instead of calling AI again.",
+                    "Translated subtitles are unchanged, so CapCap reused the existing generated result instead of calling AI again.",
                 )
                 return
 
@@ -188,7 +188,7 @@ class SubtitleController:
             self.gui.update_project_step("translate_raw", "failed")
             self.gui.show_error(
                 "Translation Failed",
-                "Could not complete the Vietnamese translation.",
+                "Could not complete the subtitle translation.",
                 error or "The translator API returned an empty result.",
             )
             self.gui._pipeline_fail("Translation failed.")
@@ -306,7 +306,7 @@ class SubtitleController:
             QMessageBox.warning(self.gui, "Rewrite Unavailable", "Original subtitles are missing. Please create or load the original subtitle track first.")
             return
         if not translated_segments:
-            QMessageBox.warning(self.gui, "Rewrite Unavailable", "Vietnamese subtitles are missing. Please translate or load them first.")
+            QMessageBox.warning(self.gui, "Rewrite Unavailable", "Translated subtitles are missing. Please translate or load them first.")
             return
         rewrite_segments = self._collapse_translated_segments_for_rewrite(source_segments, translated_segments)
         if len(source_segments) != len(rewrite_segments):
@@ -326,7 +326,7 @@ class SubtitleController:
             QMessageBox.warning(self.gui, "Rewrite Unavailable", "Original subtitles are missing. Please create or load the original subtitle track first.")
             return
         if not translated_segments:
-            QMessageBox.warning(self.gui, "Rewrite Unavailable", "Vietnamese subtitles are missing. Please translate or load them first.")
+            QMessageBox.warning(self.gui, "Rewrite Unavailable", "Translated subtitles are missing. Please translate or load them first.")
             return
         index = int(getattr(self.gui, "_selected_segment_index", -1))
         if not (0 <= index < len(translated_segments) and index < len(source_segments)):
@@ -358,7 +358,7 @@ class SubtitleController:
             self.gui.update_project_step("refine_translation", "failed")
             self.gui.show_error(
                 "Rewrite Failed",
-                "Could not rewrite the Vietnamese subtitles with AI.",
+                "Could not rewrite the translated subtitles with AI.",
                 error or "The AI rewrite service returned an empty result.",
             )
             self.gui.refresh_ui_state()

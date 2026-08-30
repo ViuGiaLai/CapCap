@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import re
+
+
+# Source-conditioned terminology. A replacement is allowed only when the
+# corresponding source cue actually contains that term, preventing a global
+# search/replace from changing unrelated Vietnamese wording.
+VI_CANONICAL_TERMS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("神域", "Thần Vực", ("thần giới", "thần vực")),
+    ("魔族", "Ma tộc", ("ma tộc", "tộc ma")),
+    ("妖族", "Yêu tộc", ("yêu tộc", "tộc yêu")),
+    ("灵力", "linh lực", ("linh lực", "sức mạnh linh hồn")),
+    ("修为", "tu vi", ("tu vi", "mức tu luyện")),
+    ("境界", "cảnh giới", ("cảnh giới", "cấp độ tu luyện")),
+    ("师兄", "sư huynh", ("sư huynh", "anh đồng môn", "đàn anh")),
+    ("师姐", "sư tỷ", ("sư tỷ", "chị đồng môn", "đàn chị")),
+    ("前辈", "tiền bối", ("tiền bối", "người đi trước")),
+    ("晚辈", "vãn bối", ("vãn bối", "kẻ hậu bối", "hậu bối")),
+    ("师尊", "sư tôn", ("sư tôn", "tôn sư")),
+    ("师父", "sư phụ", ("sư phụ", "thầy")),
+    ("贤侄", "hiền điệt", ("hiền điệt", "cháu hiền")),
+)
+
+_CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04ff]")
+_ARABIC_SCRIPT_RE = re.compile(r"[\u0600-\u06ff]")
+# CJK glyphs count as ``\w`` in Python, so word boundaries would miss values
+# such as ``100颗``. Only guard against adjacent digits here.
+_ARABIC_NUMBER_RE = re.compile(r"(?<!\d)\d+(?:[.,]\d+)?%?(?!\d)")
+
+
+def _replace_variant(text: str, variant: str, canonical: str) -> str:
+    return re.sub(re.escape(variant), canonical, text, flags=re.IGNORECASE)
+
+
+def _target_profile(target_lang: str) -> tuple[str, float]:
+    key = str(target_lang or "").strip().lower().replace("_", "-")
+    base = key.split("-", 1)[0]
+    if base in {"zh", "ja"}:
+        return "cjk", 10.0
+    if base == "ko":
+        return "hangul", 12.0
+    if base == "th":
+        return "thai", 15.0
+    if base in {"ar", "fa", "ur"}:
+        return "arabic", 16.0
+    if base in {"ru", "uk", "bg", "sr"}:
+        return "cyrillic", 17.0
+    return "latin", 18.0
+
+
+def _contains_unexpected_source_script(text: str, profile: str) -> bool:
+    checks = {
+        "cjk": (_HANGUL_RE, _ARABIC_SCRIPT_RE, _CYRILLIC_RE),
+        "hangul": (_CJK_RE, _ARABIC_SCRIPT_RE, _CYRILLIC_RE),
+        "arabic": (_CJK_RE, _HANGUL_RE, _CYRILLIC_RE),
+        "cyrillic": (_CJK_RE, _HANGUL_RE, _ARABIC_SCRIPT_RE),
+        "thai": (_CJK_RE, _HANGUL_RE, _ARABIC_SCRIPT_RE, _CYRILLIC_RE),
+        "latin": (_CJK_RE, _HANGUL_RE, _ARABIC_SCRIPT_RE, _CYRILLIC_RE),
+    }
+    return any(pattern.search(text) for pattern in checks.get(profile, ()))
+
+
+def apply_translation_quality_guard(
+    *,
+    source_segments: list[dict],
+    translated_texts: list[str],
+    target_lang: str,
+) -> tuple[list[str], list[str]]:
+    """Normalize safe terminology and report objective translation risks.
+
+    This deliberately does not attempt semantic translation locally. Meaning
+    and pronoun resolution remain the AI provider's job; the guard only makes
+    corrections supported by the source cue and emits warnings for review.
+    """
+    target_key = str(target_lang or "").strip().lower()
+    is_vietnamese = target_key in {"vi", "vie", "vietnamese", "vi-vn"}
+    target_profile, max_cps = _target_profile(target_key)
+    guarded: list[str] = []
+    warnings: list[str] = []
+
+    for index, (segment, translated) in enumerate(zip(source_segments, translated_texts)):
+        source = str((segment or {}).get("text") or "")
+        text = " ".join(str(translated or "").split()).strip()
+
+        if is_vietnamese:
+            for source_term, canonical, variants in VI_CANONICAL_TERMS:
+                if source_term not in source:
+                    continue
+                for variant in variants:
+                    text = _replace_variant(text, variant, canonical)
+
+        if not text:
+            warnings.append(f"Cue {index + 1}: bản dịch trống.")
+        elif _contains_unexpected_source_script(text, target_profile):
+            warnings.append(f"Cue {index + 1}: còn ký tự thuộc chữ viết nguồn chưa dịch.")
+
+        source_numbers = _ARABIC_NUMBER_RE.findall(source)
+        translated_numbers = _ARABIC_NUMBER_RE.findall(text)
+        missing_numbers = [number for number in source_numbers if number not in translated_numbers]
+        if missing_numbers:
+            warnings.append(
+                f"Cue {index + 1}: bản dịch có thể thiếu số {', '.join(missing_numbers)}."
+            )
+
+        try:
+            duration = max(0.1, float(segment.get("end", 0.0)) - float(segment.get("start", 0.0)))
+        except (AttributeError, TypeError, ValueError):
+            duration = 0.1
+        cps = len(text.replace(" ", "")) / duration
+        if cps > max_cps:
+            warnings.append(
+                f"Cue {index + 1}: quá dài để đọc ({cps:.1f} ký tự/giây)."
+            )
+        guarded.append(text)
+
+    return guarded, warnings

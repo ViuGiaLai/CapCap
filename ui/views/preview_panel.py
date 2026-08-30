@@ -1314,7 +1314,7 @@ def build_preview_panel(gui):
     timeline_layout.addWidget(gui.progress_bar)
 
     gui.translated_text = QTextEdit()
-    gui.translated_text.setPlaceholderText("Vietnamese subtitle text will appear here. You can edit it before export.")
+    gui.translated_text.setPlaceholderText("Translated subtitle text will appear here. You can edit it before export.")
     gui.translated_text.hide()
     gui.transcript_text = QTextEdit()
     gui.transcript_text.setPlaceholderText("The original subtitle transcript will appear here...")

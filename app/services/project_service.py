@@ -172,7 +172,7 @@ class ProjectService:
             # Translation behavior includes the contextual-reasoning prompt.
             # Bump this when prompt semantics change so projects do not reuse
             # older, literal translations from the cache.
-            "translation_prompt_version": 3,
+            "translation_prompt_version": 5,
             "src_lang": str(src_lang or "auto").strip().lower(),
             "target_lang": str(target_lang or "vi").strip().lower(),
             "enable_polish": bool(enable_polish),

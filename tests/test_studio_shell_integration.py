@@ -108,6 +108,16 @@ class TestStudioShellIntegration(unittest.TestCase):
             self.assertTrue(self.window.add_layer_btn.isEnabled())
             self.assertTrue(self.window.timeline_layers_btn.isEnabled())
 
+    def test_target_language_selector_exposes_multilingual_pipeline(self):
+        codes = {
+            self.window.lang_target_combo.itemData(index)
+            for index in range(self.window.lang_target_combo.count())
+        }
+        self.assertTrue({
+            "vi", "en", "ja", "ko", "th", "id", "es", "fr", "de",
+            "pt", "ru", "ar", "zh-CN", "zh-TW",
+        }.issubset(codes))
+
     def test_timeline_zoom_icons_execute_real_actions(self):
         self.assertFalse(self.window.timeline_zoom_out_btn.icon().isNull())
         self.assertFalse(self.window.timeline_zoom_in_btn.icon().isNull())
