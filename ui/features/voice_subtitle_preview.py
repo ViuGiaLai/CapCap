@@ -586,6 +586,9 @@ class VoiceSubtitlePreviewMixin:
     def on_export_finished(self, output_path, error):
         self.preview_controller.on_export_finished(output_path, error)
 
+    def on_auto_recap_export_finished(self, output_path, error):
+        self.preview_controller._on_auto_recap_export_finished(output_path, error)
+
     def on_quick_preview_ready(self, output_path, error):
         self.preview_controller.on_quick_preview_ready(output_path, error)
 

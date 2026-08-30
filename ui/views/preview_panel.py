@@ -1554,12 +1554,18 @@ def build_preview_panel(gui):
     gui.blur_inspector_radius_slider = QSlider(Qt.Horizontal)
     gui.blur_inspector_radius_slider.setRange(1, 60)
     gui.blur_inspector_radius_slider.setValue(36)
+    # Keep mouse direction deterministic even if Windows/application locale
+    # uses an RTL layout. Right must always mean a stronger blur.
+    gui.blur_inspector_radius_slider.setLayoutDirection(Qt.LeftToRight)
+    gui.blur_inspector_radius_slider.setInvertedAppearance(False)
+    gui.blur_inspector_radius_slider.setInvertedControls(False)
+    gui.blur_inspector_radius_slider.setTracking(True)
     gui.blur_inspector_radius_slider.setToolTip(
         "How strong the blur is (1 = light, 60 = very heavy)."
     )
     radius_row.addWidget(gui.blur_inspector_radius_slider, 1)
-    gui.blur_inspector_radius_value_label = QLabel("36")
-    gui.blur_inspector_radius_value_label.setFixedWidth(28)
+    gui.blur_inspector_radius_value_label = QLabel("36 / 60")
+    gui.blur_inspector_radius_value_label.setFixedWidth(52)
     radius_row.addWidget(gui.blur_inspector_radius_value_label)
     blur_layout.addLayout(radius_row)
 

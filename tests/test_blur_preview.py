@@ -62,7 +62,9 @@ class BlurPreviewTests(unittest.TestCase):
             "pixelate": True, "pixelate_size": 24,
         }], 1920, 1080)
 
-        self.assertIn("boxblur=60:3:30:3", strong)
+        # Inspector strength now maps to a denser five-pass blur so the top
+        # end can genuinely obscure hard-edged subtitle glyphs.
+        self.assertIn("boxblur=90:6:45:6", strong)
         self.assertIn("colorchannelmixer=aa=0.400", strong)
         self.assertIn("flags=neighbor", mosaic)
 

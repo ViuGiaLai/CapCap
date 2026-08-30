@@ -289,6 +289,19 @@ class EditorTimeline(QGraphicsView):
         # (e.g. restored from project state) so they cover the whole video.
         if self._timeline is not None:
             self._timeline.duration = new_dur
+            # Re-probing a source can repair an incorrect duration persisted
+            # by an older project. Keep timed overlays inside the real V1
+            # range too, otherwise a stale B1 layer extends the ruler.
+            if new_dur < old_dur:
+                for track in self._timeline.tracks:
+                    if track.type in (LayerType.VIDEO, LayerType.AUDIO):
+                        continue
+                    for layer in track.layers:
+                        try:
+                            if float(layer.end) > new_dur:
+                                layer.end = max(float(layer.start), new_dur)
+                        except (TypeError, ValueError):
+                            continue
             if new_dur > old_dur:
                 for t in self._timeline.tracks:
                     if t.type != LayerType.MASK:
@@ -378,7 +391,7 @@ class EditorTimeline(QGraphicsView):
 
     def set_video_source(self, path: str, duration_s: float) -> None:
         from app.layers.sync_bridge import ensure_v1_a1_tracks
-        from app.services.timeline_video_sequence import ordered_video_layers
+        from app.services.timeline_video_sequence import normalize_v1_sequence, ordered_video_layers
         if not self._timeline:
             self._init_default_tracks()
         if duration_s <= 0:
@@ -391,14 +404,9 @@ class EditorTimeline(QGraphicsView):
             )
             if not same_restored_source:
                 ensure_v1_a1_tracks(self._timeline, path, duration_s)
-            self._duration = max(
-                self._duration,
-                float(getattr(self._timeline, "duration", 0.0) or 0.0),
-                duration_s,
-            )
-            # Keep the Timeline model's duration in sync so layers that
-            # span the whole video (Mask track) use the real length.
-            self._timeline.duration = self._duration
+            normalize_v1_sequence(self._timeline)
+            repaired_duration = float(getattr(self._timeline, "duration", 0.0) or 0.0)
+            self.set_duration_ms(int(round(repaired_duration * 1000.0)))
         self._redraw()
 
     _video_duration_cache: dict[str, float] = {}
@@ -1794,23 +1802,6 @@ class EditorTimeline(QGraphicsView):
                     return track, layer
         return None, None
 
-    def _seek_to_video_layer_click(self, layer, seconds: float) -> None:
-        """Navigate preview when the user clicks a V1/Vn clip body.
-
-        A clip body is still draggable; this only makes a simple click an
-        explicit preview seek.  It also works on a locked track, because
-        locking must prevent edits, not inspection or playback navigation.
-        """
-        layer_type = str(getattr(getattr(layer, "type", ""), "value", getattr(layer, "type", ""))).lower()
-        if layer_type != "video":
-            return
-        start = max(0.0, float(getattr(layer, "start", 0.0) or 0.0))
-        end = max(start, float(self._get_effective_layer_end(layer)))
-        target = min(end, max(start, float(seconds)))
-        self.set_playhead(target)
-        self.seekRequested.emit(target)
-        self.seekRequestedMs.emit(int(target * 1000))
-
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             pos = event.position()
@@ -1818,10 +1809,10 @@ class EditorTimeline(QGraphicsView):
             scroll_y = self.verticalScrollBar().value()
             in_ruler = pos.y() < self.RULER_HEIGHT
             if self._playing:
-                # Review mode: any click in the timed content area is
-                # navigation only. Segment bodies and resize edges must never
-                # start an edit while video playback is active.
-                if pos.x() >= self.CONTENT_LEFT_PAD:
+                # During review, only the ruler is a seek surface. Clicking
+                # a clip body must not pull the red playhead away from the
+                # position currently being played.
+                if in_ruler and pos.x() >= self.CONTENT_LEFT_PAD:
                     t = self._pos_to_time(pos.x(), scroll_x)
                     if t >= 0:
                         self._manual_subtitle_selection = False
@@ -1903,10 +1894,8 @@ class EditorTimeline(QGraphicsView):
 
             elif lid:
                 track, layer = self._find_layer_by_id(lid)
-                # Clicking inside a video clip must preview the exact source
-                # at this global Timeline time. Previously V1 clicks only
-                # selected the layer, leaving the preview on the first video.
-                self._seek_to_video_layer_click(layer, self._pos_to_time(pos.x(), scroll_x))
+                # Clip bodies select/edit clips. Playback navigation belongs
+                # exclusively to the ruler above the tracks.
                 if bool(getattr(track, "locked", False)):
                     self._selected_layer_id = lid
                     self.layerSelected.emit(lid)

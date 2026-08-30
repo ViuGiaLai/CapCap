@@ -11,7 +11,13 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from runtime_paths import bin_path
-from worker_adapters import ExactFramePreviewWorker, FinalExportWorker, PreviewMuxWorker, QuickPreviewWorker
+from worker_adapters import (
+    AutoRecapRenderWorker,
+    ExactFramePreviewWorker,
+    FinalExportWorker,
+    PreviewMuxWorker,
+    QuickPreviewWorker,
+)
 
 
 class PreviewController:
@@ -914,30 +920,55 @@ class PreviewController:
         if hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled():
             recap_path = str(getattr(self.gui, "last_recap_video_path", "") or "")
             if recap_path and os.path.exists(recap_path):
-                self.gui.log(f"[Export] Opening output recap video folder: {recap_path}")
-                os.startfile(os.path.dirname(recap_path))
+                suggested_path = os.path.join(
+                    os.path.dirname(recap_path),
+                    f"{os.path.splitext(os.path.basename(video_path))[0]}_recap.mp4",
+                )
+                output_path, _ = QFileDialog.getSaveFileName(
+                    self.gui, "Export Recap Video", suggested_path, "Video Files (*.mp4)"
+                )
+                if not output_path:
+                    return
+                if not output_path.lower().endswith(".mp4"):
+                    output_path += ".mp4"
+                try:
+                    if os.path.abspath(recap_path) != os.path.abspath(output_path):
+                        shutil.copy2(recap_path, output_path)
+                    self.on_export_finished(output_path, "")
+                except OSError as exc:
+                    self.on_export_finished("", str(exc))
                 return
             elif getattr(self.gui, "current_auto_recap_edl", None):
-                output_dir = os.path.join(self.gui.workspace_root, "output")
-                os.makedirs(output_dir, exist_ok=True)
-                output_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}_recap.mp4")
-                from app.services.auto_recap_engine import AutoRecapEngine
-                engine = AutoRecapEngine(getattr(self.gui, "auto_recap_config", None))
-                self.gui.log("[Export] Rendering 1-Pass Auto Recap video for export...")
-                if engine.render_recap_video_1pass(video_path, output_path, self.gui.current_auto_recap_edl):
-                    self.gui.last_recap_video_path = output_path
-                    if hasattr(self.gui, "persist_auto_recap_project_data"):
-                        self.gui.persist_auto_recap_project_data(self.gui.current_auto_recap_edl, output_path)
-                    self.gui.log(f"[Export] Recap video rendered successfully: {output_path}")
-                    os.startfile(output_dir)
-                    return
-                render_error = str(getattr(engine, "last_render_error", "") or "").strip()
-                self.gui.log(f"[Export] Auto Recap render failed: {render_error or 'unknown FFmpeg error'}")
-                QMessageBox.warning(
-                    self.gui,
-                    "Auto Edit Recap",
-                    "Could not render the recap video. Check the source video and FFmpeg installation.",
+                default_dir = self.gui.final_output_folder_edit.text().strip() or os.path.dirname(video_path)
+                default_path = os.path.join(
+                    default_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}_recap.mp4"
                 )
+                output_path, _ = QFileDialog.getSaveFileName(
+                    self.gui, "Export Recap Video", default_path, "Video Files (*.mp4)"
+                )
+                if not output_path:
+                    return
+                if not output_path.lower().endswith(".mp4"):
+                    output_path += ".mp4"
+                output_dir = os.path.dirname(output_path)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+                self.gui.log("[Export] Rendering 1-Pass Auto Recap video for export...")
+                self.gui.export_btn.setEnabled(False)
+                self.gui.export_btn.setText("Exporting...")
+                self.gui.export_thread = AutoRecapRenderWorker(
+                    video_path,
+                    output_path,
+                    getattr(self.gui, "auto_recap_config", None),
+                    self.gui.current_auto_recap_edl,
+                    self.gui.get_timeline_video_clips(existing_only=True)
+                    if hasattr(self.gui, "get_timeline_video_clips") else [],
+                )
+                # Route through the QMainWindow receiver so Qt queues the UI
+                # update back onto the main thread.
+                self.gui.export_thread.finished.connect(self.gui.on_auto_recap_export_finished)
+                self.gui.export_thread.finished.connect(self._on_export_thread_done)
+                self.gui.export_thread.start()
                 return
 
         has_translated_content = bool(
@@ -995,8 +1026,11 @@ class PreviewController:
             # Ratio or Canvas setting is selected.
             try:
                 self.gui.sync_live_subtitle_preview()
-                preview_ass = str(getattr(self.gui, "live_preview_ass_path", "") or "")
-                translated_ass_path = preview_ass if os.path.exists(preview_ass) else ""
+                active_segments = self.gui.get_active_segments()
+                snapshot = self.gui._build_live_subtitle_ass_snapshot(active_segments)
+                translated_ass_path = self.gui._write_subtitle_ass_from_snapshot(
+                    snapshot, translated_srt_path
+                )
             except Exception as exc:
                 self.gui.log(f"[Export] Could not refresh live subtitle ASS: {exc}")
                 translated_ass_path = ""
@@ -1013,8 +1047,7 @@ class PreviewController:
             )
             return
 
-        default_dir = self.gui.final_output_folder_edit.text().strip() or os.path.join(self.gui.workspace_root, "output")
-        os.makedirs(default_dir, exist_ok=True)
+        default_dir = self.gui.final_output_folder_edit.text().strip() or os.path.dirname(video_path)
         if mode == "original":
             suggested_name = f"{video_name}_original.mp4"
         elif mode == "subtitle":
@@ -1041,6 +1074,7 @@ class PreviewController:
 
         chosen_dir = os.path.dirname(output_path)
         if chosen_dir:
+            os.makedirs(chosen_dir, exist_ok=True)
             self.gui.final_output_folder_edit.setText(chosen_dir)
 
         if not automatic and not self._confirm_export_summary(
@@ -1376,6 +1410,25 @@ class PreviewController:
             self.gui.update_workflow_stage_badges()
             self.gui.log(f"[Export] Final video exported successfully: {output_path}")
             self.gui.log("[Export] Kept current preview/subtitle state so you can continue editing after export.")
+            message = QMessageBox(self.gui)
+            message.setIcon(QMessageBox.Information)
+            message.setWindowTitle("Export completed")
+            message.setText("Video exported successfully.")
+            message.setInformativeText(output_path)
+            open_folder = message.addButton("Open Folder", QMessageBox.ActionRole)
+            message.addButton("Close", QMessageBox.AcceptRole)
+            message.exec()
+            if message.clickedButton() is open_folder:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(output_path)))
+
+    def _on_auto_recap_export_finished(self, output_path, error):
+        if not error and output_path:
+            self.gui.last_recap_video_path = output_path
+            if hasattr(self.gui, "persist_auto_recap_project_data"):
+                self.gui.persist_auto_recap_project_data(
+                    self.gui.current_auto_recap_edl, output_path
+                )
+        self.on_export_finished(output_path, error)
 
     def on_quick_preview_ready(self, output_path, error):
         if hasattr(self.gui, "ensure_media_backend_ready"):

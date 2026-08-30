@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 import sys
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -22,6 +23,31 @@ from app.services.timeline_video_sequence import (
 
 
 class TimelineVideoSequenceTests(unittest.TestCase):
+    def test_restored_stale_duration_is_repaired_from_source(self):
+        from PySide6.QtWidgets import QApplication
+        from app.layers.base import LayerType
+        from app.layers.blur import BlurLayer
+        from ui.views.editor.timeline import EditorTimeline
+
+        app = QApplication.instance() or QApplication([])
+        widget = EditorTimeline()
+        model = Timeline(duration=784.0)
+        append_video(model, "episode.mp4", 784.0)
+        blur_track = model.add_track("B1", LayerType.BLUR)
+        blur_track.layers.append(BlurLayer(start=0.0, end=784.0))
+        model.duration = 784.0
+        widget._timeline = model
+        widget._duration = 784.0
+
+        with patch.object(EditorTimeline, "_probe_video_duration", return_value=362.0):
+            widget.set_video_source("episode.mp4", 362.0)
+
+        self.assertAlmostEqual(widget.duration / 1000.0, 362.0)
+        self.assertAlmostEqual(model.duration, 362.0)
+        self.assertAlmostEqual(blur_track.layers[0].end, 362.0)
+        widget.deleteLater()
+        app.processEvents()
+
     def test_append_reorder_remove_and_time_mapping(self):
         timeline = Timeline()
         first = append_video(timeline, "episode_1.mp4", 10.0)
@@ -118,9 +144,55 @@ class TimelineVideoSequenceTests(unittest.TestCase):
             self.assertEqual(os.path.abspath(gui.media_player._source_path), os.path.abspath(second_path))
             self.assertEqual(gui.media_player.position_ms, 2500)
 
-    def test_clicking_video_clip_emits_global_timeline_seek(self):
+    def test_single_video_playback_updates_resume_position(self):
+        from ui.features.multi_video_timeline import MultiVideoTimelineMixin
+
+        class _Player:
+            def __init__(self, source):
+                self._source_path = source
+
+        class _TimelineWidget:
+            def __init__(self, model):
+                self._timeline = model
+                self.position_ms = 0
+
+            def set_position(self, position):
+                self.position_ms = int(position)
+
+        class _Gui(MultiVideoTimelineMixin):
+            def __init__(self, model, source):
+                self.timeline = _TimelineWidget(model)
+                self.media_player = _Player(source)
+                self._timeline_preview_source = source
+                self._timeline_global_position_ms = 0
+                self.last_preview_video_path = ""
+
+            def update_duration_label(self, *_args):
+                pass
+
+            def refresh_timed_layer_preview(self, *_args):
+                pass
+
+            def update_playback_subtitle_highlight(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = os.path.join(temp_dir, "episode.fixture")
+            with open(source, "wb"):
+                pass
+            timeline = Timeline()
+            append_video(timeline, source, 10.0)
+            gui = _Gui(timeline, source)
+
+            self.assertTrue(gui.handle_sequence_position_changed(4250))
+            self.assertEqual(gui._timeline_global_position_ms, 4250)
+            self.assertEqual(gui.timeline.position_ms, 4250)
+
+    def test_video_clip_selection_does_not_seek_playhead(self):
         import importlib.util
 
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QApplication
 
         timeline_path = os.path.join(
@@ -137,13 +209,30 @@ class TimelineVideoSequenceTests(unittest.TestCase):
         clip = append_video(model, "episode.mp4", 20.0)
         widget._timeline = model
         widget._duration = 20.0
+        widget.resize(900, 300)
+        widget._rebuild_track_heights()
+        widget._redraw()
+        widget.show()
+        app.processEvents()
         requested = []
         widget.seekRequestedMs.connect(requested.append)
 
-        widget._seek_to_video_layer_click(clip, 12.5)
+        clip_x = widget.CONTENT_LEFT_PAD + int(5.0 * widget.pixels_per_second)
+        QTest.mouseClick(
+            widget.viewport(), Qt.LeftButton, Qt.NoModifier,
+            QPoint(clip_x, widget.RULER_HEIGHT + 20),
+        )
 
-        self.assertEqual(requested, [12500])
-        self.assertAlmostEqual(widget._playhead, 12.5)
+        self.assertEqual(requested, [])
+        self.assertAlmostEqual(widget._playhead, 0.0)
+
+        ruler_x = widget.CONTENT_LEFT_PAD + int(8.0 * widget.pixels_per_second)
+        QTest.mouseClick(
+            widget.viewport(), Qt.LeftButton, Qt.NoModifier,
+            QPoint(ruler_x, widget.RULER_HEIGHT // 2),
+        )
+        self.assertEqual(requested, [8000])
+        self.assertAlmostEqual(widget._playhead, 8.0)
         widget.deleteLater()
         app.processEvents()
 

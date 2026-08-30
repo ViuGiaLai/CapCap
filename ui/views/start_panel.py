@@ -196,7 +196,9 @@ def build_start_group(gui, left_layout):
     gui.video_path_edit.setPlaceholderText("Choose one video to process...")
     gui.video_path_edit.hide()
 
-    gui.final_output_folder_edit = QLineEdit(os.path.join(gui.workspace_root, "output"))
+    # Empty means "next to the source". The actual destination is always
+    # confirmed by Save As; do not silently default to the repository output.
+    gui.final_output_folder_edit = QLineEdit("")
     gui.final_output_folder_edit.setPlaceholderText("Folder to save final results...")
     gui.final_output_folder_edit.hide()
 
@@ -208,7 +210,9 @@ def build_start_group(gui, left_layout):
 
     gui.export_btn = QPushButton("Export")
     gui.export_btn.setObjectName("mainActionBtn")
-    gui.export_btn.clicked.connect(gui.export_final_video)
+    # clicked emits a bool, while export_final_video's automatic flag is
+    # keyword-only. Do not forward the signal argument.
+    gui.export_btn.clicked.connect(lambda _checked=False: gui.export_final_video())
 
     gui.preview_5s_btn = QPushButton("Fast Preview")
     gui.preview_5s_btn.clicked.connect(gui.preview_five_seconds)

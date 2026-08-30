@@ -887,6 +887,51 @@ class AutoRecapWorker(QThread):
             self.finished.emit([], "", str(exc))
 
 
+class AutoRecapRenderWorker(QThread):
+    """Render an existing recap EDL without blocking the Qt event loop."""
+
+    finished = Signal(str, str)
+
+    def __init__(self, video_path, output_path, config, decisions, timeline_clips=None):
+        super().__init__()
+        self.video_path = str(video_path or "")
+        self.output_path = str(output_path or "")
+        self.config = config
+        self.decisions = list(decisions or [])
+        self.timeline_clips = [
+            dict(item) for item in (timeline_clips or []) if isinstance(item, dict)
+        ]
+
+    def run(self):
+        try:
+            from app.services.auto_recap_engine import AutoRecapEngine
+
+            engine = AutoRecapEngine(self.config)
+            timeline_required = bool(
+                len(self.timeline_clips) > 1
+                or (
+                    self.timeline_clips
+                    and float(self.timeline_clips[0].get("source_start", 0.0) or 0.0) > 0.01
+                )
+            )
+            rendered = (
+                engine.render_timeline_recap_1pass(
+                    self.timeline_clips, self.output_path, self.decisions
+                )
+                if timeline_required
+                else engine.render_recap_video_1pass(
+                    self.video_path, self.output_path, self.decisions
+                )
+            )
+            if not rendered:
+                raise RuntimeError(
+                    engine.last_render_error or "FFmpeg could not render the recap video."
+                )
+            self.finished.emit(self.output_path, "")
+        except Exception as exc:
+            self.finished.emit("", str(exc))
+
+
 class FinalExportWorker(QThread):
     finished = Signal(str, str)
     progress = Signal(int, str)

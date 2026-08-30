@@ -518,6 +518,11 @@ class VisualLayerEditorMixin:
         self._wire_layer_timing_controls("blur")
         if track is None:
             return
+        if layer is not None:
+            # Subtitle playback may temporarily change Timeline selection.
+            # The open Blur inspector must keep editing the B1 region the
+            # user explicitly selected instead of silently becoming inert.
+            self._blur_inspector_layer_id = str(getattr(layer, "id", "") or "")
         # B1 mirrors M1 interaction: all regions remain visible in the
         # preview, but only the layer selected in the timeline is editable.
         if layer is not None:
@@ -569,7 +574,7 @@ class VisualLayerEditorMixin:
             self.blur_inspector_radius_slider.setValue(strength)
             self.blur_inspector_radius_slider.blockSignals(False)
         if hasattr(self, "blur_inspector_radius_value_label"):
-            self.blur_inspector_radius_value_label.setText(str(strength))
+            self.blur_inspector_radius_value_label.setText(f"{strength} / 60")
         if hasattr(self, "blur_inspector_opacity_slider"):
             self.blur_inspector_opacity_slider.blockSignals(True)
             self.blur_inspector_opacity_slider.setValue(int(round(opacity * 100)))
@@ -605,14 +610,24 @@ class VisualLayerEditorMixin:
             """Return the currently selected BlurLayer (or None)."""
             if not hasattr(self, "timeline") or not self.timeline._timeline:
                 return None, None
-            sid = getattr(self.timeline, "_selected_layer_id", "") or ""
-            for tr in self.timeline._timeline.tracks:
-                for l in tr.layers:
-                    if l.id == sid:
-                        return l, tr
+            selected_id = str(getattr(self.timeline, "_selected_layer_id", "") or "")
+            inspector_id = str(getattr(self, "_blur_inspector_layer_id", "") or "")
+            for sid in (selected_id, inspector_id):
+                if not sid:
+                    continue
+                for tr in self.timeline._timeline.tracks:
+                    for l in tr.layers:
+                        layer_type = str(
+                            getattr(getattr(l, "type", ""), "value", getattr(l, "type", ""))
+                        ).lower()
+                        if l.id == sid and layer_type == "blur":
+                            self._blur_inspector_layer_id = str(l.id)
+                            return l, tr
             return None, None
 
         def _on_radius_changed(value):
+            if hasattr(self, "blur_inspector_radius_value_label"):
+                self.blur_inspector_radius_value_label.setText(f"{int(value)} / 60")
             layer, _ = _selected_blur_layer()
             if layer is None:
                 return
@@ -620,8 +635,6 @@ class VisualLayerEditorMixin:
                 layer.blur_strength = int(value)
             except Exception:
                 return
-            if hasattr(self, "blur_inspector_radius_value_label"):
-                self.blur_inspector_radius_value_label.setText(str(int(value)))
             self._sync_blur_layer_to_preview(layer)
 
         def _on_opacity_changed(value):

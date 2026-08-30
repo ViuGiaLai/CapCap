@@ -427,8 +427,8 @@ def _build_blur_filter_chain(blur_region, video_width, video_height):
             strength = float(region.get("blur_strength", 36.0))
         except (TypeError, ValueError):
             strength = 36.0
-        luma_radius = max(1, min(100, int(round(strength * 2.0)), int(min_dimension // 2)))
-        chroma_radius = max(0, min(100, luma_radius // 2))
+        luma_radius = max(1, min(180, int(round(strength * 3.0)), int(min_dimension // 2)))
+        chroma_radius = max(0, min(180, luma_radius // 2))
         try:
             opacity = float(region.get("blur_opacity", 1.0))
         except (TypeError, ValueError):
@@ -456,7 +456,7 @@ def _build_blur_filter_chain(blur_region, video_width, video_height):
             cell_h = max(1, h // pixel_size)
             effect = f"scale={cell_w}:{cell_h}:flags=neighbor,scale={w}:{h}:flags=neighbor"
         else:
-            effect = f"boxblur={luma_radius}:3:{chroma_radius}:3"
+            effect = f"boxblur={luma_radius}:6:{chroma_radius}:6"
         if opacity < 0.999:
             effect = f"format=yuva420p,{effect},colorchannelmixer=aa={opacity:.3f}"
         crop_parts.append(

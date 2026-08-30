@@ -80,6 +80,34 @@ class TestStudioShellIntegration(unittest.TestCase):
         self.assertIsInstance(regions, list)
         self.assertEqual(len(regions), 2)
 
+    def test_open_blur_inspector_keeps_editing_region_after_timeline_selection_changes(self):
+        timeline = Timeline(duration=10.0)
+        track = Track(name="B1", type=LayerType.BLUR, height=60)
+        layer = BlurLayer(name="Blur 1", start=0.0, end=10.0)
+        track.layers.append(layer)
+        timeline.tracks.append(track)
+        self.window.timeline._timeline = timeline
+        self.window.timeline._duration = timeline.duration
+        self.window.timeline._selected_layer_id = layer.id
+        self.window.video_view.set_blur_regions_normalized([{
+            "x": layer.position_x, "y": layer.position_y,
+            "width": layer.width, "height": layer.height,
+        }])
+        applied = []
+        self.window.apply_preview_blur_region = (
+            lambda *, regions=None, force=False: applied.append((regions, force))
+        )
+
+        self.window.on_timeline_layer_selected(layer.id)
+        self.window.timeline._selected_layer_id = "subtitle-auto-selection"
+        self.window.blur_inspector_radius_slider.setValue(60)
+        QTest.qWait(1)
+
+        self.assertEqual(layer.blur_strength, 60)
+        self.assertEqual(self.window.blur_inspector_radius_value_label.text(), "60 / 60")
+        self.assertEqual(int(applied[-1][0][0]["blur_strength"]), 60)
+        self.assertTrue(applied[-1][1])
+
     def test_track_label_click_selects_layer_and_opens_inspector(self):
         timeline = Timeline(duration=10.0)
         track = Track(name="B1", type=LayerType.BLUR, height=60)
@@ -107,6 +135,15 @@ class TestStudioShellIntegration(unittest.TestCase):
 
             self.assertTrue(self.window.add_layer_btn.isEnabled())
             self.assertTrue(self.window.timeline_layers_btn.isEnabled())
+
+    def test_export_button_does_not_forward_clicked_boolean(self):
+        calls = []
+        self.window.export_final_video = lambda: calls.append(True)
+        self.window.export_btn.setEnabled(True)
+
+        self.window.export_btn.click()
+
+        self.assertEqual(calls, [True])
 
     def test_target_language_selector_exposes_multilingual_pipeline(self):
         codes = {

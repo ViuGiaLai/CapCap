@@ -36,6 +36,9 @@ class MultiVideoTimelineMixin:
         if timeline is not None:
             from app.services.timeline_video_sequence import normalize_v1_sequence
             normalize_v1_sequence(timeline)
+            timeline_widget = getattr(self, "timeline", None)
+            if timeline_widget is not None:
+                timeline_widget.set_duration(int(round(float(timeline.duration) * 1000.0)))
         selected_id = ""
         current = widget.currentItem()
         if current is not None:
@@ -192,12 +195,10 @@ class MultiVideoTimelineMixin:
 
     def handle_sequence_position_changed(self, local_position_ms: int) -> bool:
         clips = self.get_timeline_video_clips(existing_only=True)
-        if len(clips) <= 1:
+        if not clips:
             return False
         current_source = os.path.abspath(str(getattr(getattr(self, "media_player", None), "_source_path", "") or ""))
         preview_source = os.path.abspath(str(getattr(self, "last_preview_video_path", "") or ""))
-        if preview_source and current_source == preview_source:
-            return False
         cached_source = os.path.abspath(str(getattr(self, "_timeline_preview_source", "") or ""))
         # Position callbacks originate from the active player source.  Prefer
         # it over the cache so the global playhead cannot jump back to V1
@@ -206,6 +207,24 @@ class MultiVideoTimelineMixin:
         clip = next((item for item in clips if os.path.abspath(item["source"]) == source), None)
         if clip is None:
             clip = next((item for item in clips if os.path.abspath(item["source"]) == cached_source), None)
+        # A rendered preview represents the complete logical Timeline and
+        # therefore already uses global time. Do not map it through V1's
+        # source_start/speed values.
+        rendered_preview_active = bool(
+            preview_source
+            and current_source == preview_source
+            and not any(os.path.abspath(item["source"]) == current_source for item in clips)
+        )
+        if rendered_preview_active:
+            total_seconds = float(clips[-1]["timeline_end"])
+            global_seconds = min(total_seconds, max(0.0, float(local_position_ms) / 1000.0))
+            global_ms = int(global_seconds * 1000)
+            self._timeline_global_position_ms = global_ms
+            self.timeline.set_position(global_ms)
+            self.update_duration_label(global_ms, int(total_seconds * 1000))
+            self.refresh_timed_layer_preview(global_ms)
+            self.update_playback_subtitle_highlight(global_ms)
+            return True
         if clip is None:
             return False
         self._timeline_preview_source = os.path.abspath(clip["source"])

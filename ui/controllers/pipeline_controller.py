@@ -777,13 +777,6 @@ class PipelineController:
             self.gui.progress_bar.setRange(0, 100)
             self.gui.progress_bar.setValue(100)
         self.gui.refresh_ui_state()
-        should_auto_export = (
-            getattr(self, "target_stage", "") == "full"
-            and not getattr(self, "_generate_export_started", False)
-            and getattr(self, "target_stage", "") != "recap"
-        )
-        if should_auto_export:
-            self._generate_export_started = True
-            self.gui.log("[Pipeline] Generate complete; exporting the current V1 Timeline order.")
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self.gui.export_final_video(automatic=True))
+        # Generate prepares the project. Export remains an explicit action so
+        # the user can select a destination; never fill workspace/output
+        # silently.

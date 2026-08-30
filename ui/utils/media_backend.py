@@ -960,11 +960,11 @@ class MpvMediaPlayerBackend(QObject):
                     min_dimension = min(w, h)
                     luma_radius = max(1, min(100, int(min_dimension // 2)))
                 else:
-                    luma_radius = max(1, min(100, int(round(float(strength_raw) * 2.0))))
+                    luma_radius = max(1, min(180, int(round(float(strength_raw) * 3.0))))
             except (TypeError, ValueError):
                 luma_radius = max(1, min(100, int(min(w, h) // 2)))
             luma_radius = min(luma_radius, max(1, min(w, h) // 2))
-            chroma_radius = max(0, min(100, luma_radius // 2))
+            chroma_radius = max(0, min(180, luma_radius // 2))
             try:
                 opacity = float(blur.get("blur_opacity", blur.get("opacity", 1.0)))
             except (TypeError, ValueError):
@@ -992,7 +992,7 @@ class MpvMediaPlayerBackend(QObject):
                     f"scale={w}:{h}:flags=neighbor"
                 )
             else:
-                effect = f"boxblur={luma_radius}:3:{chroma_radius}:3"
+                effect = f"boxblur={luma_radius}:6:{chroma_radius}:6"
             if opacity < 0.999:
                 effect = (
                     f"format=yuva420p,{effect},"
