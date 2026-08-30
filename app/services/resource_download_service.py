@@ -19,7 +19,7 @@ class ResourceDownloadService:
         "medium": "models--Systran--faster-whisper-medium.zip",
     }
 
-    HF_RESOURCE_REPO = os.getenv("VIUSTUDIO_RESOURCE_REPO", "Hacht/VIUStudioResource").strip() or "Hacht/VIUStudioResource"
+    HF_RESOURCE_REPO = os.getenv("VIUSTUDIO_RESOURCE_REPO", "Hacht/CapCapResource").strip() or "Hacht/CapCapResource"
     HF_RESOURCE_REVISION = os.getenv("VIUSTUDIO_RESOURCE_REVISION", "main").strip() or "main"
     SENSEVOICE_REPO = os.getenv(
         "SENSEVOICE_MODEL_REPO",
@@ -547,7 +547,7 @@ class ResourceDownloadService:
                 "kind": "whisper_cpu",
                 "status": "installed" if self.is_resource_installed("whisper:base") else "missing",
                 "target_dir": self._whisper_cache_root(),
-                "download_url": "https://huggingface.co/Hacht/VIUStudioResource/blob/main/zipResource/models--Systran--faster-whisper-base.zip",
+                "download_url": "https://huggingface.co/Hacht/CapCapResource/blob/main/zipResource/models--Systran--faster-whisper-base.zip",
                 "expected_filename": self.WHISPER_ZIP_FILES["base"],
                 "auto_download_supported": False,
                 "description": "Speech-recognition model for CPU transcription.",
@@ -558,7 +558,7 @@ class ResourceDownloadService:
                 "kind": "whisper_cpu",
                 "status": "installed" if self.is_resource_installed("whisper:small") else "missing",
                 "target_dir": self._whisper_cache_root(),
-                "download_url": "https://huggingface.co/Hacht/VIUStudioResource/blob/main/zipResource/models--Systran--faster-whisper-small.zip",
+                "download_url": "https://huggingface.co/Hacht/CapCapResource/blob/main/zipResource/models--Systran--faster-whisper-small.zip",
                 "expected_filename": self.WHISPER_ZIP_FILES["small"],
                 "auto_download_supported": False,
                 "description": "Faster speech-recognition model for CPU transcription.",

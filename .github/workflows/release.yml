@@ -61,7 +61,7 @@ jobs:
           # Download Piper base voice models
           try {
             $piperZip = "$env:TEMP\piper.zip"
-            Invoke-WebRequest -Uri "https://huggingface.co/Hacht/VIUStudioResource/resolve/main/piper.zip" -OutFile $piperZip -TimeoutSec 120
+            Invoke-WebRequest -Uri "https://huggingface.co/Hacht/CapCapResource/resolve/main/piper.zip" -OutFile $piperZip -TimeoutSec 120
             if (Test-Path $piperZip) {
               Expand-Archive -Path $piperZip -DestinationPath "models/piper" -Force
             }
