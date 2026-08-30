@@ -148,32 +148,34 @@ def fit_wav_to_duration(
             output_wav_path,
         ]
     elif mode_key == "smart":
-        # Smart mode: when the audio is too long, TRIM (cut) it to
-        # match the target duration instead of speeding it up. When it's
-        # too short, stretch (atempo) up to the safe range.
+        # ``fit_ratio`` is target/source.  The old branches treated it as
+        # source/target, so short speech was sent through ``-t`` (which cannot
+        # add duration) and the subtitle stayed visible after speech ended.
+        # Use atempo in both directions, but only inside the natural-sounding
+        # safety band.
         if abs(fit_ratio - 1.0) < 0.02:
             return input_wav_path
-        if fit_ratio < 1.0:
-            # Audio shorter than target — stretch to fit.
+        source_to_target_ratio = source_duration / target_duration
+        if source_duration > target_duration:
+            # Speech is longer: speed it up only when the required change is
+            # within the configured safe range.
             if fit_ratio < smart_min_ratio:
                 return input_wav_path
-            atempo_ratio = 1.0 / fit_ratio
-            filter_chain = _build_atempo_filter(atempo_ratio)
-            cmd = [
-                ffmpeg, "-y", "-i", input_wav_path,
-                "-filter:a", filter_chain,
-                "-ar", "16000", "-ac", "1",
-                output_wav_path,
-            ]
+            atempo_ratio = source_to_target_ratio
         else:
-            # Audio longer than target — TRIM (cut) to fit, no speed
-            # change. Use ffmpeg's `-t` flag to set the output duration.
-            cmd = [
-                ffmpeg, "-y", "-i", input_wav_path,
-                "-t", str(target_duration),
-                "-ar", "16000", "-ac", "1",
-                output_wav_path,
-            ]
+            # Speech is shorter: slow it down to fill the subtitle window.
+            # Very large slow-downs sound robotic, so those are handled later
+            # by aligning the visual subtitle end to the real speech end.
+            if source_to_target_ratio < smart_min_ratio:
+                return input_wav_path
+            atempo_ratio = source_to_target_ratio
+        filter_chain = _build_atempo_filter(atempo_ratio)
+        cmd = [
+            ffmpeg, "-y", "-i", input_wav_path,
+            "-filter:a", filter_chain,
+            "-ar", "16000", "-ac", "1",
+            output_wav_path,
+        ]
     else:
         # Force mode: use atempo to speed up the audio so it fits the
         # target duration. This is the legacy behaviour.

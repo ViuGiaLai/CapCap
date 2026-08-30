@@ -900,6 +900,19 @@ class VoiceWorkflow:
         sync_mode: str,
     ):
         polished_wavs = list(wavs or [])
+        # Apply the requested global/per-segment speed before measuring and
+        # fitting to subtitle windows. Doing this after Smart Fit made a 1.2x
+        # selection shorten an already-synchronized clip and reintroduced the
+        # exact "voice ended, subtitle still visible" drift.
+        if abs(float(voice_speed) - 1.0) >= 0.02 or any(
+            seg.get("voice_speed") for seg in (segments or [])
+        ):
+            polished_wavs = self._apply_segment_speed(
+                wavs=polished_wavs,
+                tmp_dir=tmp_dir,
+                voice_speed=voice_speed,
+                segments=segments,
+            )
         for idx, (seg, wav_path) in enumerate(zip(list(segments or []), polished_wavs)):
             if not wav_path or not os.path.exists(wav_path):
                 continue
@@ -1034,15 +1047,6 @@ class VoiceWorkflow:
                     target_duration_seconds=extended_duration,
                     mode="timeline",
                 )
-        if abs(float(voice_speed) - 1.0) >= 0.02 or any(
-            seg.get("voice_speed") for seg in (segments or [])
-        ):
-            polished_wavs = self._apply_segment_speed(
-                wavs=polished_wavs,
-                tmp_dir=tmp_dir,
-                voice_speed=voice_speed,
-                segments=segments,
-            )
         if (sync_mode or "off").strip().lower() in ("force", "force fit"):
             for idx, (seg, wav_path) in enumerate(zip(list(segments or []), polished_wavs)):
                 if not wav_path or not os.path.exists(wav_path):
@@ -1088,7 +1092,7 @@ class VoiceWorkflow:
 
             mode_key = (sync_mode or "off").strip().lower()
 
-            if ratio >= 0.87 and mode_key == "smart":
+            if ratio >= 0.77 and mode_key == "smart":
                 synced_path = os.path.join(tmp_dir, f"seg_{idx:04d}_deficit_stretch.wav")
                 polished_wavs[idx] = self.engine_runtime.fit_wav_to_duration(
                     input_wav_path=wav_path,
@@ -1139,15 +1143,18 @@ class VoiceWorkflow:
             synced_wavs.append(fitted_path)
         return synced_wavs
 
-    def _extend_segment_ends_to_audio(self, *, segments, wavs) -> None:
-        """Record the actual TTS audio end on each segment when the audio
-        is longer than the original segment window.
-        
-        This is used for overlap detection in the timeline, NOT for visual display.
-        The visual display uses layer.end strictly, but overlap detection needs
-        to know the actual audio duration to determine when segments should stack.
+    def _extend_segment_ends_to_audio(self, *, segments, wavs, sync_mode: str = "off") -> None:
+        """Synchronize subtitle windows with measured TTS duration.
+
+        In Smart mode, long speech extends the visual subtitle to its measured
+        end. Speech that is far too short to stretch naturally closes the
+        subtitle shortly after the last spoken sample instead of leaving a
+        long, silent subtitle on screen. ``_audio_end`` is also retained for
+        overlap handling on the timeline.
         """
-        for seg, wav_path in zip(segments, wavs or []):
+        mode_key = (sync_mode or "off").strip().lower()
+        segment_list = list(segments or [])
+        for index, (seg, wav_path) in enumerate(zip(segment_list, wavs or [])):
             if not wav_path or not os.path.exists(wav_path):
                 continue
             actual_d = self._probe_wav_duration_seconds(wav_path)
@@ -1159,10 +1166,38 @@ class VoiceWorkflow:
             except (TypeError, ValueError):
                 continue
             audio_end = start_s + actual_d
+            seg["_audio_end"] = audio_end
             if audio_end > end_s + 0.01:
                 if "end" in seg and "_original_end" not in seg:
                     seg["_original_end"] = end_s
-                seg["_audio_end"] = audio_end
+                if mode_key == "smart":
+                    seg["end"] = audio_end
+                    action = str(seg.get("action_taken") or "accept")
+                    if "subtitle_sync" not in action:
+                        seg["action_taken"] = f"{action}+subtitle_sync"
+                continue
+
+            # Normal Smart fitting safely stretches clips down to 0.77 of the
+            # subtitle duration.  Anything still substantially shorter would
+            # sound unnatural if stretched further; align the subtitle end to
+            # the real speech instead. Keep a small reading tail and never run
+            # into the next subtitle.
+            if mode_key == "smart" and audio_end < end_s - 0.12:
+                aligned_end = audio_end + 0.10
+                if index + 1 < len(segment_list):
+                    try:
+                        next_start = float(segment_list[index + 1].get("start", aligned_end))
+                        aligned_end = min(aligned_end, next_start - 0.04)
+                    except (AttributeError, TypeError, ValueError):
+                        pass
+                aligned_end = max(start_s + 0.25, min(end_s, aligned_end))
+                if aligned_end < end_s - 0.02:
+                    if "_original_end" not in seg:
+                        seg["_original_end"] = end_s
+                    seg["end"] = aligned_end
+                    action = str(seg.get("action_taken") or "accept")
+                    if "subtitle_sync" not in action:
+                        seg["action_taken"] = f"{action}+subtitle_sync"
 
     def _synthesize_segment_wavs(
         self,
@@ -1445,7 +1480,11 @@ class VoiceWorkflow:
             tmp_dir=tmp_dir,
             sync_mode=timing_sync_mode,
         )
-        self._extend_segment_ends_to_audio(segments=segments, wavs=wavs)
+        self._extend_segment_ends_to_audio(
+            segments=segments,
+            wavs=wavs,
+            sync_mode=timing_sync_mode,
+        )
 
         synth_elapsed = time.perf_counter() - synth_started
         print(

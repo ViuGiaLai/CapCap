@@ -211,6 +211,9 @@ class ProjectService:
                     return edited_text
             return subtitle_text
         payload = {
+            # Bump whenever timing-fit semantics change so projects do not
+            # silently reuse a voice track produced by an older algorithm.
+            "voice_timing_revision": 2,
             "audio_handling_mode": str(audio_handling_mode or "fast").strip().lower(),
             "voice_name": str(voice_name or "").strip(),
             "voice_speed": round(safe_voice_speed, 3),
