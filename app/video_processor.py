@@ -423,22 +423,44 @@ def _build_blur_filter_chain(blur_region, video_width, video_height):
         w = max(2, min(video_width - x, int(round(w_norm * video_width))))
         h = max(2, min(video_height - y, int(round(h_norm * video_height))))
         min_dimension = min(w, h)
-        luma_radius = max(1, min(20, int(min_dimension // 2)))
-        chroma_radius = max(0, min(20, int(min_dimension // 4)))
+        try:
+            strength = float(region.get("blur_strength", 36.0))
+        except (TypeError, ValueError):
+            strength = 36.0
+        luma_radius = max(1, min(100, int(round(strength * 2.0)), int(min_dimension // 2)))
+        chroma_radius = max(0, min(100, luma_radius // 2))
+        try:
+            opacity = float(region.get("blur_opacity", 1.0))
+        except (TypeError, ValueError):
+            opacity = 1.0
+        opacity = max(0.0, min(1.0, opacity))
+        pixelate = bool(region.get("pixelate", False))
+        try:
+            pixel_size = max(2, min(60, int(region.get("pixelate_size", 12))))
+        except (TypeError, ValueError):
+            pixel_size = 12
         try:
             start = max(0.0, float(region.get("start", 0.0) or 0.0))
             end = float(region.get("end", 0.0) or 0.0)
         except (TypeError, ValueError):
             start, end = 0.0, 0.0
-        regions.append((x, y, w, h, luma_radius, chroma_radius, start, end))
+        regions.append((x, y, w, h, luma_radius, chroma_radius, opacity, pixelate, pixel_size, start, end))
     if not regions:
         return ""
 
     crop_parts = []
     overlay_parts = []
-    for index, (x, y, w, h, luma_radius, chroma_radius, start, end) in enumerate(regions):
+    for index, (x, y, w, h, luma_radius, chroma_radius, opacity, pixelate, pixel_size, start, end) in enumerate(regions):
+        if pixelate:
+            cell_w = max(1, w // pixel_size)
+            cell_h = max(1, h // pixel_size)
+            effect = f"scale={cell_w}:{cell_h}:flags=neighbor,scale={w}:{h}:flags=neighbor"
+        else:
+            effect = f"boxblur={luma_radius}:3:{chroma_radius}:3"
+        if opacity < 0.999:
+            effect = f"format=yuva420p,{effect},colorchannelmixer=aa={opacity:.3f}"
         crop_parts.append(
-            f"[tmp{index}]crop=w={w}:h={h}:x={x}:y={y},boxblur={luma_radius}:3:{chroma_radius}:3[blur{index}]"
+            f"[tmp{index}]crop=w={w}:h={h}:x={x}:y={y},{effect}[blur{index}]"
         )
         base_label = "main" if index == 0 else f"b{index - 1}"
         output_label = "" if index == len(regions) - 1 else f"[b{index}]"

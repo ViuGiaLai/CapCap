@@ -481,9 +481,17 @@ class VoiceCatalogMixin:
         test_btn = getattr(self, "translation_test_btn", None)
         status_lbl = getattr(self, "translation_test_status", None)
 
-        show_config = provider != "google"
+        show_config = provider not in ("google", "llama_app")
+        llama_panel = getattr(self, "llama_app_config_panel", None)
+        
         if config_panel:
             config_panel.setVisible(show_config)
+        if llama_panel:
+            llama_panel.setVisible(provider == "llama_app")
+            
+        if provider == "llama_app" and llama_panel:
+            self._refresh_llama_models_list()
+            
         if status_lbl:
             status_lbl.setText("")
 
@@ -658,3 +666,163 @@ class VoiceCatalogMixin:
     def on_selected_voice_changed(self):
         self._update_voice_preview_meta()
         self._preload_active_voice_if_needed()
+
+    def _refresh_llama_models_list(self):
+        import os
+        from app.services.llama_local_manager import LlamaServerManager
+        manager = LlamaServerManager.get_instance()
+        combo = getattr(self, "llama_model_combo", None)
+        if not combo:
+            return
+        
+        current = combo.currentData()
+        combo.clear()
+        
+        has_models = False
+        if os.path.exists(manager.models_dir):
+            for file in os.listdir(manager.models_dir):
+                if file.lower().endswith(".gguf"):
+                    combo.addItem(f"{file} (Ready)", os.path.join(manager.models_dir, file))
+                    has_models = True
+                    
+        # Also add from env if the user previously selected one via Scan
+        saved = os.getenv("LLAMA_APP_MODEL")
+        if saved and os.path.exists(saved) and saved not in [combo.itemData(i) for i in range(combo.count())]:
+            combo.addItem(f"{os.path.basename(saved)} (Selected)", saved)
+            has_models = True
+            
+        if not has_models:
+            combo.addItem("No model found. Please download or scan.", "")
+        else:
+            if current:
+                idx = combo.findData(current)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+            elif saved:
+                idx = combo.findData(saved)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+
+        # Connect buttons if not connected
+        dl_btn = getattr(self, "llama_download_btn", None)
+        if dl_btn:
+            dl_btn.setVisible(not has_models)
+            
+        if not getattr(self, "_llama_buttons_connected", False):
+            scan_btn = getattr(self, "llama_scan_btn", None)
+            test_btn = getattr(self, "llama_test_btn", None)
+            if scan_btn:
+                scan_btn.clicked.connect(self._on_llama_scan_clicked)
+            if dl_btn:
+                dl_btn.clicked.connect(self._on_llama_download_clicked)
+            if test_btn:
+                test_btn.clicked.connect(self._on_llama_test_clicked)
+            
+            if combo:
+                combo.currentIndexChanged.connect(self._on_llama_model_selected)
+                
+            self._llama_buttons_connected = True
+
+    def _on_llama_model_selected(self, index: int):
+        combo = getattr(self, "llama_model_combo", None)
+        if combo and index >= 0:
+            data = combo.itemData(index)
+            if data:
+                os.environ["LLAMA_APP_MODEL"] = data
+
+    def _on_llama_scan_clicked(self):
+        from app.services.llama_local_manager import fast_scan_gguf
+        import os
+        lbl = getattr(self, "llama_status_label", None)
+        if lbl:
+            lbl.setText("Scanning entire PC. Please wait a few seconds...")
+            lbl.repaint()
+        
+        results = fast_scan_gguf()
+        
+        if not results:
+            if lbl:
+                lbl.setText("No .gguf files found on your PC.")
+            return
+            
+        # Create dialog to show results
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QListWidgetItem, QPushButton, QHBoxLayout, QLabel, QWidget
+        from PySide6.QtCore import Qt
+        
+        parent_widget = self if isinstance(self, QWidget) else None
+        dlg = QDialog(parent_widget)
+        dlg.setWindowTitle("Select Local Model")
+        dlg.resize(600, 400)
+        ly = QVBoxLayout(dlg)
+        
+        ly.addWidget(QLabel(f"Found {len(results)} models:"))
+        lst = QListWidget()
+        for r in results:
+            mb = r['size'] / (1024 * 1024)
+            item = QListWidgetItem(f"{r['name']} ({mb:.1f} MB)\n{r['path']}")
+            item.setData(Qt.UserRole, r['path'])
+            lst.addItem(item)
+        ly.addWidget(lst)
+        
+        btn_layout = QHBoxLayout()
+        use_btn = QPushButton("Use Selected Model")
+        def on_use():
+            if lst.currentItem():
+                path = lst.currentItem().data(Qt.UserRole)
+                os.environ["LLAMA_APP_MODEL"] = path
+                self._refresh_llama_models_list()
+                if lbl:
+                    lbl.setText(f"Selected: {os.path.basename(path)}")
+                dlg.accept()
+        use_btn.clicked.connect(on_use)
+        btn_layout.addStretch()
+        btn_layout.addWidget(use_btn)
+        ly.addLayout(btn_layout)
+        
+        dlg.exec()
+
+    def _on_llama_download_clicked(self):
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        # Open huggingface download link
+        QDesktopServices.openUrl(QUrl("https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"))
+        lbl = getattr(self, "llama_status_label", None)
+        if lbl:
+            lbl.setText("Browser opened for download. Once finished, click 'Scan Entire PC' to select it.")
+
+    def _on_llama_test_clicked(self):
+        import os
+        from app.services.llama_local_manager import LlamaServerManager
+        lbl = getattr(self, "llama_test_status", None)
+        if lbl:
+            lbl.setText("Starting Server & Loading Model. Please wait...")
+            lbl.repaint()
+            
+        model_path = os.environ.get("LLAMA_APP_MODEL")
+        if not model_path or not os.path.exists(model_path):
+            if lbl:
+                lbl.setText("Error: Model file not found!")
+            return
+            
+        try:
+            manager = LlamaServerManager.get_instance()
+            manager.start_server(model_path)
+            
+            from openai import OpenAI
+            client = OpenAI(api_key="dummy", base_url=manager.get_base_url(), timeout=120.0)
+            
+            if lbl:
+                lbl.setText("Calling translation API...")
+                lbl.repaint()
+                
+            resp = client.chat.completions.create(
+                model=os.path.basename(model_path),
+                messages=[{"role": "user", "content": "Reply exactly with OK."}],
+                max_tokens=8,
+            )
+            
+            if lbl:
+                lbl.setText(f"Connection successful! Server responded: {resp.choices[0].message.content} ✓")
+        except Exception as exc:
+            if lbl:
+                lbl.setText(f"Error: {str(exc)[:100]}")

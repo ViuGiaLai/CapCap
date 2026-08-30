@@ -21,11 +21,13 @@ class OpenAICompatiblePolisherProvider:
         self._client = None
 
     def is_configured(self) -> bool:
+        if self.provider_id in ("ollama", "llama_app"):
+            return bool(self.model_name and self.base_url)
         return bool(self.api_key and self.model_name and self.base_url)
 
     def _get_client(self):
         if self._client is None:
-            self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            self._client = OpenAI(api_key=self.api_key or "dummy-local-key", base_url=self.base_url)
         return self._client
 
     def polish_batch(

@@ -13,7 +13,7 @@ class BlurLayer(BaseLayer):
     position_y: float = 0.0
     width: float = 200.0
     height: float = 80.0
-    blur_strength: float = 20.0
+    blur_strength: float = 36.0
     blur_opacity: float = 1.0
     pixelate: bool = False
     pixelate_size: int = 12
@@ -46,7 +46,7 @@ class BlurLayer(BaseLayer):
             position_y=float(data.get("position_y", 0.0)),
             width=float(data.get("width", 200.0)),
             height=float(data.get("height", 80.0)),
-            blur_strength=float(data.get("blur_strength", 20.0)),
+            blur_strength=float(data.get("blur_strength", 36.0)),
             blur_opacity=float(data.get("blur_opacity", 1.0)),
             pixelate=bool(data.get("pixelate", False)),
             pixelate_size=int(data.get("pixelate_size", 12)),

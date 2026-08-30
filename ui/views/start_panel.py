@@ -530,6 +530,7 @@ def build_start_group(gui, left_layout):
     gui.translation_engine_combo.addItem("🐉 DeepSeek AI (Chuyên dịch Tu Tiên / Phim)", "deepseek")
     gui.translation_engine_combo.addItem("🤖 ChatGPT / OpenAI", "openai")
     gui.translation_engine_combo.addItem("💻 Ollama (Local Offline)", "ollama")
+    gui.translation_engine_combo.addItem("🧠 Llama.cpp (App Engine / GGUF)", "llama_app")
     gui.translation_engine_combo.addItem("⚙️ Custom API (OpenAI Compatible)", "custom")
 
     trans_engine_layout.addWidget(QLabel("AI Provider / Dịch thuật"))
@@ -578,6 +579,47 @@ def build_start_group(gui, left_layout):
     trans_config_layout.addLayout(test_action_layout)
 
     trans_engine_layout.addWidget(gui.translation_config_panel)
+
+    # Llama App Engine Panel (Local GGUF)
+    gui.llama_app_config_panel = QWidget()
+    llama_layout = QVBoxLayout(gui.llama_app_config_panel)
+    llama_layout.setContentsMargins(0, 4, 0, 0)
+    llama_layout.setSpacing(6)
+    
+    llama_layout.addWidget(QLabel("Local Model (.gguf):"))
+    
+    gui.llama_model_combo = QComboBox()
+    llama_layout.addWidget(gui.llama_model_combo)
+    
+    llama_action_layout = QHBoxLayout()
+    llama_action_layout.setSpacing(8)
+    
+    gui.llama_scan_btn = QPushButton("Scan Entire PC")
+    gui.llama_scan_btn.setFixedHeight(26)
+    gui.llama_download_btn = QPushButton("Download Model")
+    gui.llama_download_btn.setFixedHeight(26)
+    
+    llama_action_layout.addWidget(gui.llama_scan_btn)
+    llama_action_layout.addWidget(gui.llama_download_btn)
+    llama_layout.addLayout(llama_action_layout)
+    
+    gui.llama_status_label = QLabel("")
+    gui.llama_status_label.setObjectName("helperLabel")
+    gui.llama_status_label.setWordWrap(True)
+    llama_layout.addWidget(gui.llama_status_label)
+    
+    llama_test_action_layout = QHBoxLayout()
+    llama_test_action_layout.setSpacing(8)
+    gui.llama_test_btn = QPushButton("Test Connection")
+    gui.llama_test_btn.setFixedHeight(26)
+    gui.llama_test_status = QLabel("")
+    gui.llama_test_status.setObjectName("helperLabel")
+    llama_test_action_layout.addWidget(gui.llama_test_btn)
+    llama_test_action_layout.addWidget(gui.llama_test_status, 1)
+    llama_layout.addLayout(llama_test_action_layout)
+    
+    trans_engine_layout.addWidget(gui.llama_app_config_panel)
+    gui.llama_app_config_panel.setVisible(False)
 
     # Style Preset for Tu Tien / Recap
     trans_style_row = QVBoxLayout()

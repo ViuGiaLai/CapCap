@@ -1552,13 +1552,13 @@ def build_preview_panel(gui):
     radius_label.setFixedWidth(90)
     radius_row.addWidget(radius_label)
     gui.blur_inspector_radius_slider = QSlider(Qt.Horizontal)
-    gui.blur_inspector_radius_slider.setRange(1, 20)
-    gui.blur_inspector_radius_slider.setValue(20)
+    gui.blur_inspector_radius_slider.setRange(1, 60)
+    gui.blur_inspector_radius_slider.setValue(36)
     gui.blur_inspector_radius_slider.setToolTip(
-        "How strong the blur is (1 = light, 20 = heavy)."
+        "How strong the blur is (1 = light, 60 = very heavy)."
     )
     radius_row.addWidget(gui.blur_inspector_radius_slider, 1)
-    gui.blur_inspector_radius_value_label = QLabel("20")
+    gui.blur_inspector_radius_value_label = QLabel("36")
     gui.blur_inspector_radius_value_label.setFixedWidth(28)
     radius_row.addWidget(gui.blur_inspector_radius_value_label)
     blur_layout.addLayout(radius_row)

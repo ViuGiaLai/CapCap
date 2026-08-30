@@ -549,7 +549,7 @@ class VisualLayerEditorMixin:
                 strength = int(round(float(getattr(layer, "blur_strength", 20.0))))
             except (TypeError, ValueError):
                 strength = 20
-            strength = max(1, min(20, strength))
+            strength = max(1, min(60, strength))
             try:
                 opacity = float(getattr(layer, "blur_opacity", 1.0))
             except (TypeError, ValueError):
@@ -562,7 +562,7 @@ class VisualLayerEditorMixin:
                 pixel_size = 12
             pixel_size = max(2, min(60, pixel_size))
         else:
-            strength, opacity, pixelate, pixel_size = 20, 1.0, False, 12
+            strength, opacity, pixelate, pixel_size = 36, 1.0, False, 12
 
         if hasattr(self, "blur_inspector_radius_slider"):
             self.blur_inspector_radius_slider.blockSignals(True)
@@ -686,11 +686,16 @@ class VisualLayerEditorMixin:
         # Find the index of this layer in the B1 track to map it to
         # the corresponding region in the video overlay.
         idx = -1
+        blur_layers = []
+        active_layers = []
         if hasattr(self, "timeline") and self.timeline._timeline:
             for tr in self.timeline._timeline.tracks:
-                if tr.id == layer.id or layer in tr.layers:
+                if tr.name == "B1" and layer in tr.layers:
+                    blur_layers = list(tr.layers)
+                    active_layers = [candidate for candidate in blur_layers
+                                     if self._layer_is_active_at_preview_time(candidate)]
                     try:
-                        idx = list(tr.layers).index(layer)
+                        idx = active_layers.index(layer)
                     except ValueError:
                         idx = -1
                     break
@@ -704,15 +709,47 @@ class VisualLayerEditorMixin:
             h = float(rect.height())
         except Exception:
             return
-        # Build a single-region payload using this layer's style and
-        # write it through the normal persist + preview path.
-        payload = [{
-            "x": x, "y": y, "width": w, "height": h,
-            "blur_strength": int(getattr(layer, "blur_strength", 20)),
-            "blur_opacity": float(getattr(layer, "blur_opacity", 1.0)),
-            "pixelate": bool(getattr(layer, "pixelate", False)),
-            "pixelate_size": int(getattr(layer, "pixelate_size", 12)),
-        }]
+        # Rebuild the complete B1 payload.  Sending only the selected region
+        # used to replace every overlay and then accidentally copy its style
+        # onto B1's first layer, so sliders appeared broken for B2/B3.
+        payload = []
+        for i, candidate in enumerate(active_layers):
+            candidate_rect = regions[i] if i < len(regions) else None
+            try:
+                rx = float(candidate_rect.x()) if candidate_rect is not None else float(candidate.position_x)
+                ry = float(candidate_rect.y()) if candidate_rect is not None else float(candidate.position_y)
+                rw = float(candidate_rect.width()) if candidate_rect is not None else float(candidate.width)
+                rh = float(candidate_rect.height()) if candidate_rect is not None else float(candidate.height)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            payload.append({
+                "x": rx, "y": ry, "width": rw, "height": rh,
+                "start": float(getattr(candidate, "start", 0.0) or 0.0),
+                "end": float(getattr(candidate, "end", 0.0) or 0.0),
+                "blur_strength": int(getattr(candidate, "blur_strength", 36)),
+                "blur_opacity": float(getattr(candidate, "blur_opacity", 1.0)),
+                "pixelate": bool(getattr(candidate, "pixelate", False)),
+                "pixelate_size": int(getattr(candidate, "pixelate_size", 12)),
+            })
+        if not payload:
+            return
+        # Project persistence keeps every timed B1 layer, while the live MPV
+        # filter receives only layers active at the current playhead.
+        full_payload = []
+        for candidate in blur_layers:
+            try:
+                full_payload.append({
+                    "x": float(candidate.position_x), "y": float(candidate.position_y),
+                    "width": float(candidate.width), "height": float(candidate.height),
+                    "start": float(getattr(candidate, "start", 0.0) or 0.0),
+                    "end": float(getattr(candidate, "end", 0.0) or 0.0),
+                    "blur_strength": int(getattr(candidate, "blur_strength", 36)),
+                    "blur_opacity": float(getattr(candidate, "blur_opacity", 1.0)),
+                    "pixelate": bool(getattr(candidate, "pixelate", False)),
+                    "pixelate_size": int(getattr(candidate, "pixelate_size", 12)),
+                })
+            except (AttributeError, TypeError, ValueError):
+                continue
         try:
             if hasattr(self.video_view, "set_blur_regions_normalized"):
                 self.video_view.set_blur_regions_normalized(payload)
@@ -721,7 +758,7 @@ class VisualLayerEditorMixin:
         # Persist and re-apply the filter (so the export matches).
         if hasattr(self, "persist_project_blur_state"):
             try:
-                self.persist_project_blur_state(regions=payload)
+                self.persist_project_blur_state(regions=full_payload)
             except Exception:
                 pass
         if hasattr(self, "apply_preview_blur_region"):
@@ -729,14 +766,3 @@ class VisualLayerEditorMixin:
                 self.apply_preview_blur_region(regions=payload, force=True)
             except Exception:
                 pass
-        # Push the new style onto the B1 track layers (one payload
-        # entry per BlurLayer).
-        if hasattr(self, "timeline") and self.timeline._timeline:
-            for tr in self.timeline._timeline.tracks:
-                if tr.name == "B1":
-                    for i, l in enumerate(tr.layers):
-                        if i < len(payload):
-                            l.blur_strength = int(payload[i].get("blur_strength", 20))
-                            l.blur_opacity = float(payload[i].get("blur_opacity", 1.0))
-                            l.pixelate = bool(payload[i].get("pixelate", False))
-                            l.pixelate_size = int(payload[i].get("pixelate_size", 12))

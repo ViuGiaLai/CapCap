@@ -231,10 +231,22 @@ class TranslationOrchestrator:
             "openai": ("OpenAI", "OPENAI", "https://api.openai.com/v1/", "gpt-4o-mini"),
             "ollama": ("Ollama (Local)", "OLLAMA", "http://localhost:11434/v1", "qwen2.5:7b"),
             "custom": ("Custom OpenAI API", "CUSTOM_AI", "https://api.openai.com/v1/", "gpt-4o-mini"),
+            "llama_app": ("Llama.cpp (Local App Engine)", "LLAMA_APP", "http://127.0.0.1:49683/v1", "local_model"),
         }
         if provider_type not in definitions:
             provider_type = "google_ai_studio"
+        
         display_name, env_prefix, base_url, default_model = definitions[provider_type]
+        
+        if provider_type == "llama_app":
+            from app.services.llama_local_manager import LlamaServerManager
+            manager = LlamaServerManager.get_instance()
+            model_path = os.getenv("LLAMA_APP_MODEL")
+            if model_path and os.path.exists(model_path):
+                manager.start_server(model_path)
+                base_url = manager.get_base_url()
+                default_model = os.path.basename(model_path)
+
         # Legacy fallback if user has OPENAI_API_KEY set for gemini
         if configured_provider == "gemini" and not os.getenv("GOOGLE_AI_STUDIO_API_KEY"):
             env_prefix = "OPENAI"
@@ -253,6 +265,7 @@ class TranslationOrchestrator:
             "openai": "OpenAI",
             "ollama": "Ollama",
             "custom": "Custom AI",
+            "llama_app": "Llama App Engine",
         }
         return f"{names.get(provider_type, 'AI')} ({getattr(self._resolve_ai_provider()[1], 'model_name', '')})"
 

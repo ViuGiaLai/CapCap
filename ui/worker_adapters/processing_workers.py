@@ -849,6 +849,78 @@ class VoiceOverWorker(QThread):
             self.finished.emit("", "", [], str(exc))
 
 
+class AutoRecapWorker(QThread):
+    """Dedicated five-stage Auto Edit Recap worker.
+
+    It intentionally does not invoke subtitle transcription, translation, or
+    TTS generation. Existing subtitles are only used as optional context for
+    effect planning, so the recap workflow remains separate from Generate.
+    """
+
+    stage_started = Signal(str, str)
+    finished = Signal(object, str, str)
+
+    def __init__(self, video_path, output_path, config, segments=None, timeline_clips=None):
+        super().__init__()
+        self.video_path = str(video_path or "")
+        self.output_path = str(output_path or "")
+        self.config = config
+        self.segments = [dict(item) for item in (segments or []) if isinstance(item, dict)]
+        self.timeline_clips = [dict(item) for item in (timeline_clips or []) if isinstance(item, dict)]
+
+    def run(self):
+        try:
+            from app.services.auto_recap_engine import AutoRecapEngine
+
+            engine = AutoRecapEngine(self.config)
+            self.stage_started.emit("analyzing", "Analyzing video and detecting effect boundaries...")
+            scenes = []
+            if self.timeline_clips:
+                for clip in self.timeline_clips:
+                    source = str(clip.get("source", "") or "")
+                    if not source or not os.path.exists(source):
+                        continue
+                    source_start = float(clip.get("source_start", 0.0) or 0.0)
+                    source_end = source_start + float(clip.get("source_duration", 0.0) or 0.0)
+                    timeline_start = float(clip.get("timeline_start", 0.0) or 0.0)
+                    speed = max(0.01, float(clip.get("speed", 1.0) or 1.0))
+                    for scene in engine.detect_scenes_ffmpeg(source, threshold=0.25):
+                        start = max(source_start, float(scene.get("start", 0.0) or 0.0))
+                        end = min(source_end, float(scene.get("end", 0.0) or 0.0))
+                        if end > start:
+                            item = dict(scene)
+                            item["start"] = timeline_start + (start - source_start) / speed
+                            item["end"] = timeline_start + (end - source_start) / speed
+                            scenes.append(item)
+            else:
+                scenes = engine.detect_scenes_ffmpeg(self.video_path, threshold=0.25)
+            if not scenes:
+                raise RuntimeError("No usable effect boundaries were found in the source video.")
+
+            self.stage_started.emit("building", "Building a full-timeline effect plan (keeping every scene)...")
+            scenes = engine.apply_subtitles_to_scenes(scenes, self.segments)
+            decisions = engine.generate_edl([], scenes=scenes)
+            if not decisions:
+                raise RuntimeError("Could not build an Auto Edit Recap effect plan.")
+
+            self.stage_started.emit("smart_edits", "Scheduling zoom, pan, crop, speed and anti-repetition effects...")
+            self.stage_started.emit("audio", "Preserving source audio and applying recap audio settings...")
+            self.stage_started.emit("rendering", "Rendering recap in one FFmpeg pass...")
+            timeline_required = bool(
+                len(self.timeline_clips) > 1
+                or (self.timeline_clips and float(self.timeline_clips[0].get("source_start", 0.0) or 0.0) > 0.01)
+            )
+            rendered = (
+                engine.render_timeline_recap_1pass(self.timeline_clips, self.output_path, decisions)
+                if timeline_required else engine.render_recap_video_1pass(self.video_path, self.output_path, decisions)
+            )
+            if not rendered:
+                raise RuntimeError(engine.last_render_error or "FFmpeg could not render the recap video.")
+            self.finished.emit(decisions, self.output_path, "")
+        except Exception as exc:
+            self.finished.emit([], "", str(exc))
+
+
 class FinalExportWorker(QThread):
     finished = Signal(str, str)
     progress = Signal(int, str)

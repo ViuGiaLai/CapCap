@@ -1460,11 +1460,12 @@ class EditorTimeline(QGraphicsView):
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.setClipRect(QRectF(left, y, right - left, h))
         for index, (timestamp_s, pixmap) in enumerate(thumbnails):
-            block_end_s = (
-                thumbnails[index + 1][0]
-                if index + 1 < len(thumbnails)
-                else self._duration
-            )
+            if index + 1 < len(thumbnails):
+                # Don't let a thumbnail stretch indefinitely into the next clip's territory
+                block_end_s = min(thumbnails[index + 1][0], timestamp_s + 10.0)
+            else:
+                block_end_s = min(self._duration, timestamp_s + 10.0)
+            
             block_left = self.CONTENT_LEFT_PAD + int(timestamp_s * self.pixels_per_second) - scroll_x
             block_right = self.CONTENT_LEFT_PAD + int(block_end_s * self.pixels_per_second) - scroll_x
             if block_right <= left or block_left >= right:

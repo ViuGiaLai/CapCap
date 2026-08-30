@@ -208,7 +208,7 @@ class MultiVideoTimelineMixin:
         if at_clip_end:
             index = clips.index(clip)
             if index + 1 < len(clips):
-                was_playing = bool(self.media_player.is_playing())
+                was_playing = getattr(self.timeline, "_is_playing", False) or bool(self.media_player.is_playing())
                 next_clip = clips[index + 1]
                 self.seek_timeline_video(float(next_clip["timeline_start"]))
                 if was_playing:

@@ -1803,7 +1803,7 @@ class SegmentEditorMixin:
                 position_y=float(base_y),
                 width=0.7,
                 height=0.18,
-                blur_strength=20.0,
+                blur_strength=36.0,
                 start=blur_start,
                 end=blur_end,
             )

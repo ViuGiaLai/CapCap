@@ -8,7 +8,7 @@ import time
 import urllib.request
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QMessageBox
-from worker_adapters import PrepareWorkflowWorker
+from worker_adapters import AutoRecapWorker, PrepareWorkflowWorker
 from runtime_paths import subprocess_hidden_kwargs
 
 # Robust import for the progress widget
@@ -211,14 +211,21 @@ class PipelineController:
                 self.progress_dialog.cancel_stop_request()
                 return
 
+        active_step = str(getattr(self.gui, "_pipeline_step", "") or "")
         self.gui._pipeline_active = False
         self.gui._pipeline_step = ""
         self.prepare_run_id += 1
+        recap_worker = getattr(self.gui, "auto_recap_worker", None)
+        if recap_worker is not None:
+            try:
+                recap_worker.requestInterruption()
+            except RuntimeError:
+                pass
         self._stop_prepare_status_polling()
         self._mark_running_project_steps_stopped()
         self._stop_local_worker_server()
         if self.progress_dialog:
-            self.progress_dialog.fail_step("ai_process")
+            self.progress_dialog.fail_step(active_step or "ai_process")
             self.progress_dialog.footer.setText("Pipeline stopped.")
             self.progress_dialog.footer.setStyleSheet("color: #FFB86B; font-weight: bold; font-size: 14px; margin-top: 15px;")
             self.progress_dialog.stop_btn.setEnabled(False)
@@ -279,7 +286,7 @@ class PipelineController:
             dlg.show()
         except Exception:
             self.whisper_download_dialog = None
-    def _setup_progress_dialog(self, includes_separation=True):
+    def _setup_progress_dialog(self, includes_separation=True, workflow="production"):
         """Creates and initializes the progress tracking dialog."""
         if self.progress_dialog:
             try:
@@ -293,7 +300,7 @@ class PipelineController:
         self.progress_dialog.stop_requested.connect(self._on_pipeline_stop)
         if hasattr(self.gui, "_register_progress_dialog"):
             self.gui._register_progress_dialog(self.progress_dialog)
-        if hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled():
+        if workflow == "recap":
             if hasattr(self.progress_dialog, "title_label"):
                 self.progress_dialog.title_label.setText("✨ Auto Edit Recap")
             self.progress_dialog.add_step("analyzing", "Analyzing Video (Effect Shot Boundaries)")
@@ -308,6 +315,70 @@ class PipelineController:
             self.progress_dialog.add_step("voiceover", "Synthesizing AI Voiceover")
             self.progress_dialog.add_step("preview", "Preparing Video Preview")
         self.progress_dialog.show()
+
+    def run_auto_recap_pipeline(self, video_path=None):
+        """Run Auto Edit Recap without entering the AI Production pipeline."""
+        video_path = str(video_path or self.gui.video_path_edit.text() or "").strip()
+        if not video_path or not os.path.exists(video_path):
+            QMessageBox.warning(self.gui, "Auto Edit Recap", "Please select a video file first.")
+            return
+        if getattr(self.gui, "_pipeline_active", False):
+            return
+
+        self.gui._pipeline_active = True
+        self.gui._pipeline_step = "analyzing"
+        self.target_stage = "recap"
+        if hasattr(self.gui, "run_all_btn"):
+            self.gui.run_all_btn.setEnabled(False)
+            self.gui.run_all_btn.setText("Processing...")
+        self._setup_progress_dialog(workflow="recap")
+        if self.progress_dialog:
+            self.progress_dialog.start_step("analyzing")
+
+        output_dir = os.path.join(self.gui.workspace_root, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(
+            output_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}_recap.mp4"
+        )
+        segments = list(self.gui.get_active_segments() or []) if hasattr(self.gui, "get_active_segments") else []
+        timeline_clips = self.gui.get_timeline_video_clips(existing_only=True) if hasattr(self.gui, "get_timeline_video_clips") else []
+        self.gui.auto_recap_worker = AutoRecapWorker(
+            video_path, output_path, getattr(self.gui, "auto_recap_config", None), segments, timeline_clips
+        )
+        self.gui.auto_recap_worker.stage_started.connect(self._on_auto_recap_stage_started)
+        self.gui.auto_recap_worker.finished.connect(self._on_auto_recap_finished)
+        self.gui.auto_recap_worker.start()
+
+    def _on_auto_recap_stage_started(self, step_id, message):
+        if not self.progress_dialog:
+            return
+        previous = str(getattr(self.gui, "_pipeline_step", "") or "")
+        if previous and previous != step_id:
+            self.progress_dialog.finish_step(previous)
+        self.gui._pipeline_step = str(step_id)
+        self.progress_dialog.start_step(str(step_id))
+        self.progress_dialog.footer.setText(
+            f"Stage {self.progress_dialog.step_order.index(str(step_id)) + 1}/5: {message}"
+        )
+
+    def _on_auto_recap_finished(self, decisions, output_path, error):
+        worker = getattr(self.gui, "auto_recap_worker", None)
+        if worker is not None:
+            worker.deleteLater()
+            self.gui.auto_recap_worker = None
+        if error or not output_path:
+            self.pipeline_fail(f"Auto Edit Recap failed: {error or 'unknown error'}")
+            return
+        self.gui.current_auto_recap_edl = list(decisions or [])
+        self.gui.last_recap_video_path = str(output_path)
+        if hasattr(self.gui, "persist_auto_recap_project_data"):
+            self.gui.persist_auto_recap_project_data(self.gui.current_auto_recap_edl, output_path)
+        if self.progress_dialog:
+            self.progress_dialog.finish_step("rendering")
+            self.progress_dialog.set_completed()
+            self.progress_dialog.footer.setText("✨ Auto Edit Recap complete! Ready for export.")
+        self.gui.log(f"[Auto Recap] Dedicated recap pipeline complete: {output_path}")
+        self.pipeline_done()
 
     def run_all_pipeline(self, video_path=None, requires_separation=None, target_stage="full"):
         """Entry point for the full generation process."""
@@ -340,12 +411,9 @@ class PipelineController:
             self.gui.run_all_btn.setEnabled(False)
             self.gui.run_all_btn.setText("Processing...")
             
-        self._setup_progress_dialog(includes_separation=requires_separation)
+        self._setup_progress_dialog(includes_separation=requires_separation, workflow="production")
         if self.progress_dialog:
-            if hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled():
-                self.progress_dialog.start_step("analyzing")
-            else:
-                self.progress_dialog.start_step("ai_process")
+            self.progress_dialog.start_step("ai_process")
 
         # Start the background worker
         self.gui.log(f"[Pipeline] Starting prepare workflow for: {video_path}")
@@ -445,7 +513,9 @@ class PipelineController:
             self.gui.show_error("Prepare Failed", "Could not complete project preparation.", str(error))
             return
 
-        is_auto_recap = hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled()
+        # Generate always owns the three-step AI Production Pipeline. Auto
+        # Edit Recap has its own worker and never enters this callback.
+        is_auto_recap = False
 
         if self.progress_dialog:
             if is_auto_recap:
@@ -710,7 +780,7 @@ class PipelineController:
         should_auto_export = (
             getattr(self, "target_stage", "") == "full"
             and not getattr(self, "_generate_export_started", False)
-            and not (hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled())
+            and getattr(self, "target_stage", "") != "recap"
         )
         if should_auto_export:
             self._generate_export_started = True

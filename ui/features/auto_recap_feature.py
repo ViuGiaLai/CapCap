@@ -36,8 +36,8 @@ class AutoRecapFeatureMixin:
             self.auto_recap_cb.setChecked(True)
         if hasattr(self, "log"):
             self.log("[Auto Recap] Triggered Auto Edit Recap from Generate menu.")
-        if hasattr(self, "run_all_pipeline"):
-            self.run_all_pipeline()
+        if hasattr(self, "run_auto_recap_pipeline"):
+            self.run_auto_recap_pipeline()
 
     def is_auto_recap_enabled(self) -> bool:
         self.init_auto_recap_feature()

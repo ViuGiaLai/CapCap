@@ -261,14 +261,15 @@ class VideoView(QGraphicsView):
             item.setPos(target.topLeft())
             if not pixelate:
                 try:
-                    radius = max(1.0, float(region.get("blur_strength", 20.0) or 20.0))
+                    radius = max(1.0, float(region.get("blur_strength", 36.0) or 36.0) * 2.0)
                 except (TypeError, ValueError):
-                    radius = 20.0
+                    radius = 72.0
                 effect = QGraphicsBlurEffect()
                 effect.setBlurRadius(min(radius, max(1.0, min(target.width(), target.height()) / 2.0)))
                 item.setGraphicsEffect(effect)
             try:
-                opacity = float(region.get("blur_opacity", region.get("opacity", 1.0)) or 1.0)
+                opacity_value = region.get("blur_opacity", region.get("opacity", 1.0))
+                opacity = float(1.0 if opacity_value is None else opacity_value)
             except (TypeError, ValueError):
                 opacity = 1.0
             item.setOpacity(max(0.0, min(1.0, opacity)))

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
+import tempfile
 
 from app.runtime_paths import subprocess_text_kwargs
 
@@ -221,12 +223,25 @@ def export_timeline_sequence(
             filters.append(f"[acat]volume={float(original_audio_gain_db):.6f}dB[aout]")
             audio_map = "[aout]"
 
-    command += [
-        "-filter_complex", ";".join(filters), "-map", "[vout]", "-map", audio_map,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k",
-        "-t", f"{total_duration:.6f}", "-movflags", "+faststart", output_path,
-    ]
+    filter_string = ";".join(filters)
+    if len(filter_string) > 8000:
+        filter_script_path = os.path.join(tempfile.gettempdir(), f"timeline_export_{int(time.time())}.txt")
+        with open(filter_script_path, "w", encoding="utf-8") as f:
+            f.write(filter_string)
+        command += [
+            "-filter_complex_script", filter_script_path, "-map", "[vout]", "-map", audio_map,
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k",
+            "-t", f"{total_duration:.6f}", "-movflags", "+faststart", output_path,
+        ]
+    else:
+        command += [
+            "-filter_complex", filter_string, "-map", "[vout]", "-map", audio_map,
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k",
+            "-t", f"{total_duration:.6f}", "-movflags", "+faststart", output_path,
+        ]
+        
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     result = subprocess.run(
         command, capture_output=True, check=False, timeout=7200,

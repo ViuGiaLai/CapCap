@@ -285,6 +285,8 @@ class ExportWorkflow:
                                     "height": float(layer.get("height", 0.0)),
                                     "blur_strength": float(layer.get("blur_strength", 20.0)),
                                     "blur_opacity": float(layer.get("blur_opacity", 1.0)),
+                                    "pixelate": bool(layer.get("pixelate", False)),
+                                    "pixelate_size": int(layer.get("pixelate_size", 12)),
                                     "start": max(0.0, float(layer.get("start", 0.0))),
                                     "end": max(0.0, float(layer.get("end", 0.0))),
                                 })

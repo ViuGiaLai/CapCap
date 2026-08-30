@@ -958,12 +958,13 @@ class MpvMediaPlayerBackend(QObject):
                 strength_raw = blur.get("blur_strength", blur.get("strength"))
                 if strength_raw is None:
                     min_dimension = min(w, h)
-                    luma_radius = max(1, min(20, int(min_dimension // 2)))
+                    luma_radius = max(1, min(100, int(min_dimension // 2)))
                 else:
-                    luma_radius = max(1, min(20, int(round(float(strength_raw)))))
+                    luma_radius = max(1, min(100, int(round(float(strength_raw) * 2.0))))
             except (TypeError, ValueError):
-                luma_radius = max(1, min(20, int(min(w, h) // 2)))
-            chroma_radius = max(0, min(20, luma_radius // 2))
+                luma_radius = max(1, min(100, int(min(w, h) // 2)))
+            luma_radius = min(luma_radius, max(1, min(w, h) // 2))
+            chroma_radius = max(0, min(100, luma_radius // 2))
             try:
                 opacity = float(blur.get("blur_opacity", blur.get("opacity", 1.0)))
             except (TypeError, ValueError):

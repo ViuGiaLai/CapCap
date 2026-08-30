@@ -45,6 +45,41 @@ class TestStudioShellIntegration(unittest.TestCase):
             self.assertEqual(layer.blur_strength, 9)
             self.assertEqual(layer.start, 2.0)
 
+    def test_blur_controls_update_selected_region_without_replacing_others(self):
+        timeline = Timeline(duration=10.0)
+        track = Track(name="B1", type=LayerType.BLUR, height=60)
+        first = BlurLayer(name="Blur 1", start=0.0, end=10.0,
+                          position_x=0.1, position_y=0.1, width=0.3, height=0.2)
+        second = BlurLayer(name="Blur 2", start=0.0, end=10.0,
+                           position_x=0.5, position_y=0.6, width=0.4, height=0.2)
+        track.layers.extend([first, second])
+        timeline.tracks.append(track)
+        self.window.timeline._timeline = timeline
+        self.window.timeline._duration = timeline.duration
+        self.window.timeline._selected_layer_id = second.id
+        self.window.video_view.set_blur_regions_normalized([
+            {"x": first.position_x, "y": first.position_y,
+             "width": first.width, "height": first.height},
+            {"x": second.position_x, "y": second.position_y,
+             "width": second.width, "height": second.height},
+        ])
+
+        self.window.on_timeline_layer_selected(second.id)
+        self.window.blur_inspector_radius_slider.setValue(55)
+        self.window.blur_inspector_opacity_slider.setValue(40)
+        self.window.blur_inspector_pixelate_cb.setChecked(True)
+        self.window.blur_inspector_pixel_size_slider.setValue(24)
+        QTest.qWait(1)
+
+        self.assertEqual(first.blur_strength, 36.0)
+        self.assertEqual(second.blur_strength, 55)
+        self.assertAlmostEqual(second.blur_opacity, 0.4)
+        self.assertTrue(second.pixelate)
+        self.assertEqual(second.pixelate_size, 24)
+        regions = self.window.video_view.get_blur_region_normalized()
+        self.assertIsInstance(regions, list)
+        self.assertEqual(len(regions), 2)
+
     def test_track_label_click_selects_layer_and_opens_inspector(self):
         timeline = Timeline(duration=10.0)
         track = Track(name="B1", type=LayerType.BLUR, height=60)
