@@ -62,16 +62,36 @@ class AutoRecapFeatureMixin:
             input_segments = list(self.get_active_segments() or [])
         else:
             input_segments = list(getattr(self, "current_translated_segments", []) or getattr(self, "current_segments", []) or [])
-        input_scenes = scenes
+        input_scenes = list(scenes or []) if scenes is not None else None
         video_path = str(getattr(self.video_path_edit, "text", lambda: "")() or "").strip() if hasattr(self, "video_path_edit") else ""
+        timeline_clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
 
         engine = AutoRecapEngine(self.auto_recap_config)
-        if not input_segments and not input_scenes and video_path and os.path.exists(video_path):
+        if input_scenes is None and timeline_clips:
+            input_scenes = []
+            for clip in timeline_clips:
+                detected = engine.detect_scenes_ffmpeg(str(clip["source"]), threshold=0.25)
+                source_start = float(clip.get("source_start", 0.0) or 0.0)
+                source_end = source_start + float(clip.get("source_duration", 0.0) or 0.0)
+                timeline_start = float(clip.get("timeline_start", 0.0) or 0.0)
+                speed = max(0.01, float(clip.get("speed", 1.0) or 1.0))
+                for scene in detected:
+                    start = max(source_start, float(scene.get("start", 0.0) or 0.0))
+                    end = min(source_end, float(scene.get("end", 0.0) or 0.0))
+                    if end > start:
+                        item = dict(scene)
+                        item["start"] = timeline_start + (start - source_start) / speed
+                        item["end"] = timeline_start + (end - source_start) / speed
+                        input_scenes.append(item)
+        elif input_scenes is None and video_path and os.path.exists(video_path):
             if hasattr(self, "log"):
-                self.log(f"[Auto Recap] Detecting scene cuts for video: {video_path}")
+                self.log(f"[Auto Recap] Detecting effect boundaries for video: {video_path}")
             input_scenes = engine.detect_scenes_ffmpeg(video_path, threshold=0.25)
             if hasattr(self, "log"):
                 self.log(f"[Auto Recap] Detected {len(input_scenes)} scenes for Auto Recap EDL.")
+
+        if input_scenes:
+            input_scenes = engine.apply_subtitles_to_scenes(input_scenes, input_segments)
 
         if not input_segments and not input_scenes:
             if hasattr(self, "log"):

@@ -833,7 +833,9 @@ class RuntimeMediaMixin:
         video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
         if not video_path:
             return ""
-        video_hash = hashlib.md5(video_path.encode("utf-8")).hexdigest()[:12]
+        clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
+        identity = repr(clips) if len(clips) > 1 else video_path
+        video_hash = hashlib.md5(identity.encode("utf-8")).hexdigest()[:12]
         return os.path.join(self.get_workspace_temp_root(create=True), f"waveform_{video_hash}.wav")
 
     def _timeline_waveform_request_signature(self):
@@ -854,6 +856,32 @@ class RuntimeMediaMixin:
         return None
 
     def _timeline_thumbnail_request_signature(self):
+        clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
+        if len(clips) > 1:
+            signature = []
+            for clip in clips:
+                path = os.path.abspath(str(clip.get("source", "") or ""))
+                try:
+                    stat = os.stat(path)
+                    identity = (int(stat.st_size), int(getattr(stat, "st_mtime_ns", 0)))
+                except OSError:
+                    identity = (0, 0)
+                signature.append((path, identity, round(float(clip.get("source_start", 0.0)), 3), round(float(clip.get("source_duration", 0.0)), 3)))
+            return ("v6-timeline-sequence-thumbnails", tuple(signature))
+        clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
+        if len(clips) > 1:
+            return (
+                "v5-source-sequence-envelope",
+                tuple(
+                    (
+                        os.path.abspath(str(clip.get("source", "") or "")),
+                        round(float(clip.get("source_start", 0.0) or 0.0), 3),
+                        round(float(clip.get("source_duration", 0.0) or 0.0), 3),
+                        round(float(clip.get("speed", 1.0) or 1.0), 3),
+                    )
+                    for clip in clips
+                ),
+            )
         video_path = self._normalize_local_file_path(self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         duration_s = max(0.0, float(getattr(self.timeline, "duration", 0) or 0) / 1000.0) if hasattr(self, "timeline") else 0.0
         if not video_path or not os.path.exists(video_path) or duration_s <= 0.0:
@@ -950,8 +978,9 @@ class RuntimeMediaMixin:
         video_path = self._normalize_local_file_path(
             self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
         )
+        clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
         worker = TimelineWaveformWorker(
-            request_signature, video_path, "", self._waveform_temp_path()
+            request_signature, video_path, "", self._waveform_temp_path(), clips
         )
         worker.finished.connect(self._on_timeline_waveform_ready)
         self._timeline_waveform_worker = worker
@@ -1035,7 +1064,8 @@ class RuntimeMediaMixin:
         video_path = self._normalize_local_file_path(self.video_path_edit.text().strip())
         duration_s = max(0.0, float(self.timeline.duration or 0) / 1000.0)
         thumb_dir = os.path.join(self.get_workspace_temp_root(create=True), "timeline_thumbnails")
-        worker = TimelineThumbnailWorker(request_signature, video_path, duration_s, thumb_dir)
+        clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
+        worker = TimelineThumbnailWorker(request_signature, video_path, duration_s, thumb_dir, clips)
         worker.finished.connect(self._on_timeline_video_thumbnails_ready)
         self._timeline_thumbnail_worker = worker
         worker.start()

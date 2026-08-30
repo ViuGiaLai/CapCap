@@ -18,7 +18,7 @@ class TimelineSelectionMixin:
             return False
         if time_seconds is None:
             try:
-                time_seconds = float(self.media_player.position()) / 1000.0
+                time_seconds = self.timeline_position_seconds() if hasattr(self, "timeline_position_seconds") else float(self.media_player.position()) / 1000.0
             except Exception:
                 time_seconds = 0.0
         start = max(0.0, float(getattr(layer, "start", 0.0) or 0.0))
@@ -119,7 +119,10 @@ class TimelineSelectionMixin:
         """Show only overlay layers whose timeline interval contains the playhead."""
         if not hasattr(self, "timeline") or not self.timeline._timeline:
             return
-        time_seconds = float(position_ms if position_ms is not None else self.media_player.position()) / 1000.0
+        if position_ms is None and hasattr(self, "timeline_position_seconds"):
+            time_seconds = self.timeline_position_seconds()
+        else:
+            time_seconds = float(position_ms if position_ms is not None else self.media_player.position()) / 1000.0
         tracked = []
         for track in self.timeline._timeline.tracks:
             for layer in track.layers:
@@ -305,6 +308,16 @@ class TimelineSelectionMixin:
                 if bool(getattr(layer, "locked", False)):
                     return
                 layer_type = str(getattr(getattr(layer, "type", ""), "value", getattr(layer, "type", ""))).lower()
+                if layer_type == "video":
+                    from app.services.timeline_video_sequence import normalize_v1_sequence
+
+                    normalize_v1_sequence(self.timeline._timeline)
+                    self.timeline.set_duration(int(self.timeline._timeline.duration * 1000))
+                    self.timeline._redraw()
+                    if hasattr(self, "refresh_source_video_list"):
+                        self.refresh_source_video_list()
+                    self.persist_current_timeline_project_data()
+                    return
                 is_logo = layer_type == "image" and str(getattr(track, "name", "")) == "L1 Logo"
                 if layer_type not in {"blur", "mask", "text"} and not is_logo:
                     return

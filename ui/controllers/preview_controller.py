@@ -903,7 +903,7 @@ class PreviewController:
         except Exception:
             return 0.0
 
-    def export_final_video(self):
+    def export_final_video(self, *, automatic: bool = False):
         video_path = self.gui.video_path_edit.text().strip()
         if not video_path or not os.path.exists(video_path):
             QMessageBox.warning(self.gui, "Error", "Please choose a video first.")
@@ -996,12 +996,15 @@ class PreviewController:
             suggested_name = f"{video_name}_final_vi.mp4"
 
         default_path = os.path.join(default_dir, suggested_name)
-        output_path, _ = QFileDialog.getSaveFileName(
-            self.gui,
-            "Export Final Video",
-            default_path,
-            "Video Files (*.mp4)",
-        )
+        if automatic:
+            output_path = default_path
+        else:
+            output_path, _ = QFileDialog.getSaveFileName(
+                self.gui,
+                "Export Final Video",
+                default_path,
+                "Video Files (*.mp4)",
+            )
         if not output_path:
             return
         if not output_path.lower().endswith(".mp4"):
@@ -1011,7 +1014,7 @@ class PreviewController:
         if chosen_dir:
             self.gui.final_output_folder_edit.setText(chosen_dir)
 
-        if not self._confirm_export_summary(
+        if not automatic and not self._confirm_export_summary(
             video_path=video_path,
             output_path=output_path,
             mode=mode,
@@ -1062,6 +1065,10 @@ class PreviewController:
             original_audio_gain_db=original_audio_gain_db,
             project_state_path=project_state_path,
             project_temp_dir=self.gui.get_project_temp_dir("export"),
+            timeline_clips=(
+                self.gui.get_timeline_video_clips(existing_only=True)
+                if hasattr(self.gui, "get_timeline_video_clips") else []
+            ),
         )
         self.gui.export_thread.progress.connect(self.gui.on_export_progress)
         self.gui.export_thread.finished.connect(self.gui.on_export_finished)

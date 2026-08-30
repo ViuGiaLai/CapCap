@@ -250,7 +250,7 @@ class TimelineEditingMixin:
             return
 
         target = segments[index]
-        split_time = float(self.media_player.position()) / 1000.0
+        split_time = self.timeline_position_seconds() if hasattr(self, "timeline_position_seconds") else float(self.media_player.position()) / 1000.0
         start = float(target.get("start", 0.0))
         end = float(target.get("end", 0.0))
         min_gap = max(0.12, getattr(self.timeline, "MIN_SEGMENT_DURATION", 0.1))
@@ -708,10 +708,41 @@ class TimelineEditingMixin:
             QMessageBox.information(self, "Layer Locked", "Unlock this layer before splitting it.")
             return True
         layer_type = str(getattr(getattr(selected_layer, "type", ""), "value", getattr(selected_layer, "type", ""))).lower()
+        if layer_type == "video":
+            split_time = self.timeline_position_seconds() if hasattr(self, "timeline_position_seconds") else float(self.media_player.position()) / 1000.0
+            if selection:
+                candidates = [float(value) for value in selection]
+                split_time = next(
+                    (value for value in candidates if selected_layer.start < value < selected_layer.end),
+                    split_time,
+                )
+            start, end = float(selected_layer.start), float(selected_layer.end)
+            min_duration = max(0.1, float(getattr(timeline, "MIN_DUR", 0.1)))
+            if not (start + min_duration < split_time < end - min_duration):
+                QMessageBox.information(self, "Split Video", "Place the playhead inside the selected video before splitting.")
+                return True
+            first = copy.deepcopy(selected_layer)
+            second = copy.deepcopy(selected_layer)
+            second.id = uuid4().hex[:12]
+            first.end = split_time
+            second.start = split_time
+            second.source_start = float(selected_layer.source_start) + (split_time - start) * max(0.01, float(selected_layer.speed))
+            second.name = f"{selected_layer.name} (part 2)"
+            index = selected_track.layers.index(selected_layer)
+            selected_track.layers[index:index + 1] = [first, second]
+            from app.services.timeline_video_sequence import normalize_v1_sequence
+            normalize_v1_sequence(timeline._timeline, selected_track.layers)
+            timeline._selected_layer_id = second.id
+            timeline.set_duration(int(timeline._timeline.duration * 1000))
+            timeline._redraw()
+            self.refresh_source_video_list()
+            self.persist_current_timeline_project_data()
+            return True
         is_logo = layer_type == "image" and str(getattr(selected_track, "name", "")) == "L1 Logo"
         if layer_type not in {"blur", "mask", "text"} and not is_logo:
             return False
-        split_times = list(selection or (float(self.media_player.position()) / 1000.0,))
+        current_time = self.timeline_position_seconds() if hasattr(self, "timeline_position_seconds") else float(self.media_player.position()) / 1000.0
+        split_times = list(selection or (current_time,))
         start, end = float(selected_layer.start), float(selected_layer.end)
         min_duration = max(0.1, float(getattr(timeline, "MIN_DUR", 0.1)))
         split_times = sorted({float(t) for t in split_times if start + min_duration < float(t) < end - min_duration})
@@ -864,6 +895,18 @@ class TimelineEditingMixin:
                         self.timeline._selected_layer_id = ""
                         self._selected_segment_index = segment_index
                         return self.delete_selected_timeline_segment()
+                    if layer_type == "video":
+                        from app.services.timeline_video_sequence import ordered_video_layers, remove_video
+                        if len(ordered_video_layers(self.timeline._timeline)) <= 1:
+                            QMessageBox.information(self, "Delete Video", "A project must keep at least one video on V1.")
+                            return
+                        remove_video(self.timeline._timeline, layer.id)
+                        self.timeline._selected_layer_id = ""
+                        self.timeline.set_duration(int(self.timeline._timeline.duration * 1000))
+                        self.timeline._redraw()
+                        self.refresh_source_video_list()
+                        self.persist_current_timeline_project_data()
+                        return
                     # Use the layer-specific removal paths where they own
                     # preview state.  The Delete timeline button therefore
                     # removes the selected layer rather than merely deleting

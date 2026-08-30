@@ -643,3 +643,5 @@ class ProjectStateMixin:
                 self.media_player.pause()
         except Exception:
             pass
+        if hasattr(self, "refresh_source_video_list"):
+            self.refresh_source_video_list()

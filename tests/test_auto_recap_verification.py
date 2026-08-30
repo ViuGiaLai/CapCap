@@ -60,8 +60,8 @@ class TestAutoRecapVerification(unittest.TestCase):
         self.assertIn("atempo=1.15", filtergraph)
 
         # Rule 7: Freeze Frame (tpad + apad)
-        self.assertIn("tpad=stop_mode=clone:stop_duration=0.40", filtergraph)
-        self.assertIn("apad=pad_dur=0.40", filtergraph)
+        self.assertIn("tpad=stop_mode=clone:stop=14,setpts=PTS/1.15", filtergraph)
+        self.assertIn("apad=pad_dur=0.4600,atempo=1.15", filtergraph)
 
         # Rule 8: Horizontal Flip
         self.assertIn("hflip", filtergraph)

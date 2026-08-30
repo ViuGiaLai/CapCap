@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Iterable
+
+from app.layers.audio import AudioLayer
+from app.layers.base import LayerType
+from app.layers.timeline import Timeline, Track
+from app.layers.transform import Transform
+from app.layers.video import VideoLayer
+
+
+@dataclass(frozen=True)
+class TimelineVideoClip:
+    layer_id: str
+    source: str
+    timeline_start: float
+    timeline_end: float
+    source_start: float
+    speed: float
+    muted: bool
+    volume: float
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.timeline_end - self.timeline_start)
+
+    @property
+    def source_duration(self) -> float:
+        return self.duration * max(0.01, self.speed)
+
+    def to_dict(self) -> dict:
+        return {
+            "layer_id": self.layer_id,
+            "source": self.source,
+            "timeline_start": self.timeline_start,
+            "timeline_end": self.timeline_end,
+            "source_start": self.source_start,
+            "source_duration": self.source_duration,
+            "speed": self.speed,
+            "muted": self.muted,
+            "volume": self.volume,
+        }
+
+
+def video_track(timeline: Timeline | None) -> Track | None:
+    if timeline is None:
+        return None
+    for track in timeline.tracks:
+        if track.type == LayerType.VIDEO and (
+            str(track.name).strip().lower().startswith("v1")
+            or str(track.id).strip().lower() == "v1"
+        ):
+            return track
+    return next((track for track in timeline.tracks if track.type == LayerType.VIDEO), None)
+
+
+def audio_track(timeline: Timeline | None) -> Track | None:
+    if timeline is None:
+        return None
+    for track in timeline.tracks:
+        if track.type == LayerType.AUDIO and (
+            str(track.name).strip().lower().startswith("a1")
+            or str(track.id).strip().lower() == "a1"
+        ):
+            return track
+    return next((track for track in timeline.tracks if track.type == LayerType.AUDIO), None)
+
+
+def ordered_video_layers(timeline: Timeline | None) -> list[VideoLayer]:
+    track = video_track(timeline)
+    if track is None:
+        return []
+    layers = [layer for layer in track.layers if isinstance(layer, VideoLayer) and layer.source]
+    return sorted(layers, key=lambda layer: (float(layer.start), int(layer.z_index), layer.id))
+
+
+def timeline_video_clips(timeline: Timeline | None, *, existing_only: bool = False) -> list[TimelineVideoClip]:
+    clips = []
+    for layer in ordered_video_layers(timeline):
+        source = os.path.abspath(str(layer.source))
+        if existing_only and not os.path.isfile(source):
+            continue
+        start = max(0.0, float(layer.start))
+        end = max(start, float(layer.end))
+        if end - start <= 0.001:
+            continue
+        clips.append(
+            TimelineVideoClip(
+                layer_id=str(layer.id),
+                source=source,
+                timeline_start=start,
+                timeline_end=end,
+                source_start=max(0.0, float(layer.source_start)),
+                speed=max(0.01, float(layer.speed or 1.0)),
+                muted=bool(layer.muted),
+                volume=max(0.0, float(layer.volume)),
+            )
+        )
+    return clips
+
+
+def resolve_timeline_time(timeline: Timeline | None, seconds: float) -> tuple[TimelineVideoClip | None, float]:
+    position = max(0.0, float(seconds))
+    clips = timeline_video_clips(timeline)
+    if not clips:
+        return None, 0.0
+    for clip in clips:
+        if clip.timeline_start <= position < clip.timeline_end:
+            local = clip.source_start + (position - clip.timeline_start) * clip.speed
+            return clip, local
+    clip = clips[-1] if position >= clips[-1].timeline_end else clips[0]
+    local = clip.source_start + min(clip.duration, max(0.0, position - clip.timeline_start)) * clip.speed
+    return clip, local
+
+
+def _ensure_audio_track(timeline: Timeline) -> Track:
+    track = audio_track(timeline)
+    if track is None:
+        track = timeline.add_track("A1 Audio", LayerType.AUDIO)
+        track.height = 80
+    return track
+
+
+def normalize_v1_sequence(timeline: Timeline, layers: Iterable[VideoLayer] | None = None) -> list[VideoLayer]:
+    """Pack V1 clips without gaps and rebuild matching original-audio clips."""
+    track = video_track(timeline)
+    if track is None:
+        track = timeline.add_track("V1 Video", LayerType.VIDEO)
+        track.height = 80
+    ordered = list(layers) if layers is not None else ordered_video_layers(timeline)
+    cursor = 0.0
+    for index, layer in enumerate(ordered):
+        duration = max(0.001, float(layer.end) - float(layer.start))
+        layer.start = round(cursor, 6)
+        layer.end = round(cursor + duration, 6)
+        layer.z_index = index
+        cursor = layer.end
+    track.layers = ordered
+
+    a1 = _ensure_audio_track(timeline)
+    previous = {
+        str(layer.metadata.get("video_layer_id", "")): layer
+        for layer in a1.layers
+        if isinstance(layer, AudioLayer) and isinstance(layer.metadata, dict)
+    }
+    audio_layers = []
+    for index, video in enumerate(ordered):
+        audio = previous.get(str(video.id))
+        if audio is None:
+            audio = AudioLayer()
+        audio.name = f"Audio {index + 1} · {os.path.basename(video.source)}"
+        audio.source = video.source
+        audio.start = video.start
+        audio.end = video.end
+        audio.source_start = video.source_start
+        audio.speed = video.speed
+        audio.volume = video.volume
+        audio.muted = video.muted
+        audio.z_index = index
+        audio.metadata["video_layer_id"] = video.id
+        audio_layers.append(audio)
+    a1.layers = audio_layers
+    timeline.duration = max(0.0, cursor)
+    return ordered
+
+
+def append_video(timeline: Timeline, source: str, duration: float) -> VideoLayer:
+    source = os.path.abspath(str(source))
+    duration = max(0.001, float(duration))
+    track = video_track(timeline)
+    if track is None:
+        track = timeline.add_track("V1 Video", LayerType.VIDEO)
+        track.height = 80
+    end = max((float(layer.end) for layer in ordered_video_layers(timeline)), default=0.0)
+    layer = VideoLayer(
+        name=os.path.basename(source),
+        source=source,
+        start=end,
+        end=end + duration,
+        transform=Transform(x=0, y=0, scale_x=1.0, scale_y=1.0),
+    )
+    track.layers.append(layer)
+    normalize_v1_sequence(timeline)
+    return layer
+
+
+def move_video(timeline: Timeline, layer_id: str, offset: int) -> bool:
+    layers = ordered_video_layers(timeline)
+    index = next((i for i, layer in enumerate(layers) if layer.id == layer_id), -1)
+    target = index + int(offset)
+    if index < 0 or target < 0 or target >= len(layers):
+        return False
+    layers[index], layers[target] = layers[target], layers[index]
+    normalize_v1_sequence(timeline, layers)
+    return True
+
+
+def remove_video(timeline: Timeline, layer_id: str) -> bool:
+    layers = ordered_video_layers(timeline)
+    remaining = [layer for layer in layers if layer.id != layer_id]
+    if len(remaining) == len(layers):
+        return False
+    normalize_v1_sequence(timeline, remaining)
+    return True

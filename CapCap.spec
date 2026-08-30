@@ -117,13 +117,10 @@ a = Analysis(
         # Lazy-loaded translation providers
         "translation.providers.gemini_polisher",
         "translation.providers.google_web_translator",
-        "translation.providers.microsoft_translator",
         # Lazy-loaded workflows
         "workflows.prepare_workflow",
         "workflows.voice_workflow",
         "workflows.export_workflow",
-        # Required for voice workflow
-        "utils.voice_preview_utils",
         # Required for timeline + audio
         "numpy",
         "pydub",
@@ -191,6 +188,18 @@ _CUDA_RUNTIME_DLL_NAMES = {
 a.binaries = [
     m for m in a.binaries
     if Path(str(m[0])).name.lower() not in _CUDA_RUNTIME_DLL_NAMES
+]
+
+# Qt 6 on Windows links against the system ``icuuc.dll`` API.  When the
+# build runs from the Codex desktop environment, PyInstaller can accidentally
+# collect Poppler's private ICU 78 DLLs from PATH.  Those DLLs export only
+# version-suffixed symbols (for example ``ucnv_open_78``), while Qt imports the
+# normal Windows symbols (``ucnv_open``), causing QtCore to fail at startup
+# with WinError 127.  Never ship that unrelated private ICU beside the app.
+_FOREIGN_ICU_DLL_NAMES = {"icuuc.dll", "icudt78.dll"}
+a.binaries = [
+    m for m in a.binaries
+    if Path(str(m[0])).name.lower() not in _FOREIGN_ICU_DLL_NAMES
 ]
 
 pyz = PYZ(a.pure)

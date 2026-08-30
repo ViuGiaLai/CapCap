@@ -12,8 +12,8 @@ from new_highlight_selector import auto_select_matches
 
 
 class SegmentEditorMixin:
-    def export_final_video(self):
-        self.preview_controller.export_final_video()
+    def export_final_video(self, *, automatic: bool = False):
+        self.preview_controller.export_final_video(automatic=automatic)
 
     def preview_five_seconds(self):
         self.preview_controller.preview_five_seconds()
@@ -1622,7 +1622,7 @@ class SegmentEditorMixin:
             # track. Insert at the playhead so the normal timeline, preview,
             # editor, export and project persistence paths all stay aligned.
             try:
-                start = max(0.0, float(self.media_player.position()) / 1000.0)
+                start = max(0.0, self.timeline_position_seconds() if hasattr(self, "timeline_position_seconds") else float(self.media_player.position()) / 1000.0)
             except Exception:
                 start = 0.0
             duration = max(0.0, float(getattr(tl, "duration", 0.0) or 0.0))

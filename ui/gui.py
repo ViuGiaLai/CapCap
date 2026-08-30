@@ -245,6 +245,8 @@ if __name__ == "__main__":
                 redraw = getattr(window.timeline, "_redraw", None)
                 if callable(redraw):
                     redraw()
+                if hasattr(window, "refresh_source_video_list"):
+                    window.refresh_source_video_list()
             window.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)
         except Exception:
             runtime_logs.add("[Startup Error]\n" + traceback.format_exc())

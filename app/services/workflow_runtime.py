@@ -36,6 +36,7 @@ class WorkflowRuntime:
         prefetch_voice_name: str = "",
         prefetch_voice_speed: float = 1.0,
         step_callback=None,
+        timeline_clips=None,
     ) -> str:
         if step_callback: step_callback("prepare")
         return self.prepare_workflow.run(
@@ -55,6 +56,7 @@ class WorkflowRuntime:
             prefetch_voice_name=prefetch_voice_name,
             prefetch_voice_speed=prefetch_voice_speed,
             step_callback=step_callback,
+            timeline_clips=timeline_clips,
         )
 
     def run_voice(
@@ -115,6 +117,7 @@ class WorkflowRuntime:
         project_state_path: str = "",
         project_temp_dir: str = "",
         on_progress: callable = None,
+        timeline_clips=None,
     ) -> str:
         return self.export_workflow.run(
             video_path=video_path,
@@ -135,6 +138,7 @@ class WorkflowRuntime:
             project_state_path=project_state_path,
             project_temp_dir=project_temp_dir,
             on_progress=on_progress,
+            timeline_clips=timeline_clips,
         )
 
     def project_state_path(self, state) -> str:

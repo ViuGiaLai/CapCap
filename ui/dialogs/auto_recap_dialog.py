@@ -107,7 +107,7 @@ class AutoRecapSettingsDialog(QDialog):
         title_label.setStyleSheet("color: #6ee7b7;")
         layout.addWidget(title_label)
 
-        sub_label = QLabel("Automatically create a dynamic recap with smart cuts, motion framing, and audio.")
+        sub_label = QLabel("Keep the complete video while adding shot-aware motion framing and emphasis effects.")
         sub_label.setStyleSheet("color: #94a3b8; font-size: 12px;")
         sub_label.setWordWrap(True)
         layout.addWidget(sub_label)

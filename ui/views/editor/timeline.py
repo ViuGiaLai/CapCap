@@ -379,13 +379,24 @@ class EditorTimeline(QGraphicsView):
 
     def set_video_source(self, path: str, duration_s: float) -> None:
         from app.layers.sync_bridge import ensure_v1_a1_tracks
+        from app.services.timeline_video_sequence import ordered_video_layers
         if not self._timeline:
             self._init_default_tracks()
         if duration_s <= 0:
             duration_s = self._probe_video_duration(path)
         if duration_s > 0:
-            ensure_v1_a1_tracks(self._timeline, path, duration_s)
-            self._duration = max(self._duration, duration_s)
+            existing = ordered_video_layers(self._timeline)
+            same_restored_source = bool(
+                existing
+                and os.path.abspath(str(existing[0].source or "")) == os.path.abspath(str(path or ""))
+            )
+            if not same_restored_source:
+                ensure_v1_a1_tracks(self._timeline, path, duration_s)
+            self._duration = max(
+                self._duration,
+                float(getattr(self._timeline, "duration", 0.0) or 0.0),
+                duration_s,
+            )
             # Keep the Timeline model's duration in sync so layers that
             # span the whole video (Mask track) use the real length.
             self._timeline.duration = self._duration
@@ -907,6 +918,11 @@ class EditorTimeline(QGraphicsView):
         """Clamp a body drag without moving any neighboring layer."""
         if track is None:
             return start
+        if getattr(track, "type", None) == LayerType.VIDEO:
+            # V1 is a sequential edit track: crossing another clip means
+            # reordering it. The release handler packs the clips back to back.
+            duration = max(self.MIN_DUR, end - start)
+            return max(0.0, min(float(start), max(0.0, self._duration - duration)))
         visible = [item for item in track.layers if item.visible and item is not layer]
         row_map = self._overlap_row_assignments.get(str(track.id), {})
         if self._should_overlap_stack(track):
@@ -1817,6 +1833,10 @@ class EditorTimeline(QGraphicsView):
             lid = drag["layer_id"]
             track, layer = self._find_layer_by_id(lid)
             if layer and str(getattr(track, "id", "") or "") == str(drag.get("track_id", "") or ""):
+                from app.layers.video import VideoLayer
+                if isinstance(layer, VideoLayer) and drag.get("type") == "resize_left":
+                    source_delta = (float(layer.start) - float(drag["start_time"])) * max(0.01, float(layer.speed))
+                    layer.source_start = max(0.0, float(layer.source_start) + source_delta)
                 start = float(layer.start)
                 end = float(self._get_effective_layer_end(layer))
                 self.layerTimingChanged.emit(lid, start, end)

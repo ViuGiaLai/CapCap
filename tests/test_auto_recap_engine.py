@@ -26,13 +26,14 @@ class TestAutoRecapEngine(unittest.TestCase):
         self.assertGreater(score_high, 70.0)
         self.assertLess(score_low, 35.0)
 
-    def test_evaluate_shot_zoom_and_cut(self):
+    def test_evaluate_shot_zoom_and_preserve_empty_content(self):
         decision_keep = self.engine.evaluate_shot(0, 0.0, 4.0, "Sự thật bất ngờ quan trọng!", True)
         self.assertEqual(decision_keep.action_type, "KEEP")
         self.assertGreater(decision_keep.zoom_scale, 1.0)
 
-        decision_cut = self.engine.evaluate_shot(1, 0.0, 5.0, "", is_scene_cut=False)
-        self.assertEqual(decision_cut.action_type, "CUT")
+        decision_empty = self.engine.evaluate_shot(1, 0.0, 5.0, "", is_scene_cut=False)
+        self.assertEqual(decision_empty.action_type, "KEEP")
+        self.assertEqual(decision_empty.duration, 5.0)
 
     def test_safety_blacklist_text(self):
         self.assertFalse(self.engine.check_safety_blacklist("Top 10 Bí Mật 2026"))
@@ -57,9 +58,26 @@ class TestAutoRecapEngine(unittest.TestCase):
             {"start": 8.0, "end": 12.0, "text": "Bí mật thành công rực rỡ?"},
         ]
         edl = self.engine.generate_edl(segments)
-        self.assertEqual(len(edl), 2)
+        self.assertEqual(len(edl), 3)
         self.assertEqual(edl[0].shot_index, 0)
-        self.assertEqual(edl[1].shot_index, 2)
+        self.assertEqual(edl[1].shot_index, 1)
+        self.assertEqual(edl[2].shot_index, 2)
+
+    def test_scene_shots_preserve_full_timeline_and_receive_subtitle_context(self):
+        scenes = [
+            {"start": 0.0, "end": 2.0},
+            {"start": 2.0, "end": 5.0},
+        ]
+        segments = [
+            {"start": 1.0, "end": 3.0, "text": "Điểm nhấn quan trọng!"},
+        ]
+        enriched = self.engine.apply_subtitles_to_scenes(scenes, segments)
+        edl = self.engine.generate_edl(segments, enriched)
+        self.assertEqual(edl[0].start_time, 0.0)
+        self.assertEqual(edl[-1].end_time, 5.0)
+        self.assertAlmostEqual(sum(d.duration for d in edl), 5.0)
+        self.assertTrue(all(d.action_type == "KEEP" for d in edl))
+        self.assertTrue(all("Điểm nhấn" in item["text"] for item in enriched))
 
     def test_distinct_segments_are_not_treated_as_reused_footage(self):
         segments = [
@@ -82,6 +100,62 @@ class TestAutoRecapEngine(unittest.TestCase):
         graph, maps = self.engine.build_ffmpeg_filtergraph(edl, has_audio=False)
         self.assertNotIn("[0:a]", graph)
         self.assertNotIn("[afinal]", maps)
+
+    def test_motion_schedule_generates_requested_effect_families(self):
+        scenes = [
+            {
+                "start": index * 5.0,
+                "end": (index + 1) * 5.0,
+                "text": "Một cảnh có nội dung bình thường",
+                "source_clip_id": f"scene_{index}",
+            }
+            for index in range(8)
+        ]
+        edl = self.engine.generate_edl([], scenes)
+        self.assertEqual(edl[0].zoom_direction, "in")
+        self.assertEqual(edl[1].zoom_direction, "out")
+        self.assertIn(edl[2].pan_direction, {"left_right", "right_left"})
+        self.assertIn(edl[3].pan_direction, {"top_bottom", "bottom_top"})
+        self.assertNotEqual(edl[4].crop_mode, "none")
+        self.assertIn(edl[4].position_shift, {"left", "right"})
+        self.assertNotEqual(edl[6].crop_mode, "none")
+        self.assertIn(edl[6].position_shift, {"up", "down"})
+
+        graph, _maps = self.engine.build_ffmpeg_filtergraph(edl)
+        self.assertIn("zoompan=", graph)
+        self.assertIn("pzoom+", graph)
+        self.assertIn("pzoom-", graph)
+        self.assertIn("crop=", graph)
+
+    def test_reused_safe_footage_can_flip_horizontally(self):
+        decisions = [
+            self.engine.evaluate_shot(
+                index,
+                index * 2.0,
+                (index + 1) * 2.0,
+                "Cảnh thoại bình thường",
+                source_clip_id="same_clip",
+            )
+            for index in range(3)
+        ]
+        self.assertFalse(decisions[0].horizontal_flip)
+        self.assertFalse(decisions[1].horizontal_flip)
+        self.assertTrue(decisions[2].horizontal_flip)
+
+    def test_freeze_padding_precedes_speed_retime(self):
+        decision = self.engine.evaluate_shot(
+            0,
+            0.0,
+            7.0,
+            "Bí mật quan trọng cuối cùng!",
+        )
+        self.assertEqual(decision.speed, 0.9)
+        self.assertEqual(decision.freeze_duration, 0.4)
+
+        graph, _maps = self.engine.build_ffmpeg_filtergraph([decision])
+
+        self.assertIn("tpad=stop_mode=clone:stop=11,setpts=PTS/0.90", graph)
+        self.assertIn("apad=pad_dur=0.3600,atempo=0.90", graph)
 
 
 if __name__ == "__main__":

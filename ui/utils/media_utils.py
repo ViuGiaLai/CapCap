@@ -368,6 +368,8 @@ def browse_video(gui):
 
     gui.current_project_state = gui.ensure_current_project()
     gui.load_project_context(gui.current_project_state)
+    if hasattr(gui, "refresh_source_video_list"):
+        gui.refresh_source_video_list()
 
     try:
         gui.media_player.pause()

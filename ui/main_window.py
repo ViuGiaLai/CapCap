@@ -28,6 +28,7 @@ from features.model_settings import ModelSettingsMixin
 from features.update_feature import UpdateFeatureMixin
 from features.auto_recap_feature import AutoRecapFeatureMixin
 from features.pipeline_lifecycle import PipelineLifecycleMixin
+from features.multi_video_timeline import MultiVideoTimelineMixin
 from utils.bootstrap_media_backend import BootstrapMediaBackend
 from runtime_paths import asset_path, workspace_root
 from runtime_profile import is_remote_profile
@@ -36,7 +37,7 @@ def _default_asr_engine() -> str:
     return "sensevoice"
 
 
-class VideoTranslatorGUI(PipelineLifecycleMixin, AutoRecapFeatureMixin, ModelSettingsMixin, UpdateFeatureMixin, WorkflowActionsMixin, VoiceSubtitlePreviewMixin, TimelineEditingMixin, SegmentEditorMixin, PreviewConfigurationMixin, ProjectStateMixin, FilterSubtitleStyleMixin, SpeakerVoiceMixin, WindowUiMixin, RuntimeMediaMixin, VoiceCatalogMixin, VisualLayerEditorMixin, TimelineSelectionMixin, QMainWindow):
+class VideoTranslatorGUI(PipelineLifecycleMixin, MultiVideoTimelineMixin, AutoRecapFeatureMixin, ModelSettingsMixin, UpdateFeatureMixin, WorkflowActionsMixin, VoiceSubtitlePreviewMixin, TimelineEditingMixin, SegmentEditorMixin, PreviewConfigurationMixin, ProjectStateMixin, FilterSubtitleStyleMixin, SpeakerVoiceMixin, WindowUiMixin, RuntimeMediaMixin, VoiceCatalogMixin, VisualLayerEditorMixin, TimelineSelectionMixin, QMainWindow):
     VOICE_ENTRY_ID_ROLE = Qt.UserRole + 1
     runtime_log_received = Signal(str)
     subtitle_ass_ready = Signal(int, str, str, object)

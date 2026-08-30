@@ -296,8 +296,8 @@ class PipelineController:
         if hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled():
             if hasattr(self.progress_dialog, "title_label"):
                 self.progress_dialog.title_label.setText("✨ Auto Edit Recap")
-            self.progress_dialog.add_step("analyzing", "Analyzing Video (Scene Detection & Timing)")
-            self.progress_dialog.add_step("building", "Building Recap (Importance & Cut Logic)")
+            self.progress_dialog.add_step("analyzing", "Analyzing Video (Effect Shot Boundaries)")
+            self.progress_dialog.add_step("building", "Building Effect Plan (No Content Removal)")
             self.progress_dialog.add_step("smart_edits", "Applying Smart Edits (Zoom, Pan, Crop & Speed)")
             self.progress_dialog.add_step("audio", "Processing Audio (Voiceover & Ducking)")
             self.progress_dialog.add_step("rendering", "Rendering Recap (FFmpeg 1-Pass)")
@@ -333,6 +333,7 @@ class PipelineController:
         self.gui._pipeline_active = True
         self.gui._pipeline_step = "prepare"
         self.target_stage = str(target_stage or "full").strip().lower()
+        self._generate_export_started = False
         
         # UI Feedback
         if hasattr(self.gui, "run_all_btn"):
@@ -385,6 +386,10 @@ class PipelineController:
             remote_api_url=self.local_worker_api_url,
             remote_api_token=self.local_worker_api_token,
             force_remote_api=True,
+            timeline_clips=(
+                self.gui.get_timeline_video_clips(existing_only=True)
+                if hasattr(self.gui, "get_timeline_video_clips") else []
+            ),
         )
         
         # Connect signals
@@ -462,11 +467,12 @@ class PipelineController:
                 if self.progress_dialog:
                     self.progress_dialog.finish_step("analyzing")
 
-                # Stage 2: Building Recap (Importance & Cut Logic)
+                # Stage 2: Build a full-timeline effect plan. Scene cuts are
+                # boundaries only; Auto Recap must not remove source content.
                 self.gui._pipeline_step = "building"
                 if self.progress_dialog:
                     self.progress_dialog.start_step("building")
-                    self.progress_dialog.footer.setText("Stage 2/5: Building Recap (Importance & Cut Logic)")
+                    self.progress_dialog.footer.setText("Stage 2/5: Building Effect Plan (Keeping All Content)")
 
                 decisions = []
                 if hasattr(self.gui, "run_auto_recap_processing"):
@@ -506,7 +512,20 @@ class PipelineController:
                     output_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}_recap.mp4")
                     from app.services.auto_recap_engine import AutoRecapEngine
                     engine = AutoRecapEngine(getattr(self.gui, "auto_recap_config", None))
-                    if engine.render_recap_video_1pass(video_path, output_path, decisions):
+                    timeline_clips = self.gui.get_timeline_video_clips(existing_only=True) if hasattr(self.gui, "get_timeline_video_clips") else []
+                    timeline_recap_required = bool(
+                        len(timeline_clips) > 1
+                        or (
+                            timeline_clips
+                            and float(timeline_clips[0].get("source_start", 0.0) or 0.0) > 0.01
+                        )
+                    )
+                    rendered = (
+                        engine.render_timeline_recap_1pass(timeline_clips, output_path, decisions)
+                        if timeline_recap_required
+                        else engine.render_recap_video_1pass(video_path, output_path, decisions)
+                    )
+                    if rendered:
                         self.gui.last_recap_video_path = output_path
                         if hasattr(self.gui, "persist_auto_recap_project_data"):
                             self.gui.persist_auto_recap_project_data(decisions, output_path)
@@ -627,6 +646,11 @@ class PipelineController:
             self.gui._pipeline_step = "preview"
             if self.progress_dialog and self.progress_dialog.isVisible():
                 self.progress_dialog.start_step("preview")
+            timeline_clips = self.gui.get_timeline_video_clips(existing_only=True) if hasattr(self.gui, "get_timeline_video_clips") else []
+            if len(timeline_clips) > 1:
+                self.gui.log("[Pipeline] Multi-video V1 preview is live; continuing to one-pass Timeline export.")
+                self.pipeline_advance("preview")
+                return
             try:
                 self.gui.log("[Pipeline] Voiceover complete. Preparing video preview.")
                 self.gui.preview_video()
@@ -683,3 +707,13 @@ class PipelineController:
             self.gui.progress_bar.setRange(0, 100)
             self.gui.progress_bar.setValue(100)
         self.gui.refresh_ui_state()
+        should_auto_export = (
+            getattr(self, "target_stage", "") == "full"
+            and not getattr(self, "_generate_export_started", False)
+            and not (hasattr(self.gui, "is_auto_recap_enabled") and self.gui.is_auto_recap_enabled())
+        )
+        if should_auto_export:
+            self._generate_export_started = True
+            self.gui.log("[Pipeline] Generate complete; exporting the current V1 Timeline order.")
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self.gui.export_final_video(automatic=True))

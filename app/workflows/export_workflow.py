@@ -561,6 +561,7 @@ class ExportWorkflow:
         project_state_path: str = "",
         project_temp_dir: str = "",
         on_progress=None,
+        timeline_clips=None,
     ) -> str:
         subtitle_style = subtitle_style or {}
         target_w, target_h = self._resolve_target_dimensions(video_path, output_quality, output_ratio)
@@ -625,6 +626,55 @@ class ExportWorkflow:
                 pass
         text_image_layers = self._build_text_layer_images(text_layers, project_temp_dir, render_w or 1920, render_h or 1080)
         print(f"[Export] Extracted {len(mask_regions)} mask(s), {len(logo_layers)} logo(s), {len(text_layers)} text layer(s), {len(blur_regions)} blur(s)")
+
+        timeline_clips = [dict(clip) for clip in (timeline_clips or []) if isinstance(clip, dict)]
+        timeline_edit_required = len(timeline_clips) > 1
+        if len(timeline_clips) == 1:
+            clip = timeline_clips[0]
+            timeline_edit_required = float(clip.get("source_start", 0.0) or 0.0) > 0.01
+            if not timeline_edit_required:
+                try:
+                    from runtime_paths import bin_path, subprocess_text_kwargs
+                    import subprocess
+
+                    probe = subprocess.run(
+                        [str(bin_path("ffmpeg", "ffprobe.exe")), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(clip.get("source", ""))],
+                        capture_output=True, check=False, timeout=30, **subprocess_text_kwargs(),
+                    )
+                    media_duration = float((probe.stdout or "0").strip() or 0.0)
+                    timeline_edit_required = abs(media_duration - float(clip.get("source_duration", 0.0) or 0.0)) > 0.15
+                except Exception:
+                    timeline_edit_required = False
+        if timeline_edit_required:
+            try:
+                self._emit_progress(on_progress, 20, "Rendering V1 Timeline sequence in one pass...")
+                from services.timeline_sequence_export import export_timeline_sequence
+
+                result = export_timeline_sequence(
+                    timeline_clips,
+                    output_path,
+                    mode=mode,
+                    audio_path=audio_path,
+                    ass_path=ass_path,
+                    target_width=target_w,
+                    target_height=target_h,
+                    output_scale_mode=output_scale_mode,
+                    output_fill_focus_x=output_fill_focus_x,
+                    output_fill_focus_y=output_fill_focus_y,
+                    output_fps=target_fps,
+                    video_filter_state=video_filter_state,
+                    original_audio_gain_db=original_audio_gain_db,
+                    blur_regions=blur_regions,
+                    mask_regions=mask_regions,
+                    logo_layers=logo_layers,
+                    text_image_layers=text_image_layers,
+                )
+                self._mark_completed(state, result)
+                self._emit_progress(on_progress, 100, "Timeline export complete.")
+                return result
+            except Exception:
+                self._mark_failed(state)
+                raise
 
         tmp_mux_path = ""
         try:

@@ -1,6 +1,8 @@
 import os
 import concurrent.futures
 import hashlib
+import importlib.util
+import json
 import re
 import subprocess
 import time
@@ -33,6 +35,92 @@ class PrepareWorkflow:
         self.chunking_service = ChunkingService(workspace_root)
         self.segment_regroup_service = SegmentRegroupService()
         self.engine_runtime = EngineRuntime()
+
+    @staticmethod
+    def _timeline_signature(clips: list[dict]) -> str:
+        payload = []
+        for clip in clips or []:
+            source = os.path.abspath(str(clip.get("source", "") or ""))
+            try:
+                stat = os.stat(source)
+                identity = [stat.st_size, stat.st_mtime_ns]
+            except OSError:
+                identity = [0, 0]
+            payload.append({
+                "source": source,
+                "identity": identity,
+                "source_start": round(float(clip.get("source_start", 0.0) or 0.0), 6),
+                "source_duration": round(float(clip.get("source_duration", 0.0) or 0.0), 6),
+                "timeline_start": round(float(clip.get("timeline_start", 0.0) or 0.0), 6),
+                "speed": round(float(clip.get("speed", 1.0) or 1.0), 6),
+            })
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _atempo_chain(speed: float) -> str:
+        value = max(0.01, float(speed or 1.0))
+        factors = []
+        while value > 2.0:
+            factors.append(2.0)
+            value /= 2.0
+        while value < 0.5:
+            factors.append(0.5)
+            value /= 0.5
+        factors.append(value)
+        return ",".join(f"atempo={factor:.8f}" for factor in factors)
+
+    def _extract_timeline_audio(self, clips: list[dict], output_path: str) -> bool:
+        ffmpeg = str(bin_path("ffmpeg", "ffmpeg.exe"))
+        if not os.path.isfile(ffmpeg):
+            raise FileNotFoundError(f"FFmpeg not found: {ffmpeg}")
+        command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+        valid = []
+        for clip in clips or []:
+            source = os.path.abspath(str(clip.get("source", "") or ""))
+            duration = max(0.0, float(clip.get("source_duration", 0.0) or 0.0))
+            if os.path.isfile(source) and duration > 0.001:
+                command += ["-i", source]
+                valid.append(dict(clip, source=source))
+        if not valid:
+            return False
+        filters = []
+        labels = []
+        for index, clip in enumerate(valid):
+            source_start = max(0.0, float(clip.get("source_start", 0.0) or 0.0))
+            source_duration = max(0.001, float(clip.get("source_duration", 0.0) or 0.0))
+            speed = max(0.01, float(clip.get("speed", 1.0) or 1.0))
+            label = f"ta{index}"
+            probe = subprocess.run(
+                [str(bin_path("ffmpeg", "ffprobe.exe")), "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", clip["source"]],
+                capture_output=True, check=False, timeout=30,
+                **subprocess_text_kwargs(),
+            )
+            if bool((probe.stdout or "").strip()):
+                filters.append(
+                    f"[{index}:a]atrim=start={source_start:.6f}:duration={source_duration:.6f},"
+                    f"asetpts=PTS-STARTPTS,{self._atempo_chain(speed)},"
+                    f"aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono[{label}]"
+                )
+            else:
+                filters.append(
+                    f"anullsrc=r=16000:cl=mono,atrim=duration={source_duration / speed:.6f},"
+                    f"asetpts=PTS-STARTPTS[{label}]"
+                )
+            labels.append(f"[{label}]")
+        filters.append(f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1[timeline_audio]")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        command += [
+            "-filter_complex", ";".join(filters), "-map", "[timeline_audio]",
+            "-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1", output_path,
+        ]
+        result = subprocess.run(
+            command, capture_output=True, check=False, timeout=3600,
+            **subprocess_hidden_kwargs(),
+        )
+        if result.returncode != 0:
+            error = (result.stderr or b"").decode("utf-8", errors="replace") if isinstance(result.stderr, bytes) else str(result.stderr or "")
+            raise RuntimeError(f"Could not extract Timeline audio: {error[-1200:]}")
+        return os.path.isfile(output_path) and os.path.getsize(output_path) > 0
 
     def _prepare_asr_working_audio(self, audio_path: str, project_state) -> str:
         """Return a cached, gain-adjusted copy only when ASR input is quiet.
@@ -324,6 +412,7 @@ class PrepareWorkflow:
         prefetch_voice_name: str = "",
         prefetch_voice_speed: float = 1.0,
         step_callback=None,
+        timeline_clips: list[dict] | None = None,
     ) -> str:
         optimize_subtitles = False
         if step_callback: step_callback("prepare")
@@ -385,6 +474,13 @@ class PrepareWorkflow:
             input_language=source_language,
             target_language=target_language,
         )
+        timeline_clips = [dict(clip) for clip in (timeline_clips or []) if isinstance(clip, dict)]
+        # A single V1 clip can still be trimmed. Whenever a Timeline payload
+        # exists it is the canonical media range for transcription.
+        is_timeline_sequence = bool(timeline_clips)
+        if timeline_clips:
+            project_state.set_setting("timeline_video_clips", timeline_clips)
+            project_state.set_setting("timeline_video_signature", self._timeline_signature(timeline_clips))
         if is_sensevoice:
             project_state.set_setting("sensevoice_model", sensevoice_model_dir)
         else:
@@ -404,11 +500,14 @@ class PrepareWorkflow:
             audio_output_path = self.project_service.build_path(project_state, "source", "extracted_audio.wav")
             os.makedirs(os.path.dirname(audio_output_path), exist_ok=True)
             ffmpeg_bin = os.path.join(bin_path(), "ffmpeg", "ffmpeg.exe")
-            subprocess.run(
-                [ffmpeg_bin, "-y", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
-                 "-ar", "16000", "-ac", "1", audio_output_path],
-                capture_output=True, timeout=300, **subprocess_hidden_kwargs(),
-            )
+            if is_timeline_sequence:
+                self._extract_timeline_audio(timeline_clips, audio_output_path)
+            else:
+                subprocess.run(
+                    [ffmpeg_bin, "-y", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
+                     "-ar", "16000", "-ac", "1", audio_output_path],
+                    capture_output=True, timeout=300, **subprocess_hidden_kwargs(),
+                )
             project_state.set_artifact("extracted_audio", audio_output_path)
             project_state.set_step_status("extract_audio", "completed")
             self.project_service.save_project(project_state)
@@ -420,8 +519,14 @@ class PrepareWorkflow:
             project_state.set_step_status("transcribe", "running")
             self.project_service.save_project(project_state)
             ocr_region = (os.getenv("OCR_SUBTITLE_REGION") or "bottom").strip().lower()
-            ocr_signature = self.project_service.build_ocr_transcription_signature(
-                video_path, region=ocr_region,
+            ocr_signature = (
+                hashlib.sha256(
+                    f"timeline-ocr-v1|{self._timeline_signature(timeline_clips)}|{ocr_region}".encode("utf-8")
+                ).hexdigest()
+                if is_timeline_sequence
+                else self.project_service.build_ocr_transcription_signature(
+                    video_path, region=ocr_region,
+                )
             )
             cached_ocr_signature = str(project_state.settings.get("ocr_transcription_signature", "") or "")
             cached_raw_path = project_state.artifacts.get("transcript_raw", "")
@@ -439,7 +544,27 @@ class PrepareWorkflow:
                     raw_segments = [segment.to_original_subtitle_dict() for segment in segment_models]
                 print("[Prepare Workflow] Reusing cached OCR transcript. Generate did not scan the video again.")
             else:
-                raw_segments = self.engine_runtime.transcribe_video_ocr(video_path, region=ocr_region)
+                if is_timeline_sequence:
+                    raw_segments = []
+                    for clip in timeline_clips:
+                        clip_segments = self.engine_runtime.transcribe_video_ocr(
+                            str(clip.get("source", "")), region=ocr_region
+                        )
+                        source_start = float(clip.get("source_start", 0.0) or 0.0)
+                        source_end = source_start + float(clip.get("source_duration", 0.0) or 0.0)
+                        timeline_start = float(clip.get("timeline_start", 0.0) or 0.0)
+                        speed = max(0.01, float(clip.get("speed", 1.0) or 1.0))
+                        for segment in clip_segments or []:
+                            start = max(source_start, float(segment.get("start", 0.0) or 0.0))
+                            end = min(source_end, float(segment.get("end", 0.0) or 0.0))
+                            if end <= start:
+                                continue
+                            item = dict(segment)
+                            item["start"] = timeline_start + (start - source_start) / speed
+                            item["end"] = timeline_start + (end - source_start) / speed
+                            raw_segments.append(item)
+                else:
+                    raw_segments = self.engine_runtime.transcribe_video_ocr(video_path, region=ocr_region)
                 if not raw_segments:
                     project_state.set_step_status("transcribe", "failed")
                     self.project_service.save_project(project_state)
@@ -480,7 +605,11 @@ class PrepareWorkflow:
 
             # srt paths defined above
             srt_translated_path = self.project_service.build_path(project_state, "subtitle", "subtitle.srt")
-            extraction_signature = self.project_service.build_extraction_signature(video_path)
+            extraction_signature = (
+                self._timeline_signature(timeline_clips)
+                if is_timeline_sequence
+                else self.project_service.build_extraction_signature(video_path)
+            )
             cached_extraction_signature = str(project_state.settings.get("extraction_signature", "") or "").strip()
             cached_extracted_audio = project_state.artifacts.get("extracted_audio", "")
 
@@ -498,7 +627,12 @@ class PrepareWorkflow:
                 audio_output_path = cached_extracted_audio
                 print(f"[Prepare Workflow] Reusing cached extracted audio: {audio_output_path}")
             else:
-                if not self.engine_runtime.extract_audio(video_path, audio_output_path):
+                extracted = (
+                    self._extract_timeline_audio(timeline_clips, audio_output_path)
+                    if is_timeline_sequence
+                    else self.engine_runtime.extract_audio(video_path, audio_output_path)
+                )
+                if not extracted:
                     project_state.set_step_status("extract_audio", "failed")
                     self.project_service.save_project(project_state)
                     raise RuntimeError("Audio extraction failed.")
@@ -724,9 +858,7 @@ class PrepareWorkflow:
                 print(f"[ASR] Working audio duration: {audio_duration:.2f}s")
                 if is_sensevoice:
                     print("[ASR] Using SenseVoice single-pass transcription with Silero VAD.")
-                    try:
-                        import sherpa_onnx
-                    except ImportError:
+                    if importlib.util.find_spec("sherpa_onnx") is None:
                         raise RuntimeError("sherpa-onnx is not installed. Run: pip install sherpa-onnx")
                     raw_segments = self.engine_runtime.transcribe_audio_sensevoice(
                         working_audio_path,

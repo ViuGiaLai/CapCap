@@ -409,12 +409,13 @@ class ResourceDownloadWorker(QThread):
 class TimelineWaveformWorker(QThread):
     finished = Signal(object, object, float, str)
 
-    def __init__(self, request_signature, video_path, audio_path, temp_audio_path):
+    def __init__(self, request_signature, video_path, audio_path, temp_audio_path, timeline_clips=None):
         super().__init__()
         self.request_signature = request_signature
         self.video_path = str(video_path or "").strip()
         self.audio_path = str(audio_path or "").strip()
         self.temp_audio_path = str(temp_audio_path or "").strip()
+        self.timeline_clips = [dict(clip) for clip in (timeline_clips or [])]
 
     def run(self):
         try:
@@ -424,27 +425,31 @@ class TimelineWaveformWorker(QThread):
                 if temp_audio and not os.path.exists(temp_audio):
                     os.makedirs(os.path.dirname(temp_audio), exist_ok=True)
                     ffmpeg = os.path.join(bin_path("ffmpeg"), "ffmpeg.exe")
-                    subprocess.run(
-                        [
-                            ffmpeg,
-                            "-y",
-                            "-loglevel",
-                            "error",
-                            "-i",
-                            self.video_path,
-                            "-vn",
-                            "-acodec",
-                            "pcm_s16le",
-                            "-ar",
-                            "16000",
-                            "-ac",
-                            "1",
-                            temp_audio,
-                        ],
-                        check=True,
-                        timeout=60,
-                        **subprocess_hidden_kwargs(),
-                    )
+                    if len(self.timeline_clips) > 1:
+                        from audio_mixer import _build_atempo_filter
+
+                        command = [ffmpeg, "-y", "-loglevel", "error"]
+                        filters, labels = [], []
+                        for index, clip in enumerate(self.timeline_clips):
+                            command += ["-i", str(clip["source"])]
+                            start = max(0.0, float(clip.get("source_start", 0.0) or 0.0))
+                            duration = max(0.001, float(clip.get("source_duration", 0.0) or 0.0))
+                            speed = max(0.01, float(clip.get("speed", 1.0) or 1.0))
+                            label = f"wa{index}"
+                            filters.append(
+                                f"[{index}:a]atrim=start={start:.6f}:duration={duration:.6f},"
+                                f"asetpts=PTS-STARTPTS,{_build_atempo_filter(speed)},aresample=16000,"
+                                f"aformat=sample_fmts=s16:channel_layouts=mono[{label}]"
+                            )
+                            labels.append(f"[{label}]")
+                        filters.append(f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1[wave]")
+                        command += ["-filter_complex", ";".join(filters), "-map", "[wave]", "-c:a", "pcm_s16le", temp_audio]
+                    else:
+                        command = [
+                            ffmpeg, "-y", "-loglevel", "error", "-i", self.video_path,
+                            "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", temp_audio,
+                        ]
+                    subprocess.run(command, check=True, timeout=300, **subprocess_hidden_kwargs())
                 if temp_audio and os.path.exists(temp_audio):
                     audio_path = temp_audio
 
@@ -502,12 +507,13 @@ class TimelineWaveformWorker(QThread):
 class TimelineThumbnailWorker(QThread):
     finished = Signal(object, object, str)
 
-    def __init__(self, request_signature, video_path, duration_s, thumb_dir):
+    def __init__(self, request_signature, video_path, duration_s, thumb_dir, timeline_clips=None):
         super().__init__()
         self.request_signature = request_signature
         self.video_path = str(video_path or "").strip()
         self.duration_s = max(0.0, float(duration_s or 0.0))
         self.thumb_dir = str(thumb_dir or "").strip()
+        self.timeline_clips = [dict(clip) for clip in (timeline_clips or [])]
 
     def run(self):
         try:
@@ -560,17 +566,32 @@ class TimelineThumbnailWorker(QThread):
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+            requests = []
+            if len(self.timeline_clips) > 1:
+                for clip in self.timeline_clips:
+                    clip_duration = max(0.0, float(clip.get("timeline_end", 0.0)) - float(clip.get("timeline_start", 0.0)))
+                    count = max(1, min(24, int(math.ceil(clip_duration / max(2.0, interval_s)))))
+                    for part in range(count):
+                        offset = min(max(0.0, clip_duration - 0.05), part * clip_duration / count)
+                        requests.append((
+                            str(clip.get("source", "") or ""),
+                            float(clip.get("source_start", 0.0) or 0.0) + offset * max(0.01, float(clip.get("speed", 1.0) or 1.0)),
+                            float(clip.get("timeline_start", 0.0) or 0.0) + offset,
+                        ))
+            else:
+                requests = [(self.video_path, timestamp, timestamp) for timestamp in timestamps]
+
             thumbnails = []
-            for idx, timestamp_s in enumerate(timestamps):
+            for idx, (source_path, source_timestamp, timeline_timestamp) in enumerate(requests):
                 output_path = os.path.join(self.thumb_dir, f"{digest}_{idx:02d}.jpg")
                 if not os.path.exists(output_path):
                     cmd = [
                         ffmpeg_path,
                         "-y",
                         "-ss",
-                        f"{timestamp_s:.3f}",
+                        f"{source_timestamp:.3f}",
                         "-i",
-                        self.video_path,
+                        source_path,
                         "-frames:v",
                         "1",
                         "-q:v",
@@ -592,7 +613,7 @@ class TimelineThumbnailWorker(QThread):
                     except Exception:
                         continue
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    thumbnails.append((float(timestamp_s), output_path))
+                    thumbnails.append((float(timeline_timestamp), output_path))
 
             self.finished.emit(self.request_signature, thumbnails, "")
         except Exception as exc:
@@ -625,6 +646,7 @@ class PrepareWorkflowWorker(QThread):
         remote_api_url="",
         remote_api_token="",
         force_remote_api=False,
+        timeline_clips=None,
     ):
         super().__init__()
         self.workspace_root = workspace_root
@@ -646,6 +668,7 @@ class PrepareWorkflowWorker(QThread):
         self.remote_api_url = str(remote_api_url or "").strip()
         self.remote_api_token = str(remote_api_token or "").strip()
         self.force_remote_api = bool(force_remote_api)
+        self.timeline_clips = [dict(clip) for clip in (timeline_clips or [])]
 
     def run(self):
         try:
@@ -678,6 +701,7 @@ class PrepareWorkflowWorker(QThread):
                             "skip_translation": self.skip_translation,
                             "prefetch_voice_name": self.prefetch_voice_name,
                             "prefetch_voice_speed": self.prefetch_voice_speed,
+                            "timeline_clips": self.timeline_clips,
                         },
                         timeout=3600,
                         retries=1 if self.force_remote_api else 3,
@@ -712,6 +736,7 @@ class PrepareWorkflowWorker(QThread):
                     prefetch_voice_name=self.prefetch_voice_name,
                     prefetch_voice_speed=self.prefetch_voice_speed,
                     step_callback=self.step_started.emit,
+                    timeline_clips=self.timeline_clips,
                 )
                 state_path = os.path.join(project_state.project_root, "project.json")
                 self.finished.emit(state_path, "")
@@ -812,7 +837,7 @@ class FinalExportWorker(QThread):
     finished = Signal(str, str)
     progress = Signal(int, str)
 
-    def __init__(self, workspace_root, video_path, output_path, mode, srt_path="", ass_path="", audio_path="", subtitle_style=None, output_quality="source", output_fps="source", output_ratio="source", output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, video_filter_state=None, original_audio_gain_db=0.0, project_state_path="", project_temp_dir=""):
+    def __init__(self, workspace_root, video_path, output_path, mode, srt_path="", ass_path="", audio_path="", subtitle_style=None, output_quality="source", output_fps="source", output_ratio="source", output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, video_filter_state=None, original_audio_gain_db=0.0, project_state_path="", project_temp_dir="", timeline_clips=None):
         super().__init__()
         self.workspace_root = workspace_root
         self.video_path = video_path
@@ -832,6 +857,7 @@ class FinalExportWorker(QThread):
         self.original_audio_gain_db = float(original_audio_gain_db or 0.0)
         self.project_state_path = project_state_path
         self.project_temp_dir = project_temp_dir
+        self.timeline_clips = [dict(clip) for clip in (timeline_clips or [])]
 
     def run(self):
         try:
@@ -860,6 +886,7 @@ class FinalExportWorker(QThread):
                         "original_audio_gain_db": self.original_audio_gain_db,
                         "project_state_path": self.project_state_path,
                         "project_temp_dir": self.project_temp_dir,
+                        "timeline_clips": self.timeline_clips,
                     },
                     timeout=3600,
                 )
@@ -887,6 +914,7 @@ class FinalExportWorker(QThread):
                     project_state_path=self.project_state_path,
                     project_temp_dir=self.project_temp_dir,
                     on_progress=self.progress.emit,
+                    timeline_clips=self.timeline_clips,
                 )
                 self.finished.emit(output_path, "")
         except Exception as exc:

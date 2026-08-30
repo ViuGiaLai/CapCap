@@ -1147,15 +1147,34 @@ class PipelineLifecycleMixin:
 
     def stop_video(self):
         stop_video_impl(self)
+        clips = self.get_timeline_video_clips() if hasattr(self, "get_timeline_video_clips") else []
+        if len(clips) > 1:
+            self.seek_timeline_video(0.0)
 
     def position_changed(self, position):
+        if hasattr(self, "handle_sequence_position_changed"):
+            try:
+                if self.handle_sequence_position_changed(position):
+                    return
+            except Exception as exc:
+                self.log(f"[Timeline Preview] sequence position error: {exc}")
         position_changed_impl(self, position)
 
     def duration_changed(self, duration):
+        clips = self.get_timeline_video_clips() if hasattr(self, "get_timeline_video_clips") else []
+        if len(clips) > 1:
+            total_ms = int(float(clips[-1]["timeline_end"]) * 1000)
+            self.timeline.set_duration(total_ms)
+            self.update_duration_label(int(getattr(self, "_timeline_global_position_ms", 0)), total_ms)
+            return
         duration_changed_impl(self, duration)
         self.schedule_timeline_visual_refresh(waveform=False, thumbnails=True)
 
     def set_position(self, position):
+        clips = self.get_timeline_video_clips() if hasattr(self, "get_timeline_video_clips") else []
+        if len(clips) > 1:
+            self.seek_timeline_video(float(position) / 1000.0)
+            return
         set_position_impl(self, position)
 
     def update_duration_label(self, current, total):

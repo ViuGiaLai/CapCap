@@ -345,6 +345,7 @@ class CapCapRemoteHandler(BaseHTTPRequestHandler):
                 prefetch_voice_name=str(payload.get("prefetch_voice_name", "") or ""),
                 prefetch_voice_speed=float(payload.get("prefetch_voice_speed", 1.0) or 1.0),
                 step_callback=step_callback,
+                timeline_clips=list(payload.get("timeline_clips") or []),
             )
             _set_status("done", "Prepare complete")
             return {"ok": True, "project_state_path": runtime.project_state_path(state)}
@@ -398,6 +399,7 @@ class CapCapRemoteHandler(BaseHTTPRequestHandler):
             original_audio_gain_db=float(payload.get("original_audio_gain_db", 0.0) or 0.0),
             project_state_path=str(payload.get("project_state_path", "") or ""),
             project_temp_dir=str(payload.get("project_temp_dir", "") or ""),
+            timeline_clips=list(payload.get("timeline_clips") or []),
         )
         return {"ok": True, "output_path": output}
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import math
 import os
 import re
@@ -40,10 +39,12 @@ class ShotDecision:
     end_time: float
     duration: float
     importance_score: float  # 0.0 to 100.0
-    action_type: str  # "KEEP", "TRIM", "CUT"
+    action_type: str  # Always "KEEP"; scene cuts are effect boundaries only.
     zoom_scale: float = 1.0  # 1.0, 1.05, 1.10, 1.15
+    zoom_direction: str = "none"  # "in", "out", "none"
     pan_direction: str = "none"  # "left_right", "right_left", "top_bottom", "bottom_top", "none"
     crop_mode: str = "none"  # "speaker", "main_character", "object", "wide", "none"
+    position_shift: str = "center"  # "left", "right", "up", "down", "center"
     speed: float = 1.0  # 1.0, 1.15, 0.90
     freeze_duration: float = 0.0  # 0.3s - 0.6s
     horizontal_flip: bool = False
@@ -70,8 +71,10 @@ class ShotDecision:
             "importance_score": round(self.importance_score, 1),
             "action_type": self.action_type,
             "zoom_scale": self.zoom_scale,
+            "zoom_direction": self.zoom_direction,
             "pan_direction": self.pan_direction,
             "crop_mode": self.crop_mode,
+            "position_shift": self.position_shift,
             "speed": self.speed,
             "freeze_duration": round(self.freeze_duration, 2),
             "horizontal_flip": self.horizontal_flip,
@@ -133,53 +136,100 @@ class AutoRecapEngine:
         return shutil.which(name) or name
 
     def detect_scenes_ffmpeg(self, video_path: str, threshold: float = 0.3) -> List[Dict[str, Any]]:
-        """Detects actual scene cut timestamps using FFmpeg scene filter."""
+        """Detect effect-shot boundaries while preserving the full source timeline."""
         if not video_path or not os.path.exists(video_path):
             return []
-        
-        scenes = []
+
         try:
             cmd = [
                 self._media_tool_path("ffmpeg"), "-hide_banner", "-nostats", "-i", video_path,
                 "-filter_complex", f"select='gt(scene,{threshold})',metadata=print:file=-",
-                "-f", "null", "-"
+                "-f", "null", "-",
             ]
-            process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+            process = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+            )
             matches = re.findall(r"pts_time:([\d\.]+)", process.stdout)
-            
-            timestamps = [0.0] + [float(m) for m in matches]
-            # Get video duration for final scene boundary
-            dur_cmd = [self._media_tool_path("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path]
-            try:
-                dur_res = subprocess.run(dur_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
-                total_dur = float(dur_res.stdout.strip())
-                if total_dur > timestamps[-1] + 1.0:
-                    timestamps.append(total_dur)
-            except Exception:
-                pass
 
-            # Fallback: if no scene cuts detected (e.g. single continuous video), chunk into 3.5-second shots
-            if len(timestamps) <= 2:
-                total_dur = timestamps[-1] if len(timestamps) > 1 else 30.0
-                step = min(3.5, max(0.5, float(self.config.max_shot_duration)))
-                timestamps = [0.0]
-                boundary = step
-                while boundary < total_dur:
-                    timestamps.append(round(boundary, 2))
-                    boundary += step
-                if total_dur > 0:
-                    timestamps.append(round(total_dur, 2))
+            dur_cmd = [
+                self._media_tool_path("ffprobe"), "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                video_path,
+            ]
+            dur_res = subprocess.run(
+                dur_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+            )
+            total_dur = float(dur_res.stdout.strip())
+            if not math.isfinite(total_dur) or total_dur <= 0:
+                return []
 
-            for i in range(len(timestamps) - 1):
-                scenes.append({
-                    "start": timestamps[i],
-                    "end": timestamps[i+1],
+            timestamps = [0.0]
+            timestamps.extend(float(value) for value in matches if 0.0 < float(value) < total_dur)
+            timestamps.append(total_dur)
+            timestamps = sorted(set(round(value, 3) for value in timestamps))
+
+            # Scene cuts are only effect boundaries. Subdivide long scenes but
+            # retain every interval from 0 through the exact source duration.
+            max_duration = max(1.0, float(self.config.max_shot_duration))
+            boundaries = [timestamps[0]]
+            for end_boundary in timestamps[1:]:
+                boundary = boundaries[-1] + max_duration
+                while boundary < end_boundary - 0.001:
+                    boundaries.append(round(boundary, 3))
+                    boundary += max_duration
+                if end_boundary > boundaries[-1]:
+                    boundaries.append(end_boundary)
+
+            return [
+                {
+                    "start": boundaries[index],
+                    "end": boundaries[index + 1],
                     "text": "",
-                    "source_clip_id": f"scene_{i}"
-                })
+                    "source_clip_id": f"scene_{index}",
+                    "is_scene_cut": True,
+                }
+                for index in range(len(boundaries) - 1)
+            ]
         except Exception:
-            pass
-        return scenes
+            return []
+
+    @staticmethod
+    def apply_subtitles_to_scenes(
+        scenes: List[Dict[str, Any]],
+        segments: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Add subtitle context to scene shots without changing their boundaries."""
+        enriched: List[Dict[str, Any]] = []
+        for scene in list(scenes or []):
+            item = dict(scene)
+            scene_start = float(item.get("start", 0.0))
+            scene_end = float(item.get("end", scene_start))
+            texts: List[str] = []
+            for segment in list(segments or []):
+                segment_start = float(segment.get("start", segment.get("start_time", 0.0)))
+                segment_end = float(segment.get("end", segment.get("end_time", segment_start)))
+                if segment_start >= scene_end or segment_end <= scene_start:
+                    continue
+                text = str(
+                    segment.get("text")
+                    or segment.get("final_text")
+                    or segment.get("subtitle_vi")
+                    or ""
+                ).strip()
+                if text and text not in texts:
+                    texts.append(text)
+            item["text"] = " ".join(texts)
+            enriched.append(item)
+        return enriched
 
     def check_safety_blacklist(self, text: str, has_logo: bool = False, has_hard_sub: bool = False) -> bool:
         """Rule 8 Safety Check: UNSAFE or UNKNOWN -> Don't Flip (Strict Conservative Safety)."""
@@ -247,19 +297,14 @@ class AutoRecapEngine:
         has_hard_sub: bool = False,
     ) -> ShotDecision:
         """Applies the 12 Core Rules to produce a ShotDecision."""
-        duration = max(0.1, end_time - start_time)
+        duration = max(0.001, end_time - start_time)
 
         importance = self.calculate_importance_score(segment_text, duration, is_scene_cut)
 
-        if importance < 25.0 and duration > self.config.max_shot_duration:
-            action_type = "TRIM"
-            effective_duration = min(duration, 3.5)
-        elif importance < 15.0:
-            action_type = "CUT"
-            effective_duration = 0.0
-        else:
-            action_type = "KEEP"
-            effective_duration = duration
+        # Auto Edit Recap never removes source content. A scene "cut" is only
+        # a shot boundary where effects may change, never a CUT/TRIM decision.
+        action_type = "KEEP"
+        effective_duration = duration
 
         words_count = len(segment_text.split())
         is_long_subtitle = words_count > 12
@@ -268,6 +313,12 @@ class AutoRecapEngine:
         keep_original = duration < max(0.6, self.config.min_shot_duration)
 
         zoom_scale = 1.0
+        zoom_direction = "none"
+        pan_direction = "none"
+        crop_mode = "none"
+        position_shift = "center"
+        motion_slot = shot_index % 8
+
         if self.config.allow_smart_zoom and not keep_original and effective_duration >= 1.2:
             style = str(self.config.editing_style or "Balanced").strip().lower()
             style_zooms = {
@@ -291,24 +342,43 @@ class AutoRecapEngine:
                 zoom_scale = min(important_zoom, max_zoom)
             elif importance >= 35.0:
                 zoom_scale = min(normal_zoom, max_zoom)
+            # Deterministic motion scheduling is fast and guarantees alternating
+            # directions instead of repeating the same zoom on adjacent shots.
+            if is_long_subtitle:
+                zoom_direction = "in" if motion_slot % 2 == 0 else "out"
+            elif motion_slot == 0:
+                zoom_direction = "in"
+            elif motion_slot == 1:
+                zoom_direction = "out"
+            elif motion_slot in (4, 5):
+                crop_mode = "main_character" if motion_slot == 4 else "speaker"
+                position_shift = "left" if (shot_index // 8) % 2 == 0 else "right"
+            elif motion_slot == 6:
+                crop_mode = "object"
+                position_shift = "up" if (shot_index // 8) % 2 == 0 else "down"
 
-        if self.config.cooldown_shots > 0:
-            recent_zooms = [e for e in self._last_effects[-self.config.cooldown_shots:] if "zoom" in e]
-            if len(recent_zooms) >= self.config.cooldown_shots:
+        if (
+            self.config.allow_pan_reframe
+            and not keep_original
+            and effective_duration >= 2.0
+            and not is_long_subtitle
+        ):
+            if motion_slot == 2:
+                pan_direction = "left_right" if (shot_index // 8) % 2 == 0 else "right_left"
+                zoom_scale = 1.0
+            elif motion_slot == 3:
+                pan_direction = "top_bottom" if (shot_index // 8) % 2 == 0 else "bottom_top"
                 zoom_scale = 1.0
 
-        pan_direction = "none"
-        if self.config.allow_pan_reframe and not keep_original and zoom_scale <= 1.05 and effective_duration >= 2.0 and not is_long_subtitle:
-            directions = ["left_right", "right_left", "top_bottom", "bottom_top"]
-            h = int(hashlib.md5(f"{shot_index}_{importance:.0f}".encode()).hexdigest(), 16)
-            pan_direction = directions[h % len(directions)]
+        if zoom_direction == "none" and pan_direction == "none" and crop_mode == "none":
+            zoom_scale = 1.0
 
         speed = 1.0
         if self.config.allow_speed_change and not keep_original:
             if importance >= 85.0 and effective_duration >= 2.0:
                 speed = 0.90
-            elif importance < 35.0 and effective_duration > 4.0:
-                speed = 1.15
+            elif importance <= 40.0 and effective_duration > 4.0:
+                speed = 1.10 if shot_index % 2 == 0 else 1.15
 
         freeze_duration = 0.0
         if self.config.allow_freeze_frame and importance >= 85.0 and effective_duration >= 3.0 and not keep_original:
@@ -318,19 +388,20 @@ class AutoRecapEngine:
         reuse_info = self.reuse_manager.get_reuse_strategy(source_clip_id, is_safe_for_flip)
 
         horizontal_flip = False
-        crop_mode = "none"
         if self.config.allow_horizontal_flip and reuse_info.get("flip", False) and is_safe_for_flip:
             horizontal_flip = True
-        if reuse_info.get("crop", "none") != "none":
+        if crop_mode == "none" and reuse_info.get("crop", "none") != "none":
             crop_mode = reuse_info["crop"]
 
         audio_ducking = bool(segment_text.strip())
 
         effect_name = "static"
-        if zoom_scale > 1.0:
-            effect_name = f"zoom_{zoom_scale}"
+        if zoom_direction != "none":
+            effect_name = f"zoom_{zoom_direction}_{zoom_scale}"
         elif pan_direction != "none":
             effect_name = f"pan_{pan_direction}"
+        elif crop_mode != "none":
+            effect_name = f"crop_{crop_mode}_{position_shift}"
         self._last_effects.append(effect_name)
 
         notes = f"Score: {importance:.0f} | {reuse_info.get('note', '')}"
@@ -345,8 +416,10 @@ class AutoRecapEngine:
             importance_score=importance,
             action_type=action_type,
             zoom_scale=zoom_scale,
+            zoom_direction=zoom_direction,
             pan_direction=pan_direction,
             crop_mode=crop_mode,
+            position_shift=position_shift,
             speed=speed,
             freeze_duration=freeze_duration,
             horizontal_flip=horizontal_flip,
@@ -394,8 +467,7 @@ class AutoRecapEngine:
                 has_logo=has_logo,
                 has_hard_sub=has_hard_sub,
             )
-            if decision.action_type != "CUT":
-                decisions.append(decision)
+            decisions.append(decision)
 
         return decisions
 
@@ -405,6 +477,8 @@ class AutoRecapEngine:
         has_voiceover: bool = False,
         has_bg_music: bool = False,
         has_audio: bool = True,
+        output_width: int = 1280,
+        output_height: int = 720,
     ) -> tuple[str, List[str]]:
         """Converts EDL decisions into a 1-Pass FFmpeg complex filtergraph without temp files.
 
@@ -429,7 +503,11 @@ class AutoRecapEngine:
                 end = start + d.duration
 
             # Video filter chain for shot idx
-            v_filters = [f"trim=start={start:.2f}:end={end:.2f}", "setpts=PTS-STARTPTS"]
+            v_filters = [
+                f"trim=start={start:.2f}:end={end:.2f}",
+                "fps=30",
+                "setpts=PTS-STARTPTS",
+            ]
             a_filters = [f"atrim=start={start:.2f}:end={end:.2f}", "asetpts=PTS-STARTPTS"]
 
             if d.horizontal_flip:
@@ -446,27 +524,59 @@ class AutoRecapEngine:
                     v_filters.append(f"scale=iw*1.15:ih*1.15,crop=w=iw/1.15:h=ih/1.15:x='(iw-ow)/2':y='(ih-oh)*t/{dur:.2f}'")
                 elif p == "bottom_top":
                     v_filters.append(f"scale=iw*1.15:ih*1.15,crop=w=iw/1.15:h=ih/1.15:x='(iw-ow)/2':y='(ih-oh)*(1-t/{dur:.2f})'")
-            elif d.crop_mode != "none":
-                if d.crop_mode == "speaker":
-                    v_filters.append("scale=iw*1.20:ih*1.20,crop=w=iw/1.20:h=ih/1.20:x='(iw-ow)/2':y='(ih-oh)/3'")
+            elif d.zoom_direction in {"in", "out"} and d.zoom_scale > 1.0:
+                z = float(d.zoom_scale)
+                dur = max(0.2, d.duration if d.duration > 0 else (d.end_time - d.start_time))
+                step = max(0.00001, (z - 1.0) / max(1.0, dur * 30.0))
+                if d.zoom_direction == "out":
+                    zoom_expr = f"if(eq(in,0),{z:.4f},max(1.0,pzoom-{step:.6f}))"
                 else:
-                    v_filters.append("scale=iw*1.15:ih*1.15,crop=w=iw/1.15:h=ih/1.15:x='(iw-ow)/2':y='(ih-oh)/2'")
+                    zoom_expr = f"if(eq(in,0),1.0,min({z:.4f},pzoom+{step:.6f}))"
+                shift = str(getattr(d, "position_shift", "center") or "center")
+                x_expr = {
+                    "left": "0",
+                    "right": "iw-iw/zoom",
+                }.get(shift, "iw/2-(iw/zoom/2)")
+                y_expr = {
+                    "up": "0",
+                    "down": "ih-ih/zoom",
+                }.get(shift, "ih/2-(ih/zoom/2)")
+                v_filters.append(
+                    f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d=1:"
+                    f"s={int(output_width)}x{int(output_height)}:fps=30"
+                )
+            elif d.crop_mode != "none":
+                scale = 1.20 if d.crop_mode == "speaker" else 1.15
+                shift = str(getattr(d, "position_shift", "center") or "center")
+                x_expr = {"left": "0", "right": "iw-ow"}.get(shift, "(iw-ow)/2")
+                default_y = "(ih-oh)/3" if d.crop_mode == "speaker" else "(ih-oh)/2"
+                y_expr = {"up": "0", "down": "ih-oh"}.get(shift, default_y)
+                v_filters.append(
+                    f"scale=iw*{scale:.2f}:ih*{scale:.2f},"
+                    f"crop=w=iw/{scale:.2f}:h=ih/{scale:.2f}:x='{x_expr}':y='{y_expr}'"
+                )
             elif d.zoom_scale > 1.0:
                 z = d.zoom_scale
                 v_filters.append(f"scale=iw*{z:.2f}:ih*{z:.2f},crop=w=iw/{z:.2f}:h=ih/{z:.2f}:x='(iw-ow)/2':y='(ih-oh)/2'")
+
+            if d.freeze_duration > 0:
+                # Pad before retiming. Padding after ``setpts`` starts from the
+                # old duration metadata and overlaps the slowed video PTS,
+                # causing FFmpeg to discard most of the visible freeze. Scale
+                # the pre-retime padding so its output duration stays exact.
+                speed = d.speed if d.speed > 0 else 1.0
+                freeze_frames = max(1, int(round(d.freeze_duration * speed * 30.0)))
+                v_filters.append(f"tpad=stop_mode=clone:stop={freeze_frames}")
+                if has_audio:
+                    a_filters.append(f"apad=pad_dur={d.freeze_duration * speed:.4f}")
 
             if d.speed != 1.0 and d.speed > 0:
                 v_filters.append(f"setpts=PTS/{d.speed:.2f}")
                 if has_audio:
                     a_filters.append(f"atempo={d.speed:.2f}")
 
-            if d.freeze_duration > 0:
-                v_filters.append(f"tpad=stop_mode=clone:stop_duration={d.freeze_duration:.2f}")
-                if has_audio:
-                    a_filters.append(f"apad=pad_dur={d.freeze_duration:.2f}")
-
             # Normalize dimensions for concat
-            v_filters.append("scale=1280:720,setsar=1")
+            v_filters.append(f"scale={int(output_width)}:{int(output_height)},setsar=1")
 
             filter_chains.append(f"[0:v]{','.join(v_filters)}[{v_out}]")
             v_labels.append(f"[{v_out}]")
@@ -507,6 +617,31 @@ class AutoRecapEngine:
         except (OSError, subprocess.SubprocessError):
             return False
 
+    @staticmethod
+    def _input_video_size(input_video_path: str) -> tuple[int, int]:
+        cmd = [
+            AutoRecapEngine._media_tool_path("ffprobe"),
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            input_video_path,
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=10,
+            )
+            width_text, height_text = result.stdout.strip().lower().split("x", 1)
+            width = max(2, int(width_text))
+            height = max(2, int(height_text))
+            return width - (width % 2), height - (height % 2)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return 1280, 720
+
     def prepare_audio_ducking(
         self,
         decisions: List[ShotDecision],
@@ -545,7 +680,13 @@ class AutoRecapEngine:
             return False
 
         has_audio = self._input_has_audio(input_video_path)
-        filtergraph, maps = self.build_ffmpeg_filtergraph(decisions, has_audio=has_audio)
+        output_width, output_height = self._input_video_size(input_video_path)
+        filtergraph, maps = self.build_ffmpeg_filtergraph(
+            decisions,
+            has_audio=has_audio,
+            output_width=output_width,
+            output_height=output_height,
+        )
         if not filtergraph or not maps:
             return False
         output_dir = os.path.dirname(os.path.abspath(output_video_path))
@@ -617,3 +758,53 @@ class AutoRecapEngine:
                         os.remove(temporary_path)
                 except OSError:
                     pass
+
+    def render_timeline_recap_1pass(
+        self,
+        timeline_clips: List[Dict[str, Any]],
+        output_video_path: str,
+        decisions: List[ShotDecision],
+    ) -> bool:
+        """Render recap decisions against global V1 time from multiple source files."""
+        self.last_render_error = ""
+        render_clips = []
+        cursor = 0.0
+        for decision in decisions or []:
+            if decision.action_type == "CUT" or decision.end_time <= decision.start_time:
+                continue
+            for source_clip in timeline_clips or []:
+                clip_start = float(source_clip.get("timeline_start", 0.0) or 0.0)
+                clip_end = float(source_clip.get("timeline_end", clip_start) or clip_start)
+                overlap_start = max(float(decision.start_time), clip_start)
+                overlap_end = min(float(decision.end_time), clip_end)
+                if overlap_end <= overlap_start:
+                    continue
+                source_speed = max(0.01, float(source_clip.get("speed", 1.0) or 1.0))
+                recap_speed = max(0.01, float(decision.speed or 1.0))
+                source_start = float(source_clip.get("source_start", 0.0) or 0.0) + (
+                    overlap_start - clip_start
+                ) * source_speed
+                source_duration = (overlap_end - overlap_start) * source_speed
+                output_duration = source_duration / (source_speed * recap_speed)
+                render_clips.append({
+                    "source": str(source_clip.get("source", "") or ""),
+                    "source_start": source_start,
+                    "source_duration": source_duration,
+                    "timeline_start": cursor,
+                    "timeline_end": cursor + output_duration,
+                    "speed": source_speed * recap_speed,
+                    "muted": bool(source_clip.get("muted", False)),
+                    "volume": float(source_clip.get("volume", 1.0) or 1.0),
+                })
+                cursor += output_duration
+        if not render_clips:
+            self.last_render_error = "Auto Recap decisions do not overlap any V1 clips."
+            return False
+        try:
+            from app.services.timeline_sequence_export import export_timeline_sequence
+
+            export_timeline_sequence(render_clips, output_video_path, mode="subtitle")
+            return True
+        except Exception as exc:
+            self.last_render_error = str(exc)
+            return False

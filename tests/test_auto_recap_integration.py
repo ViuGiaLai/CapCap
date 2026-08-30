@@ -23,6 +23,12 @@ class TestAutoRecapIntegration(unittest.TestCase):
                 self.skipTest("FFmpeg is not available in environment.")
 
             engine = AutoRecapEngine(AutoRecapConfig())
+            scenes = engine.detect_scenes_ffmpeg(input_video)
+            self.assertGreater(len(scenes), 0)
+            self.assertAlmostEqual(scenes[0]["start"], 0.0, places=2)
+            self.assertAlmostEqual(scenes[-1]["end"], 4.0, places=1)
+            for left, right in zip(scenes, scenes[1:]):
+                self.assertAlmostEqual(left["end"], right["start"], places=3)
             segments = [
                 {"start": 0.0, "end": 2.0, "text": "Cảnh quay quan trọng thứ nhất!"},
                 {"start": 2.0, "end": 4.0, "text": "Bí mật bứt phá thành công!"},

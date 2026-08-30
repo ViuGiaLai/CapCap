@@ -1,7 +1,6 @@
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -12,9 +11,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenu,
+    QListWidget,
     QPushButton,
-    QProgressBar,
     QRadioButton,
     QSizePolicy,
     QSlider,
@@ -471,7 +469,7 @@ def build_start_group(gui, left_layout):
     gui.auto_recap_cb = QCheckBox("✨ Auto Edit Recap (Speed Priority)")
     gui.auto_recap_cb.setChecked(True)
     gui.auto_recap_cb.setToolTip(
-        "Apply the 12 Core Edit Rules: Scene cuts, Zoom, Pan, Crop, Speed, Horizontal Flip & Audio Ducking"
+        "Keep every scene. Use scene boundaries only for Zoom, Pan, Crop, Speed, Freeze, Safe Flip and Anti-Repetition effects."
     )
     recap_row.addWidget(gui.auto_recap_cb, 1)
 
@@ -483,7 +481,7 @@ def build_start_group(gui, left_layout):
     recap_row.addWidget(gui.auto_recap_customize_btn)
     recap_layout.addLayout(recap_row)
 
-    recap_hint = QLabel("Applies 12 smart edit rules (cuts, zoom, pan, flip, audio ducking). Click 'Customize' for advanced rule control.", gui)
+    recap_hint = QLabel("Keeps all content and applies shot-aware zoom, pan, crop, speed, freeze and safe flip effects. Click 'Customize' for advanced control.", gui)
     recap_hint.setObjectName("helperLabel")
     recap_hint.setWordWrap(True)
     recap_layout.addWidget(recap_hint)
@@ -627,6 +625,45 @@ def build_start_group(gui, left_layout):
     # This is a media-generation policy, not an editor action. Keep it in
     # Media Workflow so the timeline toolbar stays focused on editing.
     media_workflow_card, media_workflow_layout = _build_collapsible_section("Media Workflow")
+    source_card, source_layout = _section_card()
+    source_header = QHBoxLayout()
+    source_title = QLabel("SOURCE VIDEOS · V1")
+    source_title.setObjectName("sectionTitle")
+    gui.source_video_summary_label = QLabel("1 video")
+    gui.source_video_summary_label.setObjectName("helperLabel")
+    source_header.addWidget(source_title)
+    source_header.addStretch(1)
+    source_header.addWidget(gui.source_video_summary_label)
+    source_layout.addLayout(source_header)
+    source_hint = QLabel("Videos are placed back-to-back on V1. Generate uses this exact order and each clip's current trim.")
+    source_hint.setObjectName("helperLabel")
+    source_hint.setWordWrap(True)
+    source_layout.addWidget(source_hint)
+    gui.source_video_list = QListWidget()
+    gui.source_video_list.setObjectName("sourceVideoList")
+    gui.source_video_list.setMaximumHeight(118)
+    gui.source_video_list.currentRowChanged.connect(gui._update_source_video_buttons)
+    gui.source_video_list.itemDoubleClicked.connect(lambda _item: gui.select_source_video_in_timeline())
+    source_layout.addWidget(gui.source_video_list)
+    source_buttons = QHBoxLayout()
+    source_buttons.setSpacing(6)
+    gui.add_video_btn = QPushButton("+ Add Video")
+    gui.add_video_btn.setToolTip("Add one or more videos after the current V1 clips")
+    gui.add_video_btn.clicked.connect(gui.add_videos_to_timeline)
+    gui.source_video_up_btn = QPushButton("↑")
+    gui.source_video_up_btn.setToolTip("Move selected video earlier")
+    gui.source_video_up_btn.clicked.connect(lambda: gui.move_selected_source_video(-1))
+    gui.source_video_down_btn = QPushButton("↓")
+    gui.source_video_down_btn.setToolTip("Move selected video later")
+    gui.source_video_down_btn.clicked.connect(lambda: gui.move_selected_source_video(1))
+    gui.source_video_remove_btn = QPushButton("Remove")
+    gui.source_video_remove_btn.clicked.connect(gui.remove_selected_source_video)
+    source_buttons.addWidget(gui.add_video_btn, 1)
+    source_buttons.addWidget(gui.source_video_up_btn)
+    source_buttons.addWidget(gui.source_video_down_btn)
+    source_buttons.addWidget(gui.source_video_remove_btn)
+    source_layout.addLayout(source_buttons)
+    media_workflow_layout.addWidget(source_card)
     timing_card, timing_layout = _section_card()
     timing_title = QLabel("Voice timing synchronization")
     timing_title.setObjectName("sectionTitle")

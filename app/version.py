@@ -7,7 +7,7 @@ AUTO_RECAP_VERSION = "1.0.0"
 RELEASE_NOTES = """✨ CapCap v1.2.0 - Auto Edit Recap Release
 
 Hạng mục tính năng mới:
-• ✨ Auto Edit Recap Engine (12 Core Rules V1): Cắt cảnh thông minh, Zoom/Pan/Crop, Speed Accent, Freeze Frame & Audio Ducking.
+• ✨ Auto Edit Recap Engine (12 Core Rules V1): Chia ranh giới hiệu ứng không bỏ nội dung, Zoom/Pan/Crop, Speed Accent, Freeze Frame & Audio Ducking.
 • 🎛️ Consumer UI Tier 1 & Tier 2: Checkbox khởi động nhanh & Modal tùy chỉnh phong cách dựng video (Subtle, Balanced, Dynamic).
 • 🎯 Generate Dropdown Top Bar: Nút bấm thiết kế nổi bật góc trên bên phải với menu tùy chọn linh hoạt.
 • 📊 Bảng Tiến Trình 5 Bước Chuyên Biệt: Hiển thị minh bạch Analyzing Video, Building Recap, Applying Smart Edits, Processing Audio, Rendering Recap.
