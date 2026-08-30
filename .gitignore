@@ -40,4 +40,5 @@ assets/luts/_archive
 log.txt
 data/*
 *.mp4
+*.jpg
 recent_projects.json

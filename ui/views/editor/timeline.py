@@ -1243,15 +1243,11 @@ class EditorTimeline(QGraphicsView):
             return
         center_y = y + h / 2.0
         max_amp = max(2.0, (h - 8.0) / 2.0)
+        scroll_x = self.horizontalScrollBar().value()
         painter.save()
         painter.setClipRect(QRectF(left, y, right - left, h))
-        # Teal-on-teal styling keeps A1 cohesive with the application while
-        # the darker waveform remains legible on its green track.
         painter.setPen(QPen(QColor("#248d82"), 1))
         painter.drawLine(left, int(center_y), right, int(center_y))
-        # This is a single vertical gradient brush reused for every peak,
-        # giving A1 a subtle modern highlight without changing sample count
-        # or doing any additional media processing.
         waveform_gradient = QLinearGradient(0, y, 0, y + h)
         waveform_gradient.setColorAt(0.0, QColor(18, 108, 102, 135))
         waveform_gradient.setColorAt(0.5, QColor(41, 151, 136, 185))
@@ -1260,12 +1256,10 @@ class EditorTimeline(QGraphicsView):
         soft_pen.setCapStyle(Qt.RoundCap)
         detail_pen = QPen(QColor("#083946"), 1)
         detail_pen.setCapStyle(Qt.RoundCap)
-        # One inexpensive vertical stroke per two display pixels. Sample
-        # lookup is proportional to the viewport width, never video length.
         strokes = []
         for pixel_x in range(left, right, 2):
-            time_s = ((pixel_x - x) / max(1, w)) * duration_s
-            index = min(len(samples) - 1, max(0, int((time_s / duration_s) * len(samples))))
+            global_time_s = max(0.0, (pixel_x - self.CONTENT_LEFT_PAD + scroll_x) / self.pixels_per_second)
+            index = min(len(samples) - 1, max(0, int((global_time_s / duration_s) * len(samples))))
             amplitude = samples[index] * max_amp
             strokes.append((pixel_x, int(center_y - amplitude), int(center_y + amplitude)))
         painter.setPen(soft_pen)
@@ -1323,11 +1317,13 @@ class EditorTimeline(QGraphicsView):
             painter.setPen(QPen(QColor("#14b8a6"), 1))
             painter.drawLine(QPointF(x, center_wave_y), QPointF(x + w, center_wave_y))
             
+            scroll_x = self.horizontalScrollBar().value()
+            duration_s = self._waveform_duration_s or self._duration
             step = 3
             for px in range(int(max(0, x)), int(min(view_w, x + w)), step):
-                rel_s = (px - x) / max(1.0, float(w))
-                if self._waveform_samples and len(self._waveform_samples) > 0:
-                    s_idx = min(len(self._waveform_samples) - 1, max(0, int(rel_s * len(self._waveform_samples))))
+                global_s = max(0.0, (px - self.CONTENT_LEFT_PAD + scroll_x) / self.pixels_per_second)
+                if self._waveform_samples and duration_s > 0 and len(self._waveform_samples) > 0:
+                    s_idx = min(len(self._waveform_samples) - 1, max(0, int((global_s / duration_s) * len(self._waveform_samples))))
                     amp = min(wave_h / 2.0 - 1.0, self._waveform_samples[s_idx] * (wave_h / 2.0 - 1.0))
                 else:
                     amp = ((px % 5 + 1) / 6.0) * (wave_h / 2.0 - 1.5)
@@ -1415,6 +1411,7 @@ class EditorTimeline(QGraphicsView):
         if right <= left:
             return
         target_h = max(8, int(h))
+        scroll_x = self.horizontalScrollBar().value()
         painter.save()
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.setClipRect(QRectF(left, y, right - left, h))
@@ -1424,8 +1421,8 @@ class EditorTimeline(QGraphicsView):
                 if index + 1 < len(thumbnails)
                 else self._duration
             )
-            block_left = x + int(timestamp_s * self.pixels_per_second)
-            block_right = x + int(block_end_s * self.pixels_per_second)
+            block_left = self.CONTENT_LEFT_PAD + int(timestamp_s * self.pixels_per_second) - scroll_x
+            block_right = self.CONTENT_LEFT_PAD + int(block_end_s * self.pixels_per_second) - scroll_x
             if block_right <= left or block_left >= right:
                 continue
             source_w = max(1, int(pixmap.width()))
