@@ -48,8 +48,13 @@ class MultiVideoTimelineMixin:
         for index, layer in enumerate(ordered_video_layers(timeline), 1):
             duration = max(0.0, float(layer.end) - float(layer.start))
             minutes, seconds = divmod(int(round(duration)), 60)
+            hours, minutes = divmod(minutes, 60)
+            if hours > 0:
+                time_str = f"{hours}:{minutes:02d}:{seconds:02d}"
+            else:
+                time_str = f"{minutes:02d}:{seconds:02d}"
             item = QListWidgetItem(
-                f"{index}. {os.path.basename(layer.source)}   {minutes:02d}:{seconds:02d}"
+                f"{index}. {os.path.basename(layer.source)}   {time_str}"
             )
             item.setData(Qt.UserRole, layer.id)
             item.setToolTip(layer.source)

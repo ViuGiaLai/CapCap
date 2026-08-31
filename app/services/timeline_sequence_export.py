@@ -251,7 +251,7 @@ def export_timeline_sequence(
         
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     result = subprocess.run(
-        command, capture_output=True, check=False, timeout=7200,
+        command, capture_output=True, check=False, timeout=86400,
         **subprocess_text_kwargs(),
     )
     if result.returncode != 0:

@@ -253,7 +253,17 @@ class PipelineLifecycleMixin:
         source_segments = list(self.current_translated_segments or [])
         if not source_segments:
             translated_srt = self.translated_text.toPlainText().strip()
-            return self._apply_speaker_voice_assignments(self.parse_srt_to_segments(translated_srt)) if translated_srt else []
+            if translated_srt:
+                return self._apply_speaker_voice_assignments(self.parse_srt_to_segments(translated_srt))
+            # Fallback to transcript if no translation exists
+            if self.current_segments:
+                return self._apply_speaker_voice_assignments(list(self.current_segments))
+            transcript_srt = getattr(self, "transcript_text", None)
+            if transcript_srt:
+                text = transcript_srt.toPlainText().strip()
+                if text:
+                    return self._apply_speaker_voice_assignments(self.parse_srt_to_segments(text))
+            return []
 
         grouped_segments = []
         idx = 0
@@ -312,17 +322,14 @@ class PipelineLifecycleMixin:
         if not self.ensure_required_resources("Voice generation", include_voice=True):
             return
         state = self.ensure_current_project()
-        if state and not self.translated_text.toPlainText().strip():
-            self.load_project_context(state)
-
-        translated_srt = self.translated_text.toPlainText().strip()
-        if not translated_srt:
-            QMessageBox.warning(self, "Error", "No translated SRT available. Please run translation first (STEP 3).")
-            return
-
+        
         segments = self._get_voiceover_segments()
+        if not segments and state:
+            self.load_project_context(state)
+            segments = self._get_voiceover_segments()
+
         if not segments:
-            QMessageBox.warning(self, "Error", "Translated SRT could not be parsed to segments.")
+            QMessageBox.warning(self, "Error", "No subtitles available for voiceover. Please run transcription/translation first (STEP 3).")
             return
 
         out_dir = self.voice_output_folder_edit.text().strip() or os.path.join(self.workspace_root, "output")
@@ -386,7 +393,6 @@ class PipelineLifecycleMixin:
             f"voice={voice_name}, "
             f"speed={voice_speed:.2f}, "
             f"segments={len(segments)}, "
-            f"translated_chars={len(translated_srt)}, "
             f"background={bg_path or '<none>'}"
         )
         if state:
@@ -691,7 +697,7 @@ class PipelineLifecycleMixin:
             self.run_all_pipeline()
             return
         has_transcript = bool(self.current_segments or self.transcript_text.toPlainText().strip())
-        has_translation = bool(self.current_translated_segments or self.translated_text.toPlainText().strip())
+        has_translation = bool(self._get_voiceover_segments())
         if target_stage == "translate" and not has_transcript:
             QMessageBox.information(self, "Step-by-Step", "Complete Transcript before running Translate.")
             return
@@ -737,7 +743,7 @@ class PipelineLifecycleMixin:
 
     def skip_tts_stage(self):
         """Explicitly finish the optional TTS phase after translation."""
-        has_translation = bool(self.current_translated_segments or self.translated_text.toPlainText().strip())
+        has_translation = bool(self._get_voiceover_segments())
         if not has_translation:
             QMessageBox.information(self, "Skip TTS", "Complete Translate before skipping Generate Voice / TTS.")
             return

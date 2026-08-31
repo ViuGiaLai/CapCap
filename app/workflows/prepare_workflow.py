@@ -215,7 +215,7 @@ class PrepareWorkflow:
                         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", normalized_path,
                     ],
                     capture_output=True,
-                    check=True, timeout=7200, **subprocess_text_kwargs(),
+                    check=True, timeout=86400, **subprocess_text_kwargs(),
                 )
                 profile["path"] = normalized_path
                 print(
@@ -660,7 +660,7 @@ class PrepareWorkflow:
                 subprocess.run(
                     [ffmpeg_bin, "-y", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
                      "-ar", "16000", "-ac", "1", audio_output_path],
-                    capture_output=True, timeout=7200, **subprocess_hidden_kwargs(),
+                    capture_output=True, timeout=86400, **subprocess_hidden_kwargs(),
                 )
             project_state.set_artifact("extracted_audio", audio_output_path)
             project_state.set_step_status("extract_audio", "completed")
@@ -871,7 +871,7 @@ class PrepareWorkflow:
                         processed_vocal_path,
                     ]
                     subprocess.run(
-                        ffmpeg_cmd, check=True, capture_output=True, timeout=7200,
+                        ffmpeg_cmd, check=True, capture_output=True, timeout=86400,
                         **subprocess_hidden_kwargs(),
                     )
                     working_audio_path = processed_vocal_path

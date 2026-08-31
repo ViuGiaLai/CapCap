@@ -345,6 +345,9 @@ def update_duration_label(gui, current, total):
     def fmt(ms):
         seconds = max(0, ms // 1000)
         minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
 
     gui.time_label.setText(f"{fmt(current)} / {fmt(total)}")

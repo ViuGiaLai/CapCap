@@ -452,7 +452,7 @@ class TimelineWaveformWorker(QThread):
                     # Long media extraction is streaming and memory bounded.  A
                     # five-hour source can legitimately take more than the old
                     # fixed five-minute timeout on slower disks.
-                    subprocess.run(command, check=True, timeout=7200, **subprocess_hidden_kwargs())
+                    subprocess.run(command, check=True, timeout=86400, **subprocess_hidden_kwargs())
                 if temp_audio and os.path.exists(temp_audio):
                     audio_path = temp_audio
 

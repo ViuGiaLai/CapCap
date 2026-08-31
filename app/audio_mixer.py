@@ -567,7 +567,7 @@ def _long_audio_timeout_seconds(*paths: str) -> int:
             continue
     # Audio-only FFmpeg is normally much faster than real time.  Scale the
     # guard for slow disks while retaining an upper bound for a hung process.
-    return int(max(300, min(7200, duration * 0.25 + 300)))
+    return int(max(300, min(86400, duration * 0.25 + 300)))
 
 
 def _stream_mix_with_ffmpeg(

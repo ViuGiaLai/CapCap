@@ -227,7 +227,7 @@ def _extract_waveform_audio(video_path: str, temp_root: str, duration_s: float =
             [_ffmpeg_path(), "-y", "-loglevel", "error", "-i", video_path,
              "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path],
             check=True,
-            timeout=max(180, min(7200, int(max(0.0, duration_s) * 0.5 + 120))),
+            timeout=max(180, min(86400, int(max(0.0, duration_s) * 0.5 + 120))),
             **subprocess_hidden_kwargs(),
         )
         print(f"[Launcher] Waveform audio extracted: {audio_path}")
@@ -688,23 +688,7 @@ class LauncherWindow(QDialog):
             print(f"[Launcher] Resource validation failed: {exc}")
 
         duration = _get_video_duration(self.selected_video)
-        MAX_DURATION = 7200
-        if duration > MAX_DURATION:
-            h = int(duration // 3600)
-            m = int((duration % 3600) // 60)
-            from PySide6.QtWidgets import QMessageBox
-            mb = QMessageBox(
-                QMessageBox.Warning,
-                "Video Too Long",
-                f"This video is {h}h {m}m long.\nVIUStudio works best with videos under 2 hours.\n\n"
-                "Use 'Split Video' to cut it into 2-hour segments first.",
-                QMessageBox.Ok,
-                self,
-            )
-            mb.setStyleSheet(MSG_STYLE)
-            mb.exec()
-            return
-
+        MAX_DURATION = float('inf')
         self._is_accepting = True
         self._set_selected_device(self.selected_device)
         self.loading_label.show()
