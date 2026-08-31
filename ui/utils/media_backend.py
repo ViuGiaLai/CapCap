@@ -957,14 +957,12 @@ class MpvMediaPlayerBackend(QObject):
             try:
                 strength_raw = blur.get("blur_strength", blur.get("strength"))
                 if strength_raw is None:
-                    min_dimension = min(w, h)
-                    luma_radius = max(1, min(100, int(min_dimension // 2)))
+                    sigma = 36.0
                 else:
-                    luma_radius = max(1, min(180, int(round(float(strength_raw) * 3.0))))
+                    sigma = max(1.0, min(200.0, float(strength_raw)))
             except (TypeError, ValueError):
-                luma_radius = max(1, min(100, int(min(w, h) // 2)))
-            luma_radius = min(luma_radius, max(1, min(w, h) // 2))
-            chroma_radius = max(0, min(180, luma_radius // 2))
+                sigma = 36.0
+            
             try:
                 opacity = float(blur.get("blur_opacity", blur.get("opacity", 1.0)))
             except (TypeError, ValueError):
@@ -976,14 +974,14 @@ class MpvMediaPlayerBackend(QObject):
             except (TypeError, ValueError):
                 pixel_size = 12
             pixel_size = max(2, min(60, pixel_size))
-            regions.append((x, y, w, h, luma_radius, chroma_radius, opacity, pixelate, pixel_size))
+            regions.append((x, y, w, h, sigma, 0, opacity, pixelate, pixel_size))
         if not regions:
             return ""
 
         crop_parts = []
         overlay_parts = []
         for index, region in enumerate(regions):
-            x, y, w, h, luma_radius, chroma_radius, opacity, pixelate, pixel_size = region
+            x, y, w, h, sigma, _, opacity, pixelate, pixel_size = region
             if pixelate:
                 cell_w = max(1, w // pixel_size)
                 cell_h = max(1, h // pixel_size)
@@ -992,7 +990,7 @@ class MpvMediaPlayerBackend(QObject):
                     f"scale={w}:{h}:flags=neighbor"
                 )
             else:
-                effect = f"boxblur={luma_radius}:6:{chroma_radius}:6"
+                effect = f"gblur=sigma={sigma}:steps=3"
             if opacity < 0.999:
                 effect = (
                     f"format=yuva420p,{effect},"

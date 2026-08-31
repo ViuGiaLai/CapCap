@@ -832,6 +832,71 @@ class TimelineEditingMixin:
                     self.log(f"[Timeline] {'Locked' if layer.locked else 'Unlocked'} layer: {layer.name or layer.id}")
                     return
 
+    def clear_timeline_track(self, track_name: str):
+        if self._preview_is_playing():
+            return
+        if not hasattr(self, "timeline") or not self.timeline._timeline:
+            return
+            
+        target_track = None
+        for track in self.timeline._timeline.tracks:
+            if track.name == track_name:
+                target_track = track
+                break
+                
+        if target_track is None:
+            return
+            
+        if bool(getattr(target_track, "locked", False)):
+            QMessageBox.information(self, "Track Locked", f"Unlock the track '{track_name}' before clearing it.")
+            return
+
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Confirm",
+            f"Are you sure you want to delete all layers in track '{track_name}'?\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        # Clear track in backend
+        target_track.layers.clear()
+        
+        # If it's a subtitle track, we also need to clear the canonical subtitle segments
+        is_subtitle_track = (
+            str(getattr(getattr(target_track, "type", ""), "value", getattr(target_track, "type", ""))).lower() == "dub_subtitle"
+        )
+        if is_subtitle_track:
+            if hasattr(self, "current_segments"):
+                self.current_segments = []
+            if hasattr(self, "current_translated_segments"):
+                self.current_translated_segments = []
+            self._selected_segment_index = -1
+            if hasattr(self, "subtitle_list_model"):
+                self.subtitle_list_model.layoutChanged.emit()
+            if hasattr(self, "transcript_text"):
+                self.transcript_text.clear()
+            if hasattr(self, "translated_text"):
+                self.translated_text.clear()
+
+        # Update UI
+        self.timeline._selected_layer_id = ""
+        self.timeline._redraw()
+        
+        if is_subtitle_track:
+            if hasattr(self, "sync_live_subtitle_preview"):
+                self.sync_live_subtitle_preview()
+            if hasattr(self, "_update_time_label"):
+                self._update_time_label()
+        else:
+            if hasattr(self, "build_filtergraph_and_play"):
+                self.build_filtergraph_and_play(float(self.video_view.position) if hasattr(self, "video_view") else 0.0)
+            
+        self.persist_current_timeline_project_data()
+        self.refresh_ui_state()
+        self.log(f"[Timeline] Cleared track: {track_name}")
+
     def delete_selected_timeline_segment(self):
         if self._preview_is_playing():
             return

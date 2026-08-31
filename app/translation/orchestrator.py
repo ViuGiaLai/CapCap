@@ -100,6 +100,13 @@ class TranslationOrchestrator:
                         target_lang=target_lang,
                         style_instruction=merged_style,
                     )
+                    translated_texts, quality_warnings = self._fallback_unresolved_quality_issues(
+                        source_segments=segments,
+                        translated_texts=translated_texts,
+                        quality_warnings=quality_warnings,
+                        src_lang=normalized_src,
+                        target_lang=target_lang,
+                    )
                     warnings.extend(quality_warnings)
                     print(f"[AI Translation] Success: completed via {', '.join(providers_used) or 'AI'}")
                     final_segments = clone_with_texts(segments, translated_texts, provider=provider_type, polished=True)
@@ -395,7 +402,15 @@ class TranslationOrchestrator:
         """Retry only objectively broken cues, with a 2-cue context window."""
         severe_indices = set()
         for warning in quality_warnings:
-            if "chữ viết nguồn" not in warning and "thiếu số" not in warning and "bản dịch trống" not in warning:
+            if not any(
+                marker in warning
+                for marker in (
+                    "chữ viết nguồn",
+                    "thiếu số",
+                    "bản dịch trống",
+                    "cụm tiếng Anh trong bản dịch tiếng Việt",
+                )
+            ):
                 continue
             match = re.match(r"Cue\s+(\d+):", str(warning))
             if match:
@@ -404,7 +419,7 @@ class TranslationOrchestrator:
             return list(translated_texts), list(quality_warnings)
 
         repaired = list(translated_texts)
-        for index in sorted(severe_indices)[:20]:
+        for index in sorted(severe_indices):
             if index < 0 or index >= len(repaired):
                 continue
             context_start = max(0, index - 2)
@@ -417,7 +432,8 @@ class TranslationOrchestrator:
             repair_instruction = (
                 f"{style_instruction}\n\n[mode=translation_quality_repair] "
                 "Repair only the current numbered cue. Its previous draft failed an objective "
-                "check because it retained source-script text or lost a source number. Preserve "
+                "check because it retained text in the wrong language, lost a source number, or "
+                "was empty. Output only the requested target language. Preserve "
                 "the exact source meaning, names, numbers, negation and speaker register. Use the "
                 "nearby source only for context; never output nearby cues.\n"
                 f"Nearby source context:\n{nearby}"
@@ -442,6 +458,60 @@ class TranslationOrchestrator:
             target_lang=target_lang,
         )
         return repaired, final_warnings
+
+    def _fallback_unresolved_quality_issues(
+        self,
+        *,
+        source_segments,
+        translated_texts,
+        quality_warnings,
+        src_lang,
+        target_lang,
+    ):
+        """Re-translate only cues that remain objectively invalid after AI repair."""
+        retry_indices: set[int] = set()
+        severe_markers = (
+            "chữ viết nguồn",
+            "thiếu số",
+            "bản dịch trống",
+            "cụm tiếng Anh trong bản dịch tiếng Việt",
+        )
+        for warning in quality_warnings or []:
+            if not any(marker in str(warning) for marker in severe_markers):
+                continue
+            match = re.match(r"Cue\s+(\d+):", str(warning))
+            if match:
+                retry_indices.add(int(match.group(1)) - 1)
+        valid_indices = [
+            index for index in sorted(retry_indices)
+            if 0 <= index < len(source_segments) and index < len(translated_texts)
+        ]
+        if not valid_indices:
+            return list(translated_texts), list(quality_warnings)
+
+        repaired = list(translated_texts)
+        try:
+            fallback = self.google_web.translate_batch(
+                [str(source_segments[index].get("text") or "") for index in valid_indices],
+                src_lang=src_lang,
+                target_lang=target_lang,
+            )
+            if validate_texts(fallback, len(valid_indices)):
+                for index, value in zip(valid_indices, fallback):
+                    if str(value or "").strip():
+                        repaired[index] = str(value).strip()
+                print(
+                    "[Translation QA] Re-translated "
+                    f"{len(valid_indices)} unresolved cue(s) with the fallback engine."
+                )
+        except Exception as exc:
+            print(f"[Translation QA] Final fallback unavailable: {exc}")
+
+        return apply_translation_quality_guard(
+            source_segments=list(source_segments),
+            translated_texts=repaired,
+            target_lang=target_lang,
+        )
 
     @staticmethod
     def _run_ai_batch_requests(*, polisher, batches, src_lang, target_lang, style_instruction, max_workers):

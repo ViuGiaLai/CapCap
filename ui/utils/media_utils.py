@@ -357,6 +357,17 @@ def browse_video(gui):
     if not file_path:
         return
 
+    # Finish the old project's write before changing any source fields, then
+    # clear every project-scoped model/cache.  Previously V1/A1 survived this
+    # path and were persisted into the newly selected video's project.
+    if getattr(gui, "current_project_state", None) is not None:
+        try:
+            gui.persist_current_timeline_project_data()
+        except Exception:
+            pass
+    if hasattr(gui, "project_controller"):
+        gui.project_controller.reset_project_runtime_state()
+
     if hasattr(gui, "ensure_media_backend_ready"):
         gui.ensure_media_backend_ready()
     gui.video_path_edit.setText(file_path)
@@ -377,6 +388,9 @@ def browse_video(gui):
 
     gui.current_project_state = gui.ensure_current_project()
     gui.load_project_context(gui.current_project_state)
+    if hasattr(gui, "timeline") and hasattr(gui.timeline, "set_video_source"):
+        duration = float(gui.timeline._probe_video_duration(file_path))
+        gui.timeline.set_video_source(gui._current_video_path, duration)
     if hasattr(gui, "refresh_source_video_list"):
         gui.refresh_source_video_list()
 

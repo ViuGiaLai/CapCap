@@ -2,8 +2,9 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
@@ -14,6 +15,9 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 from app.layers.base import LayerType
 from app.layers.blur import BlurLayer
 from app.layers.timeline import Timeline, Track
+from app.core.state import ProjectState
+from app.services.timeline_video_sequence import append_video, timeline_video_clips
+from app.services import GUIProjectBridge, ProjectService
 from main_window import VideoTranslatorGUI
 
 
@@ -24,6 +28,13 @@ class TestStudioShellIntegration(unittest.TestCase):
 
     def setUp(self):
         self.window = VideoTranslatorGUI()
+
+    def tearDown(self):
+        for timer in self.window.findChildren(QTimer):
+            timer.stop()
+        self.window.hide()
+        self.window.deleteLater()
+        self.app.processEvents()
 
     def test_selected_blur_uses_the_real_editable_inspector(self):
         timeline = Timeline(duration=10.0)
@@ -104,7 +115,10 @@ class TestStudioShellIntegration(unittest.TestCase):
         QTest.qWait(1)
 
         self.assertEqual(layer.blur_strength, 60)
-        self.assertEqual(self.window.blur_inspector_radius_value_label.text(), "60 / 60")
+        self.assertEqual(
+            self.window.blur_inspector_radius_value_label.text(),
+            f"60 / {self.window.blur_inspector_radius_slider.maximum()}",
+        )
         self.assertEqual(int(applied[-1][0][0]["blur_strength"]), 60)
         self.assertTrue(applied[-1][1])
 
@@ -189,6 +203,117 @@ class TestStudioShellIntegration(unittest.TestCase):
 
         self.assertEqual(widget._selected_layer_id, layer.id)
         self.assertEqual(spy.count(), 1)
+
+    def test_project_identity_uses_imported_source_not_preview_field(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = os.path.join(folder, "video_1.mp4")
+            preview = os.path.join(folder, "video_1_recap.mp4")
+            Path(source).touch()
+            Path(preview).touch()
+            expected = ProjectState(
+                project_id="video_1", project_root=folder, input_video=source,
+                settings={"audio_handling_mode": self.window.get_audio_handling_mode()},
+            )
+            self.window._current_video_path = source
+            self.window.video_path_edit.setText(preview)
+            from unittest.mock import Mock
+            self.window.project_bridge.ensure_project = Mock(return_value=expected)
+
+            state = self.window.ensure_current_project()
+
+            self.assertIs(state, expected)
+            requested = self.window.project_bridge.ensure_project.call_args.kwargs["video_path"]
+            self.assertEqual(os.path.abspath(requested), os.path.abspath(source))
+            self.window.current_project_state = None
+
+    def test_restored_timeline_from_another_video_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            first = os.path.join(folder, "video_1.mp4")
+            second = os.path.join(folder, "video_2.mp4")
+            Path(first).touch()
+            Path(second).touch()
+            stale = Timeline(duration=10.0)
+            append_video(stale, first, 10.0)
+            timeline_dir = os.path.join(folder, "timeline")
+            os.makedirs(timeline_dir)
+            timeline_path = os.path.join(timeline_dir, "timeline.json")
+            import json
+            with open(timeline_path, "w", encoding="utf-8") as handle:
+                json.dump(stale.to_dict(), handle)
+            state = ProjectState(
+                project_id="video_2", project_root=folder, input_video=second,
+                artifacts={"timeline": timeline_path},
+            )
+            self.window._project_media_source_mismatch = False
+
+            restored = self.window._restore_saved_timeline_model(state)
+
+            self.assertFalse(restored)
+            self.assertTrue(self.window._project_media_source_mismatch)
+            self.assertEqual(timeline_video_clips(self.window.timeline._timeline), [])
+
+    def test_project_switch_reset_removes_previous_v1_source(self):
+        stale = Timeline(duration=10.0)
+        append_video(stale, "video_1.mp4", 10.0)
+        self.window.timeline._timeline = stale
+
+        self.window.project_controller.reset_project_runtime_state()
+
+        self.assertEqual(timeline_video_clips(self.window.timeline._timeline), [])
+
+    def test_empty_named_project_accepts_multiple_videos_and_persists_v1_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            first = os.path.join(folder, "one.mp4")
+            second = os.path.join(folder, "two.mp4")
+            Path(first).touch()
+            Path(second).touch()
+            service = ProjectService(folder)
+            state = service.create_project()
+            original_id = state.project_id
+            self.window.project_service = service
+            self.window.project_bridge = GUIProjectBridge(service)
+            self.window.current_project_state = state
+            self.window.timeline._init_default_tracks()
+            self.window.timeline._probe_video_duration = lambda path: 3.0 if path == first else 5.0
+            self.window.ensure_media_backend_ready = lambda: None
+            self.window.media_player.setSource = lambda _source: None
+            self.window.refresh_video_dimensions = lambda _path: None
+            self.window.schedule_timeline_visual_refresh = lambda **_kwargs: None
+
+            with patch(
+                "features.multi_video_timeline.QFileDialog.getOpenFileNames",
+                return_value=([first, second], "Video Files"),
+            ):
+                self.window.add_videos_to_timeline()
+
+            clips = timeline_video_clips(self.window.timeline._timeline)
+            self.assertEqual([clip.source for clip in clips], [os.path.abspath(first), os.path.abspath(second)])
+            self.assertAlmostEqual(self.window.timeline._timeline.duration, 8.0)
+            self.assertEqual(state.input_video, os.path.abspath(first))
+            self.assertEqual(state.project_id, original_id)
+            self.assertEqual(state.display_name, "VIUSTUDIO10000")
+            reopened = service.load_project(service.project_file(state.project_root))
+            self.assertEqual(reopened.project_id, original_id)
+            self.assertTrue(os.path.isfile(reopened.artifacts["timeline"]))
+
+    def test_mismatched_artifacts_are_detached_without_deleting_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = os.path.join(folder, "video_2.mp4")
+            transcript = os.path.join(folder, "transcript.json")
+            Path(source).touch()
+            Path(transcript).write_text("[]", encoding="utf-8")
+            state = ProjectState(
+                project_id="video_2", project_root=folder, input_video=source,
+                artifacts={"transcript_segments": transcript},
+                settings={"timeline_video_clips": [{"source": "video_1.mp4"}]},
+            )
+
+            self.window._detach_mismatched_media_artifacts(state)
+
+            self.assertTrue(os.path.exists(transcript))
+            self.assertNotIn("transcript_segments", state.artifacts)
+            recovery = state.artifacts.get("detached_media_recovery", "")
+            self.assertTrue(os.path.isfile(recovery))
 
 
 if __name__ == "__main__":

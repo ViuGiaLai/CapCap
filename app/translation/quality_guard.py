@@ -29,6 +29,18 @@ _ARABIC_SCRIPT_RE = re.compile(r"[\u0600-\u06ff]")
 # CJK glyphs count as ``\w`` in Python, so word boundaries would miss values
 # such as ``100颗``. Only guard against adjacent digits here.
 _ARABIC_NUMBER_RE = re.compile(r"(?<!\d)\d+(?:[.,]\d+)?%?(?!\d)")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]+(?:['\u2019][A-Za-z]+)?")
+_ENGLISH_CONTRACTION_RE = re.compile(
+    r"\b(?:don['\u2019]?t|isn['\u2019]?t|aren['\u2019]?t|can['\u2019]?t|won['\u2019]?t|didn['\u2019]?t|you['\u2019]?re|we['\u2019]?re|they['\u2019]?re)\b",
+    re.IGNORECASE,
+)
+_ENGLISH_FUNCTION_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "because", "but", "by",
+    "can", "do", "does", "for", "from", "has", "have", "he", "her", "him",
+    "his", "i", "if", "in", "is", "it", "me", "my", "not", "of", "on",
+    "or", "our", "she", "that", "the", "their", "them", "they", "this", "to",
+    "was", "we", "were", "what", "when", "with", "you", "your",
+}
 
 
 def _replace_variant(text: str, variant: str, canonical: str) -> str:
@@ -61,6 +73,17 @@ def _contains_unexpected_source_script(text: str, profile: str) -> bool:
         "latin": (_CJK_RE, _HANGUL_RE, _ARABIC_SCRIPT_RE, _CYRILLIC_RE),
     }
     return any(pattern.search(text) for pattern in checks.get(profile, ()))
+
+
+def _contains_english_clause_in_vietnamese(text: str) -> bool:
+    """Detect a leaked English clause without rejecting names or brands."""
+    if _ENGLISH_CONTRACTION_RE.search(text):
+        return True
+    tokens = [token.casefold() for token in _LATIN_WORD_RE.findall(text)]
+    if len(tokens) < 4:
+        return False
+    hits = sum(token in _ENGLISH_FUNCTION_WORDS for token in tokens)
+    return hits >= 4 and hits / max(1, len(tokens)) >= 0.35
 
 
 def apply_translation_quality_guard(
@@ -96,6 +119,8 @@ def apply_translation_quality_guard(
             warnings.append(f"Cue {index + 1}: bản dịch trống.")
         elif _contains_unexpected_source_script(text, target_profile):
             warnings.append(f"Cue {index + 1}: còn ký tự thuộc chữ viết nguồn chưa dịch.")
+        elif is_vietnamese and _contains_english_clause_in_vietnamese(text):
+            warnings.append(f"Cue {index + 1}: còn cụm tiếng Anh trong bản dịch tiếng Việt.")
 
         source_numbers = _ARABIC_NUMBER_RE.findall(source)
         translated_numbers = _ARABIC_NUMBER_RE.findall(text)

@@ -609,8 +609,9 @@ class PipelineController:
                                     self.gui.media_player.setSource(QUrl.fromLocalFile(output_path))
                                     if hasattr(self.gui.media_player, "setPosition"):
                                         self.gui.media_player.setPosition(0)
-                                if hasattr(self.gui, "video_path_edit"):
-                                    self.gui.video_path_edit.setText(output_path)
+                                # Keep the project/source field anchored to the
+                                # imported video. The rendered recap is a
+                                # preview artifact, not a new project source.
 
                                 if hasattr(self.gui, "timeline") and getattr(self.gui.timeline, "_timeline", None):
                                     from app.layers.sync_bridge import sync_auto_recap_decisions_to_timeline

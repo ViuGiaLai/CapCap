@@ -8,6 +8,7 @@ _recognizer = None
 _current_model_dir = ""
 _current_language = ""
 _lock = threading.Lock()
+_SUPPORTED_LANGUAGE_CODES = {"auto", "zh", "yue", "en", "ja", "ko"}
 
 
 def is_available() -> bool:
@@ -20,6 +21,19 @@ def is_available() -> bool:
     except ImportError:
         _ENABLED = False
     return _ENABLED
+
+
+def supports_language(code: str) -> bool:
+    normalized = str(code or "auto").strip().lower().split("-")[0]
+    return normalized in _SUPPORTED_LANGUAGE_CODES
+
+
+def requires_multilingual_whisper(code: str) -> bool:
+    normalized = str(code or "auto").strip().lower().split("-")[0]
+    # SenseVoice can auto-detect only among its own small language set. The
+    # application's Auto Detect promises all source languages, so Whisper is
+    # the accurate choice when the language is unknown.
+    return normalized in {"", "auto"} or not supports_language(normalized)
 
 
 def _lang_code(code: str) -> str:

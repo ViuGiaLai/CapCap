@@ -759,7 +759,12 @@ class VoiceCatalogMixin:
         lst = QListWidget()
         for r in results:
             mb = r['size'] / (1024 * 1024)
-            item = QListWidgetItem(f"{r['name']} ({mb:.1f} MB)\n{r['path']}")
+            if mb >= 1024:
+                gb = mb / 1024
+                size_str = f"{gb:.2f} GB"
+            else:
+                size_str = f"{mb:.1f} MB"
+            item = QListWidgetItem(f"{r['name']} ({size_str})\n{r['path']}")
             item.setData(Qt.UserRole, r['path'])
             lst.addItem(item)
         ly.addWidget(lst)

@@ -104,6 +104,7 @@ def export_timeline_sequence(
     if mode in {"voice", "both"} and audio_path and os.path.isfile(audio_path):
         external_audio_index = len(valid)
         command += ["-i", os.path.abspath(audio_path)]
+    use_timeline_audio = external_audio_index is None
 
     mapped_logo_layers = _map_normalized_overlays_to_canvas(
         logo_layers, first_w, first_h, width, height, scale_mode, focus_x, focus_y
@@ -146,20 +147,26 @@ def export_timeline_sequence(
             f"setpts=(PTS-STARTPTS)/{speed:.8f},{canvas_chain},"
             f"setsar=1,fps={fps},format=yuv420p[{vlabel}]"
         )
-        volume = 0.0 if bool(clip.get("muted", False)) else max(0.0, float(clip.get("volume", 1.0) or 0.0))
-        if _has_audio(str(clip["source"])):
-            filters.append(
-                f"[{index}:a]atrim=start={start:.6f}:duration={source_duration:.6f},"
-                f"asetpts=PTS-STARTPTS,{_atempo(speed)},volume={volume:.6f},"
-                f"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[{alabel}]"
-            )
+        if use_timeline_audio:
+            volume = 0.0 if bool(clip.get("muted", False)) else max(0.0, float(clip.get("volume", 1.0) or 0.0))
+            if _has_audio(str(clip["source"])):
+                filters.append(
+                    f"[{index}:a]atrim=start={start:.6f}:duration={source_duration:.6f},"
+                    f"asetpts=PTS-STARTPTS,{_atempo(speed)},volume={volume:.6f},"
+                    f"aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[{alabel}]"
+                )
+            else:
+                filters.append(
+                    f"anullsrc=r=48000:cl=stereo,atrim=duration={timeline_duration:.6f},"
+                    f"asetpts=PTS-STARTPTS[{alabel}]"
+                )
+            concat_inputs.append(f"[{vlabel}][{alabel}]")
         else:
-            filters.append(
-                f"anullsrc=r=48000:cl=stereo,atrim=duration={timeline_duration:.6f},"
-                f"asetpts=PTS-STARTPTS[{alabel}]"
-            )
-        concat_inputs.append(f"[{vlabel}][{alabel}]")
-    filters.append(f"{''.join(concat_inputs)}concat=n={len(valid)}:v=1:a=1[vcat][acat]")
+            concat_inputs.append(f"[{vlabel}]")
+    if use_timeline_audio:
+        filters.append(f"{''.join(concat_inputs)}concat=n={len(valid)}:v=1:a=1[vcat][acat]")
+    else:
+        filters.append(f"{''.join(concat_inputs)}concat=n={len(valid)}:v=1:a=0[vcat]")
 
     current = "vcat"
     mapped_blur_regions = _map_normalized_overlays_to_canvas(

@@ -88,8 +88,8 @@ class ModelSettingsMixin:
         layout.addWidget(engine_title)
 
         engine_combo = QComboBox(dialog)
-        engine_combo.addItem("Audio (SenseVoice) - Speed", "sensevoice")
-        engine_combo.addItem("Audio (Whisper) - Quality", "whisper")
+        engine_combo.addItem("Audio (SenseVoice) - Chinese / English / Japanese / Korean only", "sensevoice")
+        engine_combo.addItem("Audio (Whisper) - Multilingual quality", "whisper")
         engine_combo.addItem("Video (OCR)", "ocr")
         current_engine = self.get_transcription_engine()
         idx = engine_combo.findData(current_engine)

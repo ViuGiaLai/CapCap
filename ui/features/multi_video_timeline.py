@@ -101,19 +101,48 @@ class MultiVideoTimelineMixin:
         if timeline_widget is None or model is None:
             QMessageBox.warning(self, "Add Video", "Timeline is not ready.")
             return
+        was_empty = not ordered_video_layers(model)
         added = 0
+        first_added_path = ""
         for path in paths:
             duration = float(timeline_widget._probe_video_duration(path))
             if duration <= 0:
                 self.log(f"[Timeline] Skipped unreadable video: {path}")
                 continue
             append_video(model, path, duration)
+            if not first_added_path:
+                first_added_path = os.path.abspath(path)
             added += 1
         if not added:
             QMessageBox.warning(self, "Add Video", "No readable video was selected.")
             return
         timeline_widget.set_duration(int(model.duration * 1000))
         timeline_widget._redraw()
+        # A newly-created project has no source yet. The first imported clip
+        # becomes its primary processing source, while all selected videos are
+        # retained in order on V1. Project id/name stay unchanged.
+        if was_empty and first_added_path:
+            state = getattr(self, "current_project_state", None)
+            if state is not None:
+                state.input_video = first_added_path
+                state.set_setting("input_video_identity", self.project_service._input_video_identity(first_added_path))
+                self.project_service.save_project(state)
+            self._current_video_path = first_added_path
+            self.video_path_edit.setText(first_added_path)
+            self.ensure_media_backend_ready()
+            self.media_player.setSource(QUrl.fromLocalFile(first_added_path))
+            if hasattr(self, "refresh_video_dimensions"):
+                self.refresh_video_dimensions(first_added_path)
+            if hasattr(self, "update_project_header"):
+                self.update_project_header()
+            try:
+                from views.launcher import LauncherWindow
+                LauncherWindow.add_recent(None, {
+                    "project_state_path": self.project_service.project_file(state.project_root) if state else "",
+                    "video_path": first_added_path,
+                })
+            except Exception:
+                pass
         self.refresh_source_video_list()
         self.persist_current_timeline_project_data()
         self.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)

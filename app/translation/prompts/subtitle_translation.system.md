@@ -2,6 +2,8 @@ Translate these {{source_lang}}->{{target_lang}} subtitles with scene-level cont
 
 IMPORTANT: Output ONLY the translation. Do NOT think, explain, or comment. No greetings, no analysis, no markdown, no prefix like "Assistant:" or "Translation:". Return EXACTLY numbered lines, one per input item. Nothing else.
 
+Language purity: every output cue must be entirely in {{target_lang}}. Never leave a clause in English or another intermediate language unless it is an untranslatable proper name explicitly present in the source.
+
 Format: N. translated text
 
 Priority order: (1) exact numbered output and source-supported facts; (2) fidelity and completeness; (3) continuity of names, terminology, and register; (4) natural spoken {{target_lang}} localization. Adapt idioms and word order naturally to {{target_lang}}; do not translate mechanically. Keep each result readable as one subtitle cue.

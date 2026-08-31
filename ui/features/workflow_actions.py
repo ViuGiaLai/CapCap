@@ -327,7 +327,15 @@ class WorkflowActionsMixin:
         for url in mime_data.urls():
             local_path = url.toLocalFile()
             if local_path and os.path.splitext(local_path)[1].lower() in {".mp4", ".mkv", ".avi", ".mov"}:
+                if getattr(self, "current_project_state", None) is not None:
+                    try:
+                        self.persist_current_timeline_project_data()
+                    except Exception:
+                        pass
+                if hasattr(self, "project_controller"):
+                    self.project_controller.reset_project_runtime_state()
                 self.ensure_media_backend_ready()
+                self._current_video_path = os.path.abspath(local_path)
                 self.video_path_edit.setText(local_path)
                 self.media_player.setSource(QUrl.fromLocalFile(local_path))
                 self.refresh_video_dimensions(local_path)
@@ -341,6 +349,11 @@ class WorkflowActionsMixin:
                 self.current_project_state = self.ensure_current_project()
                 self._allow_post_pipeline_preview_assets = False
                 self.load_project_context(self.current_project_state)
+                if hasattr(self, "timeline") and hasattr(self.timeline, "set_video_source"):
+                    duration = float(self.timeline._probe_video_duration(local_path))
+                    self.timeline.set_video_source(self._current_video_path, duration)
+                if hasattr(self, "refresh_source_video_list"):
+                    self.refresh_source_video_list()
                 self.media_player.pause()
                 self.media_player.setPosition(0)
                 self.refresh_ui_state()

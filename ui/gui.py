@@ -102,12 +102,20 @@ class _RuntimeLogCollector:
             self._pending.append(text)
             self._pending = self._pending[-10000:]
             return
-        self._window.runtime_log_received.emit(text)
+        try:
+            self._window.runtime_log_received.emit(text)
+        except Exception:
+            self._window = None
+            self._pending.append(text)
+            self._pending = self._pending[-10000:]
 
     def attach(self, window) -> None:
         self._window = window
         for message in self._pending:
-            window.runtime_log_received.emit(message)
+            try:
+                window.runtime_log_received.emit(message)
+            except Exception:
+                break
         self._pending.clear()
 
 
@@ -127,14 +135,17 @@ class _LogTee:
                 # None or as an already-closed stream. Runtime logs should
                 # still reach the in-app collector in that case.
                 pass
-        self._partial += text
-        lines = self._partial.splitlines(keepends=True)
-        self._partial = ""
-        for line in lines:
-            if line.endswith(("\n", "\r")):
-                self._collector.add(line.rstrip())
-            else:
-                self._partial = line
+        try:
+            self._partial += text
+            lines = self._partial.splitlines(keepends=True)
+            self._partial = ""
+            for line in lines:
+                if line.endswith(("\n", "\r")):
+                    self._collector.add(line.rstrip())
+                else:
+                    self._partial = line
+        except Exception:
+            pass
         return len(text)
 
     def flush(self):
@@ -144,7 +155,10 @@ class _LogTee:
             except Exception:
                 pass
         if self._partial:
-            self._collector.add(self._partial)
+            try:
+                self._collector.add(self._partial)
+            except Exception:
+                pass
             self._partial = ""
 
     def isatty(self):
@@ -209,11 +223,11 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     from views.launcher import show_launcher, LauncherWindow
-    video_path = show_launcher(None)
-    if not video_path:
+    selection = show_launcher(None)
+    if not selection:
         sys.exit(0)
 
-    LauncherWindow.add_recent(None, video_path)
+    LauncherWindow.add_recent(None, selection)
 
     window = VideoTranslatorGUI()
     runtime_logs.attach(window)
@@ -224,30 +238,8 @@ if __name__ == "__main__":
 
     def _init_video():
         try:
-            window._current_video_path = os.path.abspath(video_path)
-            window.ensure_media_backend_ready()
-            window.video_path_edit.setText(video_path)
-            window.media_player.setSource(QUrl.fromLocalFile(video_path))
-            if hasattr(window, "refresh_video_dimensions"):
-                window.refresh_video_dimensions(video_path)
-            window.current_project_state = window.ensure_current_project()
-            window.load_project_context(window.current_project_state)
-
-            if hasattr(window, "timeline") and hasattr(window.timeline, "set_video_source"):
-                try:
-                    dur = window.media_player.duration() / 1000.0
-                except Exception:
-                    dur = 60.0
-                window.timeline.set_video_source(window._current_video_path, dur)
-                ensure_tracks = getattr(window.timeline, "_ensure_tracks_populated", None)
-                if callable(ensure_tracks):
-                    ensure_tracks()
-                redraw = getattr(window.timeline, "_redraw", None)
-                if callable(redraw):
-                    redraw()
-                if hasattr(window, "refresh_source_video_list"):
-                    window.refresh_source_video_list()
-            window.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)
+            from utils.project_launch import initialize_editor_from_selection
+            initialize_editor_from_selection(window, selection)
         except Exception:
             runtime_logs.add("[Startup Error]\n" + traceback.format_exc())
 

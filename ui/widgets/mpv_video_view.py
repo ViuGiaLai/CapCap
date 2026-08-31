@@ -580,6 +580,10 @@ class _BlurRegionOverlayWindow(QWidget):
             0.32,
             0.18,
         )
+        rect.blur_strength = 36.0
+        rect.blur_opacity = 1.0
+        rect.pixelate = False
+        rect.pixelate_size = 12
         self._regions.append(rect)
         self._active_index = len(self._regions) - 1
         if emit_change and callable(self._on_region_changed):
@@ -605,7 +609,16 @@ class _BlurRegionOverlayWindow(QWidget):
                 except (TypeError, ValueError):
                     continue
                 if width > 0.0 and height > 0.0:
-                    next_regions.append(QRectF(x, y, width, height))
+                    rect = QRectF(x, y, width, height)
+                    if "blur_strength" in region:
+                        rect.blur_strength = region["blur_strength"]
+                    if "blur_opacity" in region:
+                        rect.blur_opacity = region["blur_opacity"]
+                    if "pixelate" in region:
+                        rect.pixelate = region["pixelate"]
+                    if "pixelate_size" in region:
+                        rect.pixelate_size = region["pixelate_size"]
+                    next_regions.append(rect)
         self._regions = next_regions
         self._active_index = (
             min(previous_active, len(self._regions) - 1)
@@ -2087,15 +2100,23 @@ class MpvVideoView(QWidget):
     def get_blur_region_normalized(self) -> dict | list[dict] | None:
         if not self.blur_overlay.has_region():
             return None
-        regions = [
-            {
+        regions = []
+        for rect in self.blur_overlay._regions:
+            r = {
                 "x": round(float(rect.x()), 6),
                 "y": round(float(rect.y()), 6),
                 "width": round(float(rect.width()), 6),
                 "height": round(float(rect.height()), 6),
             }
-            for rect in self.blur_overlay._regions
-        ]
+            if hasattr(rect, "blur_strength"):
+                r["blur_strength"] = rect.blur_strength
+            if hasattr(rect, "blur_opacity"):
+                r["blur_opacity"] = rect.blur_opacity
+            if hasattr(rect, "pixelate"):
+                r["pixelate"] = rect.pixelate
+            if hasattr(rect, "pixelate_size"):
+                r["pixelate_size"] = rect.pixelate_size
+            regions.append(r)
         if len(regions) == 1:
             return regions[0]
         return regions

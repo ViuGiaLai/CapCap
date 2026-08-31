@@ -816,6 +816,7 @@ def build_preview_panel(gui):
     gui.timeline.layerSelected.connect(gui.on_timeline_layer_selected)
     gui.timeline.layoutChanged.connect(lambda: getattr(gui, '_sync_track_labels', lambda: None)())
     gui.timeline.deleteRequested.connect(gui.delete_selected_timeline_segment)
+    gui.timeline.clearTrackRequested.connect(gui.clear_timeline_track)
     gui.timeline.splitRequested.connect(gui.split_selected_timeline_segment)
     gui.timeline.regenerateVoiceRequested.connect(
         lambda: gui.audio_inspector_regenerate_voice_btn.click()
@@ -1545,14 +1546,14 @@ def build_preview_panel(gui):
     blur_layout.addWidget(gui.blur_inspector_summary_label)
     _add_layer_timing_controls(blur_layout, "blur")
 
-    # --- Blur Radius ---
+    # --- Blur Strength ---
     radius_row = QHBoxLayout()
-    radius_label = QLabel("Blur radius")
+    radius_label = QLabel("Blur Strength")
     radius_label.setObjectName("sectionTitle")
     radius_label.setFixedWidth(90)
     radius_row.addWidget(radius_label)
     gui.blur_inspector_radius_slider = QSlider(Qt.Horizontal)
-    gui.blur_inspector_radius_slider.setRange(1, 60)
+    gui.blur_inspector_radius_slider.setRange(1, 100)
     gui.blur_inspector_radius_slider.setValue(36)
     # Keep mouse direction deterministic even if Windows/application locale
     # uses an RTL layout. Right must always mean a stronger blur.
@@ -1561,19 +1562,19 @@ def build_preview_panel(gui):
     gui.blur_inspector_radius_slider.setInvertedControls(False)
     gui.blur_inspector_radius_slider.setTracking(True)
     gui.blur_inspector_radius_slider.setToolTip(
-        "How strong the blur is (1 = light, 60 = very heavy)."
+        "How strong the blur is (1 = light, 100 = very heavy)."
     )
     radius_row.addWidget(gui.blur_inspector_radius_slider, 1)
-    gui.blur_inspector_radius_value_label = QLabel("36 / 60")
+    gui.blur_inspector_radius_value_label = QLabel("36 / 100")
     gui.blur_inspector_radius_value_label.setFixedWidth(52)
     radius_row.addWidget(gui.blur_inspector_radius_value_label)
     blur_layout.addLayout(radius_row)
 
     # --- Blur Opacity ---
     blur_opacity_row = QHBoxLayout()
-    blur_opacity_label = QLabel("Opacity")
+    blur_opacity_label = QLabel("Opacity (Transparency)")
     blur_opacity_label.setObjectName("sectionTitle")
-    blur_opacity_label.setFixedWidth(90)
+    blur_opacity_label.setFixedWidth(140)
     blur_opacity_row.addWidget(blur_opacity_label)
     gui.blur_inspector_opacity_slider = QSlider(Qt.Horizontal)
     gui.blur_inspector_opacity_slider.setRange(0, 100)

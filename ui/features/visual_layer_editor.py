@@ -554,7 +554,7 @@ class VisualLayerEditorMixin:
                 strength = int(round(float(getattr(layer, "blur_strength", 20.0))))
             except (TypeError, ValueError):
                 strength = 20
-            strength = max(1, min(60, strength))
+            strength = max(1, min(100, strength))
             try:
                 opacity = float(getattr(layer, "blur_opacity", 1.0))
             except (TypeError, ValueError):
@@ -574,7 +574,7 @@ class VisualLayerEditorMixin:
             self.blur_inspector_radius_slider.setValue(strength)
             self.blur_inspector_radius_slider.blockSignals(False)
         if hasattr(self, "blur_inspector_radius_value_label"):
-            self.blur_inspector_radius_value_label.setText(f"{strength} / 60")
+            self.blur_inspector_radius_value_label.setText(f"{strength} / 100")
         if hasattr(self, "blur_inspector_opacity_slider"):
             self.blur_inspector_opacity_slider.blockSignals(True)
             self.blur_inspector_opacity_slider.setValue(int(round(opacity * 100)))
@@ -627,7 +627,7 @@ class VisualLayerEditorMixin:
 
         def _on_radius_changed(value):
             if hasattr(self, "blur_inspector_radius_value_label"):
-                self.blur_inspector_radius_value_label.setText(f"{int(value)} / 60")
+                self.blur_inspector_radius_value_label.setText(f"{int(value)} / 100")
             layer, _ = _selected_blur_layer()
             if layer is None:
                 return

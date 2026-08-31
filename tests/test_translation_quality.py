@@ -30,6 +30,11 @@ class _RepairPolisher:
         return ["Hắn có 100 linh thạch"], [], "fake"
 
 
+class _FallbackTranslator:
+    def translate_batch(self, texts, **_kwargs):
+        return ["Đừng tưởng rằng chúng ta sợ ngươi."] * len(texts)
+
+
 class TranslationQualityTests(unittest.TestCase):
     def test_ai_source_contains_timing_metadata_but_keeps_one_line(self):
         value = TranslationOrchestrator._build_timed_ai_source(
@@ -110,6 +115,22 @@ class TranslationQualityTests(unittest.TestCase):
         )
         self.assertEqual(texts, ["Divine Realm"])
 
+    def test_vietnamese_guard_reports_leaked_english_clause_but_allows_names(self):
+        segments = [{"start": 0.0, "end": 5.0, "text": "你不要以为我们怕了你"}]
+        _texts, warnings = apply_translation_quality_guard(
+            source_segments=segments,
+            translated_texts=["Don't think that we are afraid of you. Bây giờ hãy lui đi."],
+            target_lang="vi",
+        )
+        self.assertIn("cụm tiếng Anh", " ".join(warnings))
+
+        _texts, name_warnings = apply_translation_quality_guard(
+            source_segments=segments,
+            translated_texts=["Peter đã đưa thanh kiếm cho Mary."],
+            target_lang="vi",
+        )
+        self.assertNotIn("cụm tiếng Anh", " ".join(name_warnings))
+
     def test_translation_prompt_contains_fidelity_context_ocr_and_glossary_rules(self):
         system, _user = build_translation_messages(
             source_texts=['<CUE duration="2.0">师兄来了</CUE>'],
@@ -153,6 +174,19 @@ class TranslationQualityTests(unittest.TestCase):
         self.assertIn("他来了", polisher.style)
         self.assertIn("然后离开", polisher.style)
         self.assertIn("never output nearby cues", polisher.style)
+
+    def test_unresolved_wrong_language_cue_uses_final_fallback(self):
+        orchestrator = TranslationOrchestrator()
+        orchestrator.google_web = _FallbackTranslator()
+        repaired, warnings = orchestrator._fallback_unresolved_quality_issues(
+            source_segments=[{"start": 0.0, "end": 3.0, "text": "你不要以为我们怕了你"}],
+            translated_texts=["Don't think that we are afraid of you."],
+            quality_warnings=["Cue 1: còn cụm tiếng Anh trong bản dịch tiếng Việt."],
+            src_lang="zh-Hans",
+            target_lang="vi",
+        )
+        self.assertEqual(repaired, ["Đừng tưởng rằng chúng ta sợ ngươi."])
+        self.assertEqual(warnings, [])
 
 
 if __name__ == "__main__":

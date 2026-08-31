@@ -27,6 +27,10 @@ class ProjectState:
     project_id: str
     project_root: str
     input_video: str
+    # Human-facing name is intentionally independent from ``project_id`` and
+    # ``input_video``.  Renaming a project must never move its files or change
+    # which media/timeline data belongs to it.
+    display_name: str = ""
     input_language: str = "auto"
     target_language: str = "vi"
     mode: str = "subtitle"
@@ -46,6 +50,7 @@ class ProjectState:
             project_id=str(data.get("project_id", "")),
             project_root=str(data.get("project_root", "")),
             input_video=str(data.get("input_video", "")),
+            display_name=str(data.get("display_name", "") or ""),
             input_language=str(data.get("input_language", "auto") or "auto"),
             target_language=str(data.get("target_language", "vi") or "vi"),
             mode=str(data.get("mode", "subtitle") or "subtitle"),
@@ -78,6 +83,7 @@ class ProjectState:
             "project_id": self.project_id,
             "project_root": self.project_root,
             "input_video": self.input_video,
+            "display_name": self.display_name,
             "input_language": self.input_language,
             "target_language": self.target_language,
             "mode": self.mode,

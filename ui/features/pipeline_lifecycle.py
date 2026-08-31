@@ -1011,6 +1011,15 @@ class PipelineLifecycleMixin:
                 self.persist_current_timeline_project_data()
             except Exception:
                 pass
+                
+        # Stop pending timeline persist timer so it doesn't fire after returning to launcher
+        persist_timer = getattr(self, "_timeline_persist_timer", None)
+        if persist_timer is not None:
+            persist_timer.stop()
+        self._pending_timeline_persist = False
+        self._pending_mask_state_persist = False
+        self._pending_blur_state_persist = False
+        
         video_path = getattr(self, "_current_video_path", "")
         if not video_path:
             video_path = os.path.normpath(self.video_path_edit.text().strip())
@@ -1027,6 +1036,7 @@ class PipelineLifecycleMixin:
         self._current_video_path = ""
         self._terminate_workers()
         self.hide()
+        self.deleteLater()
         QApplication.setQuitOnLastWindowClosed(False)
         QTimer.singleShot(100, lambda: relaunch_launcher(self.__class__))
 
@@ -1038,15 +1048,18 @@ class PipelineLifecycleMixin:
             except Exception:
                 pass
 
-        # Stop media players
+        # Stop media players and release file locks
+        from PySide6.QtCore import QUrl
         if hasattr(self, "media_player"):
             try:
                 self.media_player.stop()
+                self.media_player.setSource(QUrl())
             except Exception:
                 pass
         if hasattr(self, "audio_preview_player"):
             try:
                 self.audio_preview_player.stop()
+                self.audio_preview_player.setSource(QUrl())
             except Exception:
                 pass
 

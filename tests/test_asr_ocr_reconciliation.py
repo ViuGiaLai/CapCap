@@ -7,7 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "app")]
 
 from services.asr_ocr_reconciliation_service import AsrOcrReconciliationService
-from sensevoice_processor import _lang_code, _pad_and_merge_vad_segments
+from sensevoice_processor import (
+    _lang_code,
+    _pad_and_merge_vad_segments,
+    requires_multilingual_whisper,
+    supports_language,
+)
 
 
 class AsrOcrReconciliationTests(unittest.TestCase):
@@ -51,6 +56,43 @@ class AsrOcrReconciliationTests(unittest.TestCase):
         self.assertTrue(AsrOcrReconciliationService.should_scan(segments, "auto"))
         self.assertFalse(AsrOcrReconciliationService.should_scan(segments, "en"))
 
+    def test_repairs_supported_writing_systems_without_cross_script_replacement(self):
+        examples = [
+            ("ja", "て", "待って"),
+            ("ko", "려", "기다려"),
+            ("en", "wait", "Wait a moment"),
+            ("vi", "đã", "Đợi đã"),
+            ("ru", "жди", "Подожди"),
+            ("ar", "قف", "توقف"),
+            ("th", "รอ", "รอก่อน"),
+        ]
+        for language, partial, complete in examples:
+            with self.subTest(language=language):
+                repaired, count = AsrOcrReconciliationService.reconcile(
+                    [{"start": 3.0, "end": 3.7, "text": partial}],
+                    [{"start": 2.9, "end": 3.8, "text": complete}],
+                    source_language=language,
+                )
+                self.assertEqual(count, 1)
+                self.assertEqual(repaired[0]["text"], complete)
+
+                cross_script, cross_count = AsrOcrReconciliationService.reconcile(
+                    [{"start": 3.0, "end": 3.7, "text": partial}],
+                    [{"start": 2.9, "end": 3.8, "text": "等一下"}],
+                    source_language=language,
+                )
+                self.assertEqual(cross_count, 0)
+                self.assertEqual(cross_script[0]["text"], partial)
+
+    def test_latin_matching_uses_complete_words_not_substrings(self):
+        repaired, count = AsrOcrReconciliationService.reconcile(
+            [{"start": 1.0, "end": 1.5, "text": "he"}],
+            [{"start": 1.0, "end": 1.5, "text": "The hero returns"}],
+            source_language="en",
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(repaired[0]["text"], "he")
+
     def test_only_suspicious_cue_windows_are_requested_for_ocr(self):
         ranges = AsrOcrReconciliationService.suspicious_time_ranges([
             {"start": 20.0, "end": 20.4, "text": "完整句子"},
@@ -77,6 +119,16 @@ class SenseVoiceBoundaryTests(unittest.TestCase):
     def test_vietnamese_is_not_forced_through_chinese_decoder(self):
         self.assertEqual(_lang_code("vi"), "auto")
         self.assertEqual(_lang_code("zh-CN"), "zh")
+
+    def test_only_native_sensevoice_languages_stay_on_sensevoice(self):
+        for language in ("auto", "zh", "zh-CN", "yue", "en", "ja", "ko"):
+            self.assertTrue(supports_language(language), language)
+        for language in ("vi", "th", "id", "es", "fr", "de", "pt", "ru", "ar"):
+            self.assertFalse(supports_language(language), language)
+        for language in ("zh", "zh-CN", "yue", "en", "ja", "ko"):
+            self.assertFalse(requires_multilingual_whisper(language), language)
+        for language in ("auto", "vi", "th", "id", "es", "fr", "de", "pt", "ru", "ar"):
+            self.assertTrue(requires_multilingual_whisper(language), language)
 
 
 if __name__ == "__main__":

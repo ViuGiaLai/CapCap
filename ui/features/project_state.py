@@ -6,7 +6,23 @@ from features.voice_catalog import _default_asr_engine
 
 class ProjectStateMixin:
     def ensure_current_project(self):
-        video_path = self.video_path_edit.text().strip()
+        existing_state = getattr(self, "current_project_state", None)
+        if existing_state is not None and os.path.isdir(str(existing_state.project_root or "")):
+            state = existing_state
+            audio_handling_mode = self.get_audio_handling_mode()
+            if str(state.settings.get("audio_handling_mode", "fast")).strip().lower() != audio_handling_mode:
+                state.set_setting("audio_handling_mode", audio_handling_mode)
+                self.project_service.save_project(state)
+            return state
+        # Project identity must follow the imported source, not whichever
+        # derived preview (Auto Recap, styled preview, filtered preview) is
+        # currently loaded in the media player.  Using video_path_edit alone
+        # allowed a preview path to redirect subsequent subtitle/voice saves
+        # into another project's folder.
+        canonical_path = str(getattr(self, "_current_video_path", "") or "").strip()
+        video_path = canonical_path if canonical_path and os.path.exists(canonical_path) else self.video_path_edit.text().strip()
+        if video_path:
+            video_path = os.path.abspath(video_path)
         state = self.project_bridge.ensure_project(
             video_path=video_path,
             mode=self.get_output_mode_key(),
@@ -23,6 +39,33 @@ class ProjectStateMixin:
         self.current_project_state = state
         self.processed_artifacts.update(state.artifacts)
         return state
+
+    def rename_current_project(self):
+        from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+        state = getattr(self, "current_project_state", None)
+        if state is None:
+            QMessageBox.information(self, "Rename Project", "Open or create a project first.")
+            return
+        current_name = str(getattr(state, "display_name", "") or state.project_id)
+        name, accepted = QInputDialog.getText(self, "Rename Project", "Project name:", text=current_name)
+        if not accepted:
+            return
+        try:
+            self.project_service.rename_project(state, name)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Rename Project", str(exc))
+            return
+        self.update_project_header()
+        try:
+            from views.launcher import LauncherWindow
+            LauncherWindow.add_recent(None, {
+                "project_state_path": self.project_service.project_file(state.project_root),
+                "video_path": state.input_video,
+            })
+        except Exception:
+            pass
+        self.log(f"[Project] Renamed to {state.display_name}")
 
     def update_project_step(self, step_name: str, status: str):
         state = self.ensure_current_project()
@@ -287,6 +330,44 @@ class ProjectStateMixin:
             if not loaded.tracks:
                 return False
 
+            from app.services.timeline_video_sequence import timeline_video_clips
+
+            loaded_clips = timeline_video_clips(loaded)
+            loaded_sources = [os.path.normcase(os.path.abspath(clip.source)) for clip in loaded_clips]
+            canonical_source = os.path.normcase(os.path.abspath(str(state.input_video or "")))
+            recap_source = os.path.normcase(os.path.abspath(str(artifacts.get("auto_recap_video", "") or "")))
+            allowed_first_sources = {source for source in (canonical_source, recap_source) if source}
+
+            # A restored V1 whose first clip belongs to another imported
+            # video is evidence of the old project-switch leak. Never let it
+            # replace the selected project's source in the editor.
+            if loaded_sources and loaded_sources[0] not in allowed_first_sources:
+                self._project_media_source_mismatch = True
+                self.log(
+                    "[Project Recovery] Saved Timeline belongs to another source; "
+                    "starting this project from its own imported video."
+                )
+                reset_timeline = getattr(timeline, "_init_default_tracks", None)
+                if callable(reset_timeline):
+                    reset_timeline()
+                return False
+
+            lineage = list(getattr(state, "settings", {}).get("timeline_video_clips") or [])
+            lineage_sources = [
+                os.path.normcase(os.path.abspath(str(item.get("source", "") or "")))
+                for item in lineage if isinstance(item, dict) and item.get("source")
+            ]
+            # The prepare pipeline records the exact source order used to
+            # produce transcript/translation/voice artifacts. If the saved
+            # editor Timeline now points at a different video set, those
+            # artifacts must not be shown over the new source.
+            if (
+                lineage_sources
+                and loaded_sources != lineage_sources
+                and (not loaded_sources or loaded_sources[0] != recap_source)
+            ):
+                self._project_media_source_mismatch = True
+
             timeline._timeline = loaded
             # Track visibility toggles are an editor-view concern, not part
             # of the serialized project model.  Do not let hidden IDs from a
@@ -316,12 +397,79 @@ class ProjectStateMixin:
             self.log(f"[Timeline] Could not restore saved timeline: {exc}")
             return False
 
+    def _detach_mismatched_media_artifacts(self, state) -> None:
+        """Preserve stale files for recovery but remove them from active UI."""
+        import json
+        import time
+
+        media_keys = {
+            "extracted_audio", "audio_extracted", "asr_audio_profile", "asr_ocr_reference",
+            "transcript_raw", "transcript_segments", "transcript_chunk_raw",
+            "transcript_merged", "transcript_regrouped", "transcription_chunks",
+            "subtitle_original_srt", "srt_original", "subtitle_translated_srt", "srt_translated",
+            "translation_raw", "translation_refined", "translation_final",
+            "voice_vi", "voice_segments", "mixed_vi", "vocals", "music",
+            "auto_recap_video",
+        }
+        detached = {key: value for key, value in state.artifacts.items() if key in media_keys}
+        if not detached:
+            return
+        recovery_dir = os.path.join(state.project_root, "recovery")
+        os.makedirs(recovery_dir, exist_ok=True)
+        recovery_path = os.path.join(recovery_dir, f"mismatched_media_{int(time.time())}.json")
+        payload = {
+            "reason": "Saved media artifacts were generated from a different V1 source sequence.",
+            "input_video": state.input_video,
+            "timeline_video_clips": list(state.settings.get("timeline_video_clips") or []),
+            "artifacts": detached,
+        }
+        with open(recovery_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        for key in detached:
+            state.artifacts.pop(key, None)
+        state.artifacts["detached_media_recovery"] = recovery_path
+        for key in (
+            "timeline_video_clips", "timeline_video_signature", "extraction_signature",
+            "transcription_signature", "translation_signature", "voice_signature",
+            "asr_audio_normalization", "auto_recap_edl", "input_video_content_changed",
+        ):
+            state.settings.pop(key, None)
+        for step in (
+            "extract_audio", "transcribe", "translate_raw", "refine_translation",
+            "generate_tts", "build_subtitle", "mix_audio", "export",
+        ):
+            state.steps[step] = "pending"
+        self.project_service.save_project(state)
+        self.log(
+            "[Project Recovery] Detached subtitles/voice generated for another video. "
+            f"Original files were preserved at {recovery_path}"
+        )
+
     def load_project_context(self, state):
         if not state:
             return
         self._allow_post_pipeline_preview_assets = False
+        self._project_media_source_mismatch = False
 
         st = getattr(state, "settings", {}) or {}
+
+        if st.get("input_video_content_changed"):
+            self._project_media_source_mismatch = True
+
+        lineage = list(st.get("timeline_video_clips") or [])
+        lineage_sources = [
+            os.path.normcase(os.path.abspath(str(item.get("source", "") or "")))
+            for item in lineage if isinstance(item, dict) and item.get("source")
+        ]
+        canonical_source = os.path.normcase(os.path.abspath(str(state.input_video or "")))
+        recap_source_for_lineage = os.path.normcase(os.path.abspath(str(
+            getattr(state, "artifacts", {}).get("auto_recap_video", "") or ""
+        )))
+        if (
+            lineage_sources
+            and lineage_sources[0] not in {canonical_source, recap_source_for_lineage}
+        ):
+            self._project_media_source_mismatch = True
 
         # Restore Auto Recap state early so export and the Generate menu do not
         # silently lose the previous EDL when a project is reopened.
@@ -517,6 +665,11 @@ class ProjectStateMixin:
             self._saved_timeline_model_restored = bool(
                 self._restore_saved_timeline_model(state)
             )
+        if self._project_media_source_mismatch:
+            self._detach_mismatched_media_artifacts(state)
+            context = self.project_bridge.load_context(state)
+            self.last_recap_video_path = ""
+            self.current_auto_recap_edl = []
         self._timeline_video_thumb_cache_key = None
         self._timeline_video_thumbnails = []
         self.processed_artifacts.update(context["artifacts"])

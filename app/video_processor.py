@@ -427,8 +427,10 @@ def _build_blur_filter_chain(blur_region, video_width, video_height):
             strength = float(region.get("blur_strength", 36.0))
         except (TypeError, ValueError):
             strength = 36.0
-        luma_radius = max(1, min(180, int(round(strength * 3.0)), int(min_dimension // 2)))
-        chroma_radius = max(0, min(180, luma_radius // 2))
+        
+        # We map UI strength (1-100) to sigma. gblur has no strict limit based on dimensions.
+        sigma = max(1.0, min(200.0, strength))
+        
         try:
             opacity = float(region.get("blur_opacity", 1.0))
         except (TypeError, ValueError):
@@ -444,19 +446,19 @@ def _build_blur_filter_chain(blur_region, video_width, video_height):
             end = float(region.get("end", 0.0) or 0.0)
         except (TypeError, ValueError):
             start, end = 0.0, 0.0
-        regions.append((x, y, w, h, luma_radius, chroma_radius, opacity, pixelate, pixel_size, start, end))
+        regions.append((x, y, w, h, sigma, 0, opacity, pixelate, pixel_size, start, end))
     if not regions:
         return ""
 
     crop_parts = []
     overlay_parts = []
-    for index, (x, y, w, h, luma_radius, chroma_radius, opacity, pixelate, pixel_size, start, end) in enumerate(regions):
+    for index, (x, y, w, h, sigma, chroma_radius, opacity, pixelate, pixel_size, start, end) in enumerate(regions):
         if pixelate:
             cell_w = max(1, w // pixel_size)
             cell_h = max(1, h // pixel_size)
             effect = f"scale={cell_w}:{cell_h}:flags=neighbor,scale={w}:{h}:flags=neighbor"
         else:
-            effect = f"boxblur={luma_radius}:6:{chroma_radius}:6"
+            effect = f"gblur=sigma={sigma}:steps=3"
         if opacity < 0.999:
             effect = f"format=yuva420p,{effect},colorchannelmixer=aa={opacity:.3f}"
         crop_parts.append(
@@ -560,12 +562,10 @@ def _build_mask_filter_chain(mask_regions, video_width, video_height):
             )
 
         elif mode == "blur":
-            min_dimension = min(w, h)
-            luma_radius = max(1, min(20, int(min_dimension // 2)))
-            chroma_radius = max(0, min(20, int(min_dimension // 4)))
+            sigma = max(1.0, min(200.0, float(blur_strength)))
             filter_statements.append(
                 f"{current_input}split=2[main{index}][tmp{index}];"
-                f"[tmp{index}]crop=w={w}:h={h}:x={x}:y={y},boxblur={luma_radius}:3:{chroma_radius}:3[blur{index}];"
+                f"[tmp{index}]crop=w={w}:h={h}:x={x}:y={y},gblur=sigma={sigma}:steps=3[blur{index}];"
                 f"[main{index}][blur{index}]overlay={x}:{y}{timing}{output_label}"
             )
 

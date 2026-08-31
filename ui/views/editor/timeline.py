@@ -28,6 +28,7 @@ class EditorTimeline(QGraphicsView):
     layoutChanged = Signal()
     addLayerRequested = Signal()
     deleteRequested = Signal()
+    clearTrackRequested = Signal(str)
     splitRequested = Signal()
     regenerateVoiceRequested = Signal()
     openSubtitleEditorRequested = Signal()
@@ -713,6 +714,12 @@ class EditorTimeline(QGraphicsView):
             return
         for track in self._timeline.tracks:
             self._track_heights[track.id] = self._compute_track_height(track)
+
+    def _track_display_height(self, track) -> int:
+        """Return the current display height for a track."""
+        if track is None:
+            return self.TRACK_DEFAULT_H
+        return self._track_heights.get(track.id, self._compute_track_height(track))
 
     def _compute_track_height(self, track) -> int:
         """Compute a track's height. Region tracks (Blur, Logo, Mask)
@@ -1948,6 +1955,10 @@ class EditorTimeline(QGraphicsView):
         super().mousePressEvent(event)
 
     def contextMenuEvent(self, event) -> None:
+        if not self._timeline:
+            super().contextMenuEvent(event)
+            return
+
         pos = event.pos()
         scroll_x = self.horizontalScrollBar().value()
         scroll_y = self.verticalScrollBar().value()
@@ -1968,17 +1979,30 @@ class EditorTimeline(QGraphicsView):
             "QMenu::separator { height: 1px; background: #2a3347; margin: 4px 8px; }"
         )
 
+        # Identify the track under the mouse cursor, even if empty space is clicked
+        track_at_pos = None
+        y_cursor = pos.y() + scroll_y
+        current_y = self.RULER_HEIGHT
+        for tr in self._timeline.tracks:
+            if not self.is_track_shown_on_timeline(tr):
+                continue
+            h = self._track_display_height(tr)
+            if current_y <= y_cursor < current_y + h:
+                track_at_pos = tr
+                break
+            current_y += h
+
         if layer is not None and track is not None:
             is_sub = self._is_subtitle_track(track)
             seg_idx = self.segment_index_for_layer_id(target_lid) if is_sub else -1
 
-            menu.addAction("🗑️ Xóa đoạn này (Delete)", self.deleteRequested.emit)
-            menu.addAction("✂️ Cắt tại con trỏ (Split)", self.splitRequested.emit)
+            menu.addAction("🗑️ Delete", self.deleteRequested.emit)
+            menu.addAction("✂️ Split at Cursor", self.splitRequested.emit)
 
             if is_sub and seg_idx >= 0:
                 menu.addSeparator()
-                menu.addAction("🎙️ Đọc lại giọng AI (Regenerate Voice)", self.regenerateVoiceRequested.emit)
-                menu.addAction("✏️ Mở trong Subtitle Editor", self.openSubtitleEditorRequested.emit)
+                menu.addAction("🎙️ Regenerate AI Voice", self.regenerateVoiceRequested.emit)
+                menu.addAction("✏️ Open in Subtitle Editor", self.openSubtitleEditorRequested.emit)
                 
                 # Copy text helper
                 def _copy_text():
@@ -1992,12 +2016,18 @@ class EditorTimeline(QGraphicsView):
                         if clipboard:
                             clipboard.setText(text)
 
-                menu.addAction("📋 Sao chép nội dung phụ đề", _copy_text)
+                menu.addAction("📋 Copy Subtitle Text", _copy_text)
         else:
             click_time = self._pos_to_time(pos.x(), scroll_x)
-            menu.addAction("➕ Thêm phụ đề tại vị trí này", lambda t=click_time: self.addSubtitleAtRequested.emit(t))
+            menu.addAction("➕ Add Subtitle Here", lambda t=click_time: self.addSubtitleAtRequested.emit(t))
             if self._selection_range:
-                menu.addAction("❌ Bỏ vùng chọn (Clear Range)", self.clear_selection_range)
+                menu.addAction("❌ Clear Range", self.clear_selection_range)
+
+        the_track = track if (layer is not None and track is not None) else track_at_pos
+        if the_track is not None:
+            menu.addSeparator()
+            track_name = getattr(the_track, "name", "Track")
+            menu.addAction(f"🗑️ Clear Track '{track_name}'", lambda t=track_name: self.clearTrackRequested.emit(t))
 
         menu.exec(event.globalPos())
 

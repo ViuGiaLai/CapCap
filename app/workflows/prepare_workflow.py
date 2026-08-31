@@ -503,8 +503,11 @@ class PrepareWorkflow:
             return raw_segments, 0
         region = (os.getenv("OCR_SUBTITLE_REGION") or "bottom").strip().lower()
         try:
-            print("[ASR Accuracy] Short Chinese cue detected; checking burned-in source subtitles via OCR.")
-            time_ranges = service.suspicious_time_ranges(raw_segments)
+            print("[ASR Accuracy] Truncated cue detected; checking burned-in source subtitles via OCR.")
+            time_ranges = service.suspicious_time_ranges(
+                raw_segments,
+                source_language=source_language,
+            )
             ocr_segments = self._ocr_timeline_reference(
                 video_path,
                 timeline_clips,
@@ -517,11 +520,15 @@ class PrepareWorkflow:
                 os.path.join("analysis", "asr_ocr_reference.json"),
                 ocr_segments,
             )
-            reconciled, replacement_count = service.reconcile(raw_segments, ocr_segments)
+            reconciled, replacement_count = service.reconcile(
+                raw_segments,
+                ocr_segments,
+                source_language=source_language,
+            )
             if replacement_count:
                 print(
                     "[ASR Accuracy] Restored "
-                    f"{replacement_count} truncated Chinese cue(s) from matching on-screen source subtitles."
+                    f"{replacement_count} truncated cue(s) from matching on-screen source subtitles."
                 )
             else:
                 print("[ASR Accuracy] OCR found no safe temporal/text match; ASR text was kept unchanged.")
@@ -564,6 +571,15 @@ class PrepareWorkflow:
         if speaker_diarization_num_speakers < 2:
             speaker_diarization_num_speakers = -1
         is_sensevoice = transcription_engine == "sensevoice"
+        if is_sensevoice:
+            from sensevoice_processor import requires_multilingual_whisper
+            if requires_multilingual_whisper(source_language):
+                print(
+                    "[ASR] The selected source language requires broad language detection "
+                    f"({source_language}); using multilingual Whisper instead of SenseVoice."
+                )
+                transcription_engine = "whisper"
+                is_sensevoice = False
 
         # The GUI runs the same checks before launching the worker.  Repeat
         # them here because a frozen worker can have a different import or
@@ -995,7 +1011,8 @@ class PrepareWorkflow:
                 # so a project cannot reuse an aggressively regrouped
                 # transcript. Raw per-chunk ASR cache entries remain valid.
                 audio_handling_mode=(
-                    f"{audio_mode_key}|asr-merge-v5|"
+                    f"{audio_mode_key}|asr-merge-v6|"
+                    f"{SegmentRegroupService.VERSION}|"
                     f"{AsrOcrReconciliationService.VERSION}"
                 ),
             )
@@ -1147,7 +1164,7 @@ class PrepareWorkflow:
                 if repaired_asr_count and streamed_translation_executor is not None:
                     # These batches started from text produced before OCR
                     # reconciliation. Discard them and translate the corrected
-                    # Chinese source below.
+                    # source below.
                     streamed_translation_executor.shutdown(wait=True)
                     streamed_translation_executor = None
                     streamed_translation_futures = []

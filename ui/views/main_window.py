@@ -128,6 +128,8 @@ def _build_header_bar(gui):
     gui.preview_5s_action = more_menu.addAction("Fast Preview (5 seconds)")
     gui.preview_5s_action.triggered.connect(gui.preview_5s_btn.click)
     more_menu.addSeparator()
+    gui.rename_project_action = more_menu.addAction("Rename Project…")
+    gui.rename_project_action.triggered.connect(gui.rename_current_project)
     gui.clean_project_action = more_menu.addAction("Clean")
     gui.clean_project_action.triggered.connect(gui.clean_current_project)
     gui.exit_project_action = more_menu.addAction("Exit")
@@ -163,6 +165,16 @@ def _build_header_bar(gui):
     gui.titlebar_min_btn.clicked.connect(gui.showMinimized)
     layout.addWidget(gui.titlebar_min_btn)
 
+    window_is_maximized = bool(gui.windowState() & Qt.WindowMaximized)
+    gui.titlebar_max_btn = QPushButton("❐" if window_is_maximized else "□")
+    gui.titlebar_max_btn.setObjectName("titleBarButton")
+    gui.titlebar_max_btn.setFixedSize(36, 36)
+    gui.titlebar_max_btn.setToolTip("Restore" if window_is_maximized else "Maximize")
+    gui.titlebar_max_btn.setAccessibleName("Maximize or restore window")
+    gui.titlebar_max_btn.setCursor(Qt.PointingHandCursor)
+    gui.titlebar_max_btn.clicked.connect(lambda: _toggle_window_maximized(gui))
+    layout.addWidget(gui.titlebar_max_btn)
+
     gui.titlebar_close_btn = QPushButton("✕")
     gui.titlebar_close_btn.setObjectName("titleBarCloseButton")
     gui.titlebar_close_btn.setFixedSize(36, 36)
@@ -171,6 +183,39 @@ def _build_header_bar(gui):
     gui.titlebar_close_btn.clicked.connect(gui.exit_to_launcher)
     layout.addWidget(gui.titlebar_close_btn)
     return header
+
+
+def _toggle_window_maximized(gui):
+    """Toggle only the native window state; editor/project state is untouched."""
+    is_maximized = bool(gui.windowState() & Qt.WindowMaximized) or gui.isMaximized()
+    if is_maximized:
+        restore_geometry = getattr(gui, "_titlebar_restore_geometry", None)
+        gui.showNormal()
+        if restore_geometry is not None and restore_geometry.isValid():
+            gui.setGeometry(restore_geometry)
+        else:
+            # The initial responsive-layout pass intentionally sizes the
+            # hidden maximized window to the whole available screen. Qt can
+            # then retain that as normalGeometry(), making showNormal() look
+            # as if it did nothing. Give the first restore a real centered
+            # window; subsequent maximize clicks remember the user's size.
+            screen = gui.screen()
+            available = screen.availableGeometry() if screen is not None else None
+            if available is not None and available.isValid():
+                width = max(gui.minimumWidth(), int(available.width() * 0.84))
+                height = max(gui.minimumHeight(), int(available.height() * 0.84))
+                width = min(width, available.width())
+                height = min(height, available.height())
+                left = available.left() + (available.width() - width) // 2
+                top = available.top() + (available.height() - height) // 2
+                gui.setGeometry(left, top, width, height)
+        gui.titlebar_max_btn.setText("□")
+        gui.titlebar_max_btn.setToolTip("Maximize")
+    else:
+        gui._titlebar_restore_geometry = gui.geometry()
+        gui.showMaximized()
+        gui.titlebar_max_btn.setText("❐")
+        gui.titlebar_max_btn.setToolTip("Restore")
 
 
 def _tint_pixmap(pixmap: QPixmap, color: QColor) -> QPixmap:

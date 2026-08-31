@@ -165,12 +165,13 @@ def sync_segments_to_dub_subtitle_layers(
     # to identify stale layers here: the following cue may now have the same
     # index as the removed cue.  The remaining entries in existing_by_idx are
     # the actual layer objects that were not matched above.
-    stale_layer_ids = {id(layer) for layer in existing_by_idx.values()}
-    if stale_layer_ids:
-        target.layers[:] = [
-            l for l in target.layers
-            if id(l) not in stale_layer_ids
-        ]
+    # The synchronized list is authoritative. Replacing the track contents is
+    # safer than deleting only entries left in ``existing_by_idx``: restored
+    # projects may contain stale layers whose old segment index is no longer
+    # represented (or duplicate identities left by an earlier partial sync).
+    # Every reusable layer is already present in ``new_layers``, so this keeps
+    # its audio/settings while guaranteeing exactly one TS1 layer per cue.
+    target.layers[:] = new_layers
     return new_layers
 
 

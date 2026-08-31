@@ -49,12 +49,13 @@ def _save_recent_projects(settings, projects):
         json.dump(projects, f, ensure_ascii=False, indent=2)
 
 
-def _project_pipeline_status(video_path: str) -> tuple[str, str]:
+def _project_pipeline_status(video_path: str = "", state_path: str = "") -> tuple[str, str]:
     """Read the persisted project stage without creating or modifying it."""
-    name = os.path.splitext(os.path.basename(video_path))[0] or "project"
-    slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower() or "project"
-    digest = hashlib.sha1(os.path.abspath(video_path).encode("utf-8")).hexdigest()[:8]
-    state_path = os.path.join(workspace_root(), "projects", f"{slug}_{digest}", "project.json")
+    if not state_path:
+        name = os.path.splitext(os.path.basename(video_path))[0] or "project"
+        slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower() or "project"
+        digest = hashlib.sha1(os.path.abspath(video_path).encode("utf-8")).hexdigest()[:8]
+        state_path = os.path.join(workspace_root(), "projects", f"{slug}_{digest}", "project.json")
     try:
         with open(os.path.normpath(state_path), "r", encoding="utf-8") as handle:
             state = json.load(handle)
@@ -123,9 +124,11 @@ MSG_STYLE = """
 
 
 class ProjectCard(QFrame):
-    def __init__(self, video_path: str, thumbnail_cache_dir: str, parent=None):
+    def __init__(self, video_path: str, thumbnail_cache_dir: str, parent=None, *,
+                 project_state_path: str = "", display_name: str = ""):
         super().__init__(parent)
         self.video_path = video_path
+        self.project_state_path = project_state_path
         self._orig_pixmap = None
         self.setObjectName("projectCard")
         self.setMinimumSize(220, 210)
@@ -156,13 +159,13 @@ class ProjectCard(QFrame):
         self.thumb_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self.thumb_label)
 
-        self.name_label = QLabel(os.path.basename(video_path))
+        self.name_label = QLabel(display_name or os.path.basename(video_path) or "Untitled Project")
         self.name_label.setWordWrap(True)
         self.name_label.setMaximumHeight(34)
         self.name_label.setStyleSheet("color: #eaf4ff; font-size: 12px; font-weight: 600; line-height: 1.2em;")
         layout.addWidget(self.name_label)
 
-        stage_text, stage_color = _project_pipeline_status(video_path)
+        stage_text, stage_color = _project_pipeline_status(video_path, project_state_path)
         self.stage_badge = QLabel(stage_text)
         self.stage_badge.setAlignment(Qt.AlignCenter)
         self.stage_badge.setStyleSheet(
@@ -174,6 +177,9 @@ class ProjectCard(QFrame):
         self._load_thumb(thumbnail_cache_dir)
 
     def _load_thumb(self, cache_dir):
+        if not self.video_path or not os.path.exists(self.video_path):
+            self.thumb_label.setText("Empty Project")
+            return
         thumb_path = os.path.join(cache_dir, _thumbnail_name(self.video_path))
         if not os.path.exists(thumb_path):
             thumb_path = _extract_thumbnail(self.video_path, thumb_path)
@@ -198,8 +204,13 @@ class ProjectCard(QFrame):
         if not self.isEnabled():
             event.ignore()
             return
-        self.window().selected_video = self.video_path
-        self.window().accept()
+        win = self.window()
+        if getattr(win, "_is_accepting", False):
+            event.ignore()
+            return
+        win.selected_video = self.video_path
+        win.selected_project_state_path = self.project_state_path
+        win.accept()
 
 
 def _extract_waveform_audio(video_path: str, temp_root: str, duration_s: float = 0.0) -> str:
@@ -331,8 +342,11 @@ class LauncherWindow(QDialog):
     def __init__(self):
         super().__init__()
         self.selected_video = ""
+        self.selected_project_state_path = ""
         self.selected_device = "cuda"
         self._thumbnail_dir = os.path.join(workspace_root(), "temp", "launcher_thumbs")
+        self._loader_timer = None
+        self._is_accepting = False
 
         from runtime_paths import asset_path
         from PySide6.QtGui import QIcon
@@ -641,7 +655,11 @@ class LauncherWindow(QDialog):
         root.addWidget(self.loading_label)
 
     def accept(self):
+        if getattr(self, "_is_accepting", False):
+            return
+
         if not self.selected_video or not os.path.exists(self.selected_video):
+            self._is_accepting = True
             super().accept()
             return
 
@@ -687,6 +705,7 @@ class LauncherWindow(QDialog):
             mb.exec()
             return
 
+        self._is_accepting = True
         self._set_selected_device(self.selected_device)
         self.loading_label.show()
         self.loading_label.setText("Preparing thumbnails and waveform...\nLarge videos may continue preparing in the editor.")
@@ -696,14 +715,29 @@ class LauncherWindow(QDialog):
         self._preprocess_continued_in_background = False
         import threading
         def _preprocess():
-            from runtime_paths import workspace_root
-            temp_root = os.path.join(workspace_root(), "temp")
-            _prepare_timeline_visual_cache(self.selected_video, temp_root)
-            self._extraction_done = True
+            try:
+                from runtime_paths import workspace_root
+                temp_root = os.path.join(workspace_root(), "temp")
+                _prepare_timeline_visual_cache(self.selected_video, temp_root)
+            except Exception as exc:
+                print(f"[Launcher] Background cache preparation note: {exc}")
+            finally:
+                self._extraction_done = True
         threading.Thread(target=_preprocess, daemon=True).start()
-        self._loader_timer = QTimer()
+        self._stop_loader_timer()
+        self._loader_timer = QTimer(self)
         self._loader_timer.timeout.connect(self._on_loader_tick)
         self._loader_timer.start(200)
+
+    def _stop_loader_timer(self):
+        timer = getattr(self, "_loader_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+                timer.timeout.disconnect(self._on_loader_tick)
+            except Exception:
+                pass
+            self._loader_timer = None
 
     def _on_loader_tick(self):
         if not getattr(self, "_extraction_done", False):
@@ -715,17 +749,26 @@ class LauncherWindow(QDialog):
             if started and time.monotonic() - started >= 12.0:
                 self._preprocess_continued_in_background = True
                 print("[Launcher] Timeline visual cache is still preparing; continuing in background.")
-                self._loader_timer.stop()
+                self._stop_loader_timer()
                 self._finish_accept()
             return
-        self._loader_timer.stop()
+        self._stop_loader_timer()
         self._finish_accept()
 
     def _finish_accept(self):
+        self._stop_loader_timer()
         self.loading_label.hide()
         self.new_btn.setEnabled(True)
         self._save_device_env()
         super().accept()
+
+    def reject(self):
+        self._stop_loader_timer()
+        super().reject()
+
+    def closeEvent(self, event):
+        self._stop_loader_timer()
+        super().closeEvent(event)
 
     @staticmethod
     def _save_device_env():
@@ -841,9 +884,33 @@ class LauncherWindow(QDialog):
             if widget:
                 widget.deleteLater()
 
-        existing = [p for p in projects if os.path.exists(p.get("video_path", ""))]
+        # New records point to project.json. Keep legacy video-only records
+        # working, and also discover projects created before launcher history
+        # was written.
+        existing = []
+        seen_projects = set()
+        for item in projects:
+            record = self._normalize_recent_record(item)
+            if record is None:
+                continue
+            project_key = self._recent_project_key(record)
+            if not project_key or project_key in seen_projects:
+                continue
+            seen_projects.add(project_key)
+            existing.append(record)
+        projects_root = os.path.join(workspace_root(), "projects")
+        if os.path.isdir(projects_root):
+            for entry in os.scandir(projects_root):
+                state_path = os.path.join(entry.path, "project.json")
+                if entry.is_dir() and os.path.isfile(state_path):
+                    record = self._normalize_recent_record({"project_state_path": state_path, "opened_at": 0})
+                    project_key = self._recent_project_key(record) if record is not None else ""
+                    if record is not None and project_key and project_key not in seen_projects:
+                        existing.append(record)
+                        seen_projects.add(project_key)
+        existing.sort(key=lambda item: int(item.get("opened_at", 0) or 0), reverse=True)
         if existing != projects:
-            _save_recent_projects(None, existing)
+            _save_recent_projects(None, existing[:24])
 
         if not existing:
             self.empty_label.show()
@@ -853,7 +920,11 @@ class LauncherWindow(QDialog):
         available_width = max(800, self.grid_widget.width(), self.width() - 48)
         columns = max(3, min(4, available_width // 260))
         for i, proj in enumerate(existing):
-            card = ProjectCard(proj["video_path"], self._thumbnail_dir, self)
+            card = ProjectCard(
+                proj.get("video_path", ""), self._thumbnail_dir, self,
+                project_state_path=proj.get("project_state_path", ""),
+                display_name=proj.get("display_name", ""),
+            )
             row, col = divmod(i, max(1, columns))
             self.grid.addWidget(card, row, col)
             self.grid.setColumnStretch(col, 0)
@@ -864,13 +935,72 @@ class LauncherWindow(QDialog):
         QTimer.singleShot(0, self._load_recent)
 
     def _on_new_project(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Video", "",
-            "Video Files (*.mp4 *.mkv *.avi *.mov *.webm);;All Files (*)"
-        )
-        if path:
-            self.selected_video = path
-            self.accept()
+        if getattr(self, "_is_accepting", False):
+            return
+        from services import ProjectService
+        state = ProjectService(workspace_root()).create_project()
+        self.selected_video = ""
+        self.selected_project_state_path = os.path.join(state.project_root, "project.json")
+        self.accept()
+
+    @staticmethod
+    def _normalize_recent_record(item):
+        if not isinstance(item, dict):
+            return None
+        raw_state_path = str(item.get("project_state_path", "") or "").strip()
+        raw_video_path = str(item.get("video_path", "") or "").strip()
+        state_path = os.path.normpath(raw_state_path) if raw_state_path else ""
+        video_path = os.path.normpath(raw_video_path) if raw_video_path else ""
+        payload = {}
+        if not state_path and video_path and os.path.isfile(video_path):
+            name = os.path.splitext(os.path.basename(video_path))[0] or "project"
+            slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower() or "project"
+            digest = hashlib.sha1(os.path.abspath(video_path).encode("utf-8")).hexdigest()[:8]
+            legacy_state = os.path.join(workspace_root(), "projects", f"{slug}_{digest}", "project.json")
+            if os.path.isfile(legacy_state):
+                state_path = os.path.normpath(legacy_state)
+        if state_path and os.path.isfile(state_path):
+            projects_root = os.path.normcase(os.path.abspath(os.path.join(workspace_root(), "projects")))
+            absolute_state = os.path.normcase(os.path.abspath(state_path))
+            try:
+                if os.path.commonpath([absolute_state, projects_root]) != projects_root:
+                    return None
+            except ValueError:
+                return None
+            try:
+                with open(state_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except (OSError, ValueError, TypeError):
+                return None
+            video_path = str(payload.get("input_video", "") or video_path)
+            if not video_path:
+                clips = list((payload.get("settings") or {}).get("timeline_video_clips") or [])
+                video_path = next((str(c.get("source", "")) for c in clips if isinstance(c, dict)), "")
+            return {
+                "project_state_path": state_path,
+                "project_id": str(payload.get("project_id", "") or ""),
+                "video_path": os.path.normpath(video_path) if video_path else "",
+                "display_name": str(payload.get("display_name") or os.path.basename(video_path) or payload.get("project_id") or "Untitled Project"),
+                "opened_at": int(item.get("opened_at", 0) or 0),
+            }
+        if video_path and os.path.isfile(video_path):
+            return {"project_state_path": "", "video_path": video_path,
+                    "display_name": os.path.basename(video_path),
+                    "opened_at": int(item.get("opened_at", 0) or 0)}
+        return None
+
+    @staticmethod
+    def _recent_project_key(record):
+        if not isinstance(record, dict):
+            return ""
+        project_id = str(record.get("project_id", "") or "").strip().lower()
+        if project_id:
+            return f"id:{project_id}"
+        state_path = str(record.get("project_state_path", "") or "").strip()
+        if state_path:
+            return f"state:{os.path.normcase(os.path.abspath(state_path))}"
+        video_path = str(record.get("video_path", "") or "").strip()
+        return f"video:{os.path.normcase(os.path.abspath(video_path))}" if video_path else ""
 
     def _on_manage_resources(self):
         from views.resource_manager import open_resource_manager
@@ -1204,17 +1334,31 @@ class LauncherWindow(QDialog):
             self._gpu_label.setStyleSheet("font-size: 11px; color: #5a7a9a;")
 
     @staticmethod
-    def add_recent(settings_or_none, video_path: str):
-        video_path = os.path.normpath(video_path)
-        projects = _load_recent_projects()
-        projects = [p for p in projects if os.path.exists(p.get("video_path", ""))]
-        existing = [p for p in projects if os.path.normpath(p.get("video_path", "")) == video_path]
-        if existing:
-            projects.remove(existing[0])
-        projects.insert(0, {
+    def add_recent(settings_or_none, selection):
+        if isinstance(selection, dict):
+            raw_state_path = str(selection.get("project_state_path", "") or "").strip()
+            raw_video_path = str(selection.get("video_path", "") or "").strip()
+            project_state_path = os.path.normpath(raw_state_path) if raw_state_path else ""
+            video_path = os.path.normpath(raw_video_path) if raw_video_path else ""
+        else:
+            project_state_path = ""
+            raw_video_path = str(selection or "").strip()
+            video_path = os.path.normpath(raw_video_path) if raw_video_path else ""
+        record = LauncherWindow._normalize_recent_record({
+            "project_state_path": project_state_path,
             "video_path": video_path,
             "opened_at": int(time.time()),
         })
+        if record is None:
+            return
+        projects = _load_recent_projects()
+        normalized = [LauncherWindow._normalize_recent_record(p) for p in projects]
+        normalized = [p for p in normalized if p is not None]
+        key = LauncherWindow._recent_project_key(record)
+        normalized = [p for p in normalized if LauncherWindow._recent_project_key(p) != key]
+        record["opened_at"] = int(time.time())
+        normalized.insert(0, record)
+        projects = normalized
         projects = projects[:12]
         _save_recent_projects(None, projects)
 
@@ -1225,9 +1369,12 @@ def _thumbnail_name(video_path: str) -> str:
     return f"{h}.jpg"
 
 
-def show_launcher(settings_or_none) -> str:
-    """Show launcher, return selected video path or empty string."""
+def show_launcher(settings_or_none):
+    """Show launcher and return a project/video selection descriptor."""
     w = LauncherWindow()
     if w.exec() == QDialog.Accepted:
-        return w.selected_video
-    return ""
+        return {
+            "project_state_path": w.selected_project_state_path,
+            "video_path": w.selected_video,
+        }
+    return None

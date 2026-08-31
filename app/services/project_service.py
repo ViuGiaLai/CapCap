@@ -31,27 +31,124 @@ class ProjectService:
         self._ensure_project_dirs(project_root)
  
         state_path = self.project_file(project_root)
+        current_identity = self._input_video_identity(video_path)
         if os.path.exists(state_path):
             state = self.load_project(state_path)
-            state.input_video = video_path
+            if not state.display_name:
+                state.display_name = os.path.basename(video_path) or state.project_id
+            previous_identity = dict(state.settings.get("input_video_identity") or {})
+            state.input_video = os.path.abspath(video_path)
+            if previous_identity and previous_identity != current_identity:
+                state.set_setting("input_video_content_changed", {
+                    "previous": previous_identity,
+                    "current": current_identity,
+                })
+            state.set_setting("input_video_identity", current_identity)
+            self.save_project(state)
             return state
  
         state = ProjectState(
             project_id=project_id,
             project_root=project_root,
-            input_video=video_path,
+            input_video=os.path.abspath(video_path),
+            display_name=os.path.basename(video_path) or project_id,
             input_language=input_language,
             target_language=target_language,
             mode=mode,
             translator_ai=translator_ai,
             translator_style=translator_style,
         )
+        state.set_setting("input_video_identity", current_identity)
         self.save_project(state)
         return state
 
+    def create_project(self) -> ProjectState:
+        """Create a video-independent project with the next VIUSTUDIO name."""
+        os.makedirs(self.projects_root, exist_ok=True)
+        next_number = self._next_viustudio_number()
+        while True:
+            display_name = f"VIUSTUDIO{next_number}"
+            # A deterministic folder is also an atomic number reservation:
+            # if two app instances create at once, only one mkdir succeeds
+            # and the other advances to the next number.
+            project_id = display_name.lower()
+            project_root = os.path.join(self.projects_root, project_id)
+            try:
+                os.mkdir(project_root)
+                break
+            except FileExistsError:
+                next_number += 1
+        self._ensure_project_dirs(project_root)
+        state = ProjectState(
+            project_id=project_id,
+            project_root=project_root,
+            input_video="",
+            display_name=display_name,
+        )
+        self.save_project(state)
+        return state
+
+    def rename_project(self, state: ProjectState, display_name: str) -> ProjectState:
+        name = " ".join(str(display_name or "").strip().split())
+        if not name:
+            raise ValueError("Project name cannot be empty.")
+        if len(name) > 120:
+            raise ValueError("Project name must be 120 characters or fewer.")
+        if any(char in name for char in '<>:"/\\|?*'):
+            raise ValueError("Project name contains invalid characters.")
+        state.display_name = name
+        self.save_project(state)
+        return state
+
+    def _next_viustudio_number(self) -> int:
+        highest = 9999
+        try:
+            entries = list(os.scandir(self.projects_root))
+        except OSError:
+            entries = []
+        pattern = re.compile(r"^VIUSTUDIO(\d+)$", re.IGNORECASE)
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            candidates = [entry.name.split("_", 1)[0]]
+            try:
+                state = self.load_project(self.project_file(entry.path))
+                candidates.append(state.display_name)
+            except (OSError, ValueError, TypeError, KeyError):
+                pass
+            for candidate in candidates:
+                match = pattern.match(str(candidate or "").strip())
+                if match:
+                    highest = max(highest, int(match.group(1)))
+        return highest + 1
+
+    @staticmethod
+    def _input_video_identity(video_path: str) -> dict[str, Any]:
+        """Cheap content identity that detects a different file at one path."""
+        path = os.path.abspath(str(video_path or ""))
+        try:
+            stat = os.stat(path)
+            sample_size = 1024 * 1024
+            digest = hashlib.sha1()
+            with open(path, "rb") as handle:
+                digest.update(handle.read(sample_size))
+                if stat.st_size > sample_size:
+                    handle.seek(max(0, stat.st_size - sample_size))
+                    digest.update(handle.read(sample_size))
+            return {
+                "path": os.path.normcase(path),
+                "size": int(stat.st_size),
+                "sample_sha1": digest.hexdigest(),
+            }
+        except OSError:
+            return {"path": os.path.normcase(path), "size": -1, "sample_sha1": ""}
+
     def load_project(self, state_path: str) -> ProjectState:
         with open(state_path, "r", encoding="utf-8") as handle:
-            return ProjectState.from_dict(json.load(handle))
+            state = ProjectState.from_dict(json.load(handle))
+        if not state.display_name:
+            state.display_name = os.path.basename(state.input_video) or state.project_id or "Untitled Project"
+        return state
 
     def save_project(self, state: ProjectState) -> str:
         self._ensure_project_dirs(state.project_root)

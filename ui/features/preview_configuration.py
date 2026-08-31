@@ -780,7 +780,16 @@ class PreviewConfigurationMixin:
 
     def update_project_header(self):
         video_path = self.video_path_edit.text().strip()
-        if video_path:
+        state = getattr(self, "current_project_state", None)
+        project_name = str(getattr(state, "display_name", "") or "").strip()
+        if project_name:
+            self.project_title_label.setText(f"Project: {project_name}")
+            if hasattr(self, "upload_status_label"):
+                if video_path:
+                    self.upload_status_label.setText(f"[OK] {os.path.basename(video_path)} uploaded")
+                else:
+                    self.upload_status_label.setText("Project ready · add videos in Media Workflow")
+        elif video_path:
             video_name = os.path.basename(video_path)
             self.project_title_label.setText(f"Project: {video_name}")
             if hasattr(self, "upload_status_label"):

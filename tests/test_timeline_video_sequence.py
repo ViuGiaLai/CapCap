@@ -280,6 +280,32 @@ class TimelineSequenceExportTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(output))
             self.assertAlmostEqual(float(probe.stdout.strip()), 1.0, delta=0.15)
 
+            external_audio = os.path.join(temp_dir, "voice.wav")
+            subprocess.run(
+                [
+                    ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi", "-i", "sine=frequency=660:duration=1.0",
+                    "-c:a", "pcm_s16le", external_audio,
+                ],
+                check=True, capture_output=True, **subprocess_hidden_kwargs(),
+            )
+            voice_output = os.path.join(temp_dir, "timeline_voice.mp4")
+            export_timeline_sequence(
+                clips,
+                voice_output,
+                mode="voice",
+                audio_path=external_audio,
+                output_fps=24,
+            )
+            voice_probe = subprocess.run(
+                [
+                    ffprobe, "-v", "error", "-select_streams", "a:0",
+                    "-show_entries", "stream=codec_name", "-of", "csv=p=0", voice_output,
+                ],
+                check=True, capture_output=True, text=True, **subprocess_hidden_kwargs(),
+            )
+            self.assertEqual(voice_probe.stdout.strip(), "aac")
+
             from workflows.prepare_workflow import PrepareWorkflow
 
             timeline_audio = os.path.join(temp_dir, "timeline_audio.wav")

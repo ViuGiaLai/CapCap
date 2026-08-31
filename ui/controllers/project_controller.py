@@ -105,7 +105,15 @@ class ProjectController:
         if hasattr(self.gui, "video_path_edit"):
             self.gui.video_path_edit.clear()
         if hasattr(self.gui, "timeline"):
-            self.gui.timeline.set_segments([])
+            # set_segments([]) only clears TS1 and leaves V1/A1/optional
+            # layers from the previous video alive. A true project switch
+            # needs a fresh model or the next project's subtitles/voice can
+            # be displayed over the previous project's source.
+            init_tracks = getattr(self.gui.timeline, "_init_default_tracks", None)
+            if callable(init_tracks):
+                init_tracks()
+            else:
+                self.gui.timeline.set_segments([])
             self.gui.timeline.set_duration(0)
             self.gui.timeline.set_waveform_data([], 0.0)
             self.gui.timeline.set_video_thumbnails([])
