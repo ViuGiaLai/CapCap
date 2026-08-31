@@ -41,19 +41,18 @@ class _Recognizer:
 
 
 class SenseVoiceBatchTests(unittest.TestCase):
-    def test_presegmented_chunks_are_decoded_in_batches_without_vad(self):
+    def test_presegmented_chunks_are_vad_gated_and_keep_real_timestamps(self):
         recognizer = _Recognizer()
-        mono_second = np.zeros(16000, dtype=np.int16)
+        mono_two_seconds = np.zeros(32000, dtype=np.int16)
         progress = []
         with (
             patch.object(sensevoice_processor, "load_model"),
             patch.object(sensevoice_processor, "_recognizer", recognizer),
-            patch.object(sensevoice_processor.wavfile, "read", return_value=(16000, mono_second)),
+            patch.object(sensevoice_processor.wavfile, "read", return_value=(16000, mono_two_seconds)),
             patch.object(
                 sensevoice_processor,
-                "get_speech_segments",
-                create=True,
-                side_effect=AssertionError("VAD must not run for pre-segmented chunks"),
+                "_detect_speech_segments",
+                return_value=[{"start": 0.4, "end": 1.2}],
             ),
         ):
             results = sensevoice_processor.transcribe_presegmented_audio_batch(
@@ -65,10 +64,31 @@ class SenseVoiceBatchTests(unittest.TestCase):
             )
 
         self.assertEqual(recognizer.batch_sizes, [2, 1])
-        self.assertEqual(progress, [(2, 3), (3, 3)])
+        self.assertEqual(
+            progress,
+            [(1, 6), (2, 6), (3, 6), (5, 6), (6, 6)],
+        )
         self.assertEqual(len(results), 3)
-        self.assertEqual([item[0]["end"] for item in results], [1.0, 1.0, 1.0])
+        self.assertEqual([item[0]["start"] for item in results], [0.4, 0.4, 0.4])
+        self.assertEqual([item[0]["end"] for item in results], [1.2, 1.2, 1.2])
+        self.assertTrue(all(item[0]["speech_detected"] for item in results))
         self.assertTrue(all(item[0]["text"].startswith("line-") for item in results))
+
+    def test_no_speech_produces_no_transcript_and_never_reaches_asr(self):
+        recognizer = _Recognizer()
+        mono_second = np.zeros(16000, dtype=np.int16)
+        with (
+            patch.object(sensevoice_processor, "load_model"),
+            patch.object(sensevoice_processor, "_recognizer", recognizer),
+            patch.object(sensevoice_processor.wavfile, "read", return_value=(16000, mono_second)),
+            patch.object(sensevoice_processor, "_detect_speech_segments", return_value=[]),
+        ):
+            results = sensevoice_processor.transcribe_presegmented_audio_batch(
+                ["silent-a.wav", "silent-b.wav"], "model", language="zh",
+            )
+
+        self.assertEqual(results, [[], []])
+        self.assertEqual(recognizer.batch_sizes, [])
 
     def test_thread_count_leaves_cpu_capacity_for_ui(self):
         with patch.object(sensevoice_processor.os, "cpu_count", return_value=12):

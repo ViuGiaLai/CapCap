@@ -1147,15 +1147,31 @@ class VoiceSubtitlePreviewMixin:
             self.log(f"[Preview] subtitle highlight skipped: {exc}")
 
     def _show_subtitle_drag_layer(self, segments=None):
-        """Show a representative live subtitle as the paused drag target."""
+        """Show the active paused subtitle as a drag target.
+
+        A selected Inspector row is not proof that its cue is active at the
+        playhead. Showing row 1 while the player is at 00:00 made a rebuilt
+        timeline look as if an old subtitle survived after its TS1 item had
+        disappeared. Keep preview time authoritative, including while paused.
+        """
         if not hasattr(self, "video_view") or getattr(self, "_preview_video_has_burned_subtitles", False):
             return
         items = list(segments or self.live_preview_segments or self.get_active_segments() or [])
         if not items:
+            self.video_view.subtitle_item.set_text("")
+            self.video_view.subtitle_item.hide()
             return
-        index = int(getattr(self, "_selected_segment_index", -1))
-        if not (0 <= index < len(items)):
-            index = 0
+        try:
+            position_ms = int(self.media_player.position())
+        except Exception:
+            position_ms = 0
+        active_indices = self._find_active_segment_indices(position_ms, items)
+        if not active_indices:
+            self.video_view.subtitle_item.set_text("")
+            self.video_view.subtitle_item.hide()
+            return
+        selected_index = int(getattr(self, "_selected_segment_index", -1))
+        index = selected_index if selected_index in active_indices else active_indices[0]
         target_item = items[index]
         if isinstance(target_item, dict):
             text = str(target_item.get("text", "") or target_item.get("final_text", "") or "").strip()

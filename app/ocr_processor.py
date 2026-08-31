@@ -3,6 +3,7 @@ import re
 import subprocess
 import time
 import unicodedata
+from difflib import SequenceMatcher
 
 import cv2
 import numpy as np
@@ -75,7 +76,7 @@ def _enable_reusable_detector_preprocess(engine):
     detector._viustudio_reusable_preprocess = True
     return engine
 
-MAX_CROP_WIDTH = 960
+MAX_CROP_WIDTH = 720
 EMPTY_TOLERANCE = 2
 EXACT_HASH_THRESHOLD = 5.0
 _OCR_HANDLE_RE = re.compile(r"@\s*[A-Za-z0-9_\-\u3400-\u9fff]{1,24}")
@@ -238,11 +239,11 @@ def crop_subtitle_region(image, region="bottom"):
             pass
     effective_region = (os.getenv("OCR_SUBTITLE_REGION") or region or "bottom").strip().lower()
     if effective_region == "bottom":
-        ratio = float(os.getenv("OCR_CROP_RATIO", "0.25"))
+        ratio = float(os.getenv("OCR_CROP_RATIO", "0.30"))
         top = int(h * (1.0 - ratio))
         return image[top:h, 0:w]
     elif effective_region == "top":
-        ratio = float(os.getenv("OCR_CROP_RATIO", "0.25"))
+        ratio = float(os.getenv("OCR_CROP_RATIO", "0.30"))
         return image[0:int(h * ratio), 0:w]
     else:
         return image
@@ -295,6 +296,125 @@ def _is_blank_region(image):
     return True
 
 
+def _subtitle_lines_from_result(result, image_shape) -> list[str]:
+    """Keep OCR boxes that look like centered horizontal subtitle lines.
+
+    A bottom crop can still contain vertical episode titles, corner logos, or
+    watermarks.  Joining every RapidOCR string made those labels part of the
+    spoken sentence (for example ``内`` + ``曹兄``).  Use detector geometry to
+    discard off-centre/upper/vertical boxes before returning text.  Engines
+    without box geometry retain the legacy behaviour.
+    """
+    raw_texts = list(getattr(result, "txts", None) or [])
+    boxes = getattr(result, "boxes", None)
+    if boxes is None or len(boxes) != len(raw_texts):
+        return [
+            cleaned for cleaned in (_sanitize_ocr_line(value) for value in raw_texts)
+            if cleaned
+        ]
+
+    height, width = image_shape[:2]
+    candidates = []
+    for index, (raw_text, raw_box) in enumerate(zip(raw_texts, boxes)):
+        cleaned = _sanitize_ocr_line(raw_text)
+        if not cleaned:
+            continue
+        points = np.asarray(raw_box, dtype=np.float32).reshape(-1, 2)
+        if points.size == 0:
+            continue
+        left, right = float(points[:, 0].min()), float(points[:, 0].max())
+        top, bottom = float(points[:, 1].min()), float(points[:, 1].max())
+        box_width = max(1.0, right - left)
+        box_height = max(1.0, bottom - top)
+        center_x = (left + right) * 0.5
+        center_y = (top + bottom) * 0.5
+        # Subtitle lines normally cross the central 64% of the crop.  A
+        # single centred CJK character remains valid; tall multi-character
+        # labels and text confined to a corner do not.
+        crosses_center_band = right >= width * 0.18 and left <= width * 0.82
+        center_is_reasonable = width * 0.18 <= center_x <= width * 0.82
+        is_vertical_label = len(_ocr_consensus_key(cleaned)) > 1 and box_height > box_width * 1.35
+        if (
+            (not crosses_center_band or not center_is_reasonable)
+            or center_y < height * 0.20
+            or is_vertical_label
+        ):
+            continue
+        candidates.append((top, left, index, cleaned))
+
+    if not candidates:
+        return []
+    candidates.sort(key=lambda value: (value[0], value[1], value[2]))
+    return [value[-1] for value in candidates]
+
+
+def _locate_bright_subtitle_line(image):
+    """Locate a likely bright, horizontally centred subtitle without OCR detection.
+
+    Most burned-in dialogue subtitles use bright glyphs with a dark outline.
+    Locating that line with OpenCV lets RapidOCR run its recognizer directly
+    (milliseconds) instead of its expensive detector on every checkpoint.
+    Non-bright or unusual styles return ``None`` and use the full detector.
+    """
+    if image is None or image.size == 0:
+        return None
+    height, width = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    mask = cv2.inRange(gray, 205, 255)
+    mask = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (17, 3)),
+    )
+    contours, _hierarchy = cv2.findContours(
+        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    boxes = []
+    for contour in contours:
+        x, y, box_width, box_height = cv2.boundingRect(contour)
+        center_y = y + box_height * 0.5
+        if (
+            cv2.contourArea(contour) > 8
+            and center_y >= height * 0.45
+            and x + box_width >= width * 0.15
+            and x <= width * 0.85
+            and box_height <= box_width * 1.5
+        ):
+            boxes.append((x, y, box_width, box_height))
+    if not boxes:
+        return None
+
+    seed = max(
+        boxes,
+        key=lambda box: box[2] * 2.0 - abs((box[0] + box[2] * 0.5) - width * 0.5),
+    )
+    seed_center_y = seed[1] + seed[3] * 0.5
+    same_line = [
+        box for box in boxes
+        if abs((box[1] + box[3] * 0.5) - seed_center_y)
+        <= max(seed[3], box[3]) * 0.45
+    ]
+    left = max(0, min(box[0] for box in same_line) - 12)
+    top = max(0, min(box[1] for box in same_line) - 8)
+    right = min(width, max(box[0] + box[2] for box in same_line) + 12)
+    bottom = min(height, max(box[1] + box[3] for box in same_line) + 8)
+    if right - left < 12 or bottom - top < 10:
+        return None
+    return image[top:bottom, left:right]
+
+
+def _confident_recognition_texts(result, minimum_score: float = 0.72) -> list[str]:
+    raw_texts = list(getattr(result, "txts", None) or [])
+    raw_scores = list(getattr(result, "scores", None) or [])
+    texts = []
+    for index, raw_text in enumerate(raw_texts):
+        score = float(raw_scores[index]) if index < len(raw_scores) else 0.0
+        cleaned = _sanitize_ocr_line(raw_text)
+        if cleaned and score >= minimum_score:
+            texts.append(cleaned)
+    return texts
+
+
 def ocr_frame(engine, image, profiling=None):
     """OCR one frame and optionally accumulate lightweight aggregate timings."""
     preprocess_started = time.perf_counter()
@@ -308,18 +428,26 @@ def ocr_frame(engine, image, profiling=None):
         profiling["crop_preprocess"] += time.perf_counter() - preprocess_started
 
     inference_started = time.perf_counter()
-    result = engine(image, use_cls=False, text_score=0.6, box_thresh=0.5)
+    texts = []
+    fast_region = _locate_bright_subtitle_line(image)
+    if fast_region is not None:
+        fast_result = engine(
+            fast_region,
+            use_det=False,
+            use_cls=False,
+            use_rec=True,
+            text_score=0.6,
+        )
+        texts = _confident_recognition_texts(fast_result)
+    if not texts:
+        result = engine(image, use_cls=False, text_score=0.6, box_thresh=0.5)
+        texts = _subtitle_lines_from_result(result, image.shape)
     inference_elapsed = time.perf_counter() - inference_started
     if profiling is not None:
         profiling["ocr_inference"] += inference_elapsed
         profiling["ocr_inference_samples"].append(inference_elapsed)
 
     postprocess_started = time.perf_counter()
-    texts = []
-    for raw_text in (result.txts or []):
-        cleaned = _sanitize_ocr_line(raw_text)
-        if cleaned:
-            texts.append(cleaned)
     if profiling is not None:
         profiling["postprocess"] += time.perf_counter() - postprocess_started
     return texts
@@ -369,19 +497,65 @@ def extract_ocr_text_from_video_region(video_path, position_seconds, normalized_
 
 
 def _representative_ocr_times(start_seconds: float, end_seconds: float) -> list[float]:
-    """Return two nearby, distinct frames around the cue midpoint."""
+    """Return two nearby frames where the cue's first subtitle is expected.
+
+    SenseVoice has no word timestamps. A VAD region can remain open for
+    several seconds after a short utterance, so midpoint sampling can land
+    after its burned-in subtitle has disappeared. For long VAD cues sample
+    just after speech onset; short cues continue to use their midpoint.
+    """
     start = max(0.0, float(start_seconds or 0.0))
     end = max(start, float(end_seconds or start))
     midpoint = (start + end) * 0.5
     duration = end - start
     if duration <= 0.04:
         return [midpoint]
+    if duration > 2.0:
+        first = min(end, start + min(0.50, max(0.24, duration * 0.10)))
+        second = min(end, first + 0.24)
+        if second - first >= 0.02:
+            return [first, second]
     offset = min(0.12, max(0.04, duration * 0.12))
     first = max(start, midpoint - offset)
     second = min(end, midpoint + offset)
     if second - first < 0.02:
         return [midpoint]
     return [first, second]
+
+
+def _representative_ocr_pairs(
+    start_seconds: float,
+    end_seconds: float,
+    *,
+    scan_mode: str = "single",
+) -> list[list[float]]:
+    """Return one verifier pair or adaptive checkpoints across a long cue.
+
+    Four fixed checkpoints can miss a short speaker turn inside a five-second
+    VAD region. Sequence mode therefore keeps adjacent checkpoints at most
+    0.70 seconds apart, which is short enough to observe normal burned-in
+    subtitle changes before TTS cue generation.
+    """
+    start = max(0.0, float(start_seconds or 0.0))
+    end = max(start, float(end_seconds or start))
+    if scan_mode != "sequence" or end - start < 2.2:
+        return [_representative_ocr_times(start, end)]
+    duration = end - start
+    max_checkpoint_gap = 0.70
+    checkpoint_count = max(4, int(np.ceil(duration / max_checkpoint_gap)) + 1)
+    # VAD/SenseVoice cues are normally capped at five seconds. Keep a hard
+    # ceiling for malformed input so one cue cannot monopolize CPU OCR.
+    checkpoint_count = min(10, checkpoint_count)
+    first_center = min(end, start + 0.08)
+    last_center = max(first_center, end - 0.20)
+    centers = np.linspace(first_center, last_center, checkpoint_count).tolist()
+    pairs = []
+    for center in centers:
+        offset = 0.035
+        first = max(start, center - offset)
+        second = min(end, center + offset)
+        pairs.append([first, second] if second - first >= 0.02 else [center])
+    return pairs
 
 
 def _ocr_consensus_key(text: str) -> str:
@@ -401,12 +575,31 @@ def _two_frame_ocr_consensus(frame_texts: list[str], expected_frames: int = 2) -
     return max(values, key=len)
 
 
+def _is_potential_ocr_correction(asr_text: str, ocr_text: str) -> bool:
+    """Return whether frame 1 can possibly extend the suspicious ASR cue."""
+    asr_key = _ocr_consensus_key(asr_text)
+    ocr_key = _ocr_consensus_key(ocr_text)
+    if not asr_key or not ocr_key:
+        return False
+    if asr_key in ocr_key and len(ocr_key) > len(asr_key):
+        return True
+    # Short CJK/compact-script homophones are often one character apart
+    # (e.g. 助手 vs 住手). Run frame 2 only when there is still meaningful
+    # lexical overlap; unrelated labels do not qualify.
+    return bool(
+        2 <= len(asr_key) == len(ocr_key) <= 4
+        and SequenceMatcher(None, asr_key, ocr_key).ratio() >= 0.5
+    )
+
+
 def transcribe_video_ocr_ranges(
     video_path: str,
     time_ranges: list[tuple[float, float]],
     *,
     region: str = "bottom",
     ocr_engine=None,
+    expected_texts: list[str] | None = None,
+    scan_modes: list[str] | None = None,
     progress_callback=None,
 ) -> list[dict]:
     """OCR two representative frames per cue using one engine/video handle.
@@ -429,32 +622,106 @@ def transcribe_video_ocr_ranges(
         results = []
         total = len(ranges)
         for index, (start, end) in enumerate(ranges):
-            positions = _representative_ocr_times(start, end)
-            frame_texts = []
-            for position in positions:
+            scan_mode = (
+                str(scan_modes[index] or "single")
+                if scan_modes is not None and index < len(scan_modes)
+                else "single"
+            )
+            position_groups = _representative_ocr_pairs(start, end, scan_mode=scan_mode)
+            expected_text = (
+                str(expected_texts[index] or "")
+                if expected_texts is not None and index < len(expected_texts)
+                else ""
+            )
+            group_results = []
+
+            def _read_position(position: float) -> str:
                 frame_index = max(0, int(round(position * video_fps)))
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
                 ok, frame = cap.read()
                 if not ok or frame is None:
-                    frame_texts.append("")
-                    continue
+                    return ""
                 cropped = crop_subtitle_region(frame, region=region)
                 if cropped.size == 0 or _is_blank_region(cropped):
-                    frame_texts.append("")
-                    continue
-                frame_texts.append(" ".join(ocr_frame(engine, cropped)))
-            consensus = _two_frame_ocr_consensus(
-                frame_texts,
-                expected_frames=len(positions),
-            )
-            if consensus:
-                results.append({
-                    "start": round(start, 3),
-                    "end": round(end, 3),
-                    "text": consensus,
-                    "words": [],
-                    "ocr_consensus_frames": len(positions),
-                })
+                    return ""
+                return " ".join(ocr_frame(engine, cropped))
+
+            if scan_mode == "sequence":
+                # First inspect one frame at each checkpoint. Repeated text at
+                # two checkpoints is already temporal consensus. A state seen
+                # only once receives one nearby confirmation frame. This keeps
+                # merge detection accurate without blindly running 8 OCR calls
+                # for every long cue.
+                first_pass = []
+                for positions in position_groups:
+                    value = _sanitize_ocr_line(_read_position(positions[0]))
+                    key = _ocr_consensus_key(value)
+                    if not key:
+                        continue
+                    if first_pass and first_pass[-1][2] == key:
+                        first_pass[-1][1] = positions[-1]
+                        first_pass[-1][4] += 1
+                    else:
+                        first_pass.append([positions[0], positions[-1], key, value, 1, positions])
+                for group in first_pass:
+                    if group[4] >= 2:
+                        group_results.append(([group[0], group[1]], group[3]))
+                        continue
+                    confirmation = _read_position(group[5][-1])
+                    consensus = _two_frame_ocr_consensus([group[3], confirmation])
+                    if consensus:
+                        group_results.append(([group[0], group[1]], consensus))
+            else:
+                for positions in position_groups:
+                    frame_texts = []
+                    for frame_number, position in enumerate(positions):
+                        frame_texts.append(_read_position(position))
+                        # Legacy truncated-cue mode avoids frame 2 for an
+                        # unrelated result. General verification deliberately
+                        # confirms arbitrary ASR/OCR disagreement: stable source
+                        # subtitles are the authority for text, while VAD remains
+                        # the authority for whether speech exists.
+                        if (
+                            frame_number == 0
+                            and scan_mode == "single"
+                            and expected_texts is not None
+                            and not _is_potential_ocr_correction(expected_text, frame_texts[0])
+                        ):
+                            break
+                    consensus = _two_frame_ocr_consensus(
+                        frame_texts,
+                        expected_frames=len(positions),
+                    )
+                    if consensus:
+                        group_results.append((positions, consensus))
+
+            # Convert the confirmed samples into ordered OCR states.  Exact
+            # adjacent states are collapsed; different states remain separate
+            # so reconciliation can split one merged ASR cue.
+            compact_groups = []
+            for positions, consensus in group_results:
+                key = _ocr_consensus_key(consensus)
+                if compact_groups and compact_groups[-1][2] == key:
+                    compact_groups[-1][1] = positions[-1]
+                else:
+                    compact_groups.append([positions[0], positions[-1], key, consensus])
+            if compact_groups:
+                centers = [(group[0] + group[1]) * 0.5 for group in compact_groups]
+                boundaries = [start]
+                boundaries.extend(
+                    (centers[i - 1] + centers[i]) * 0.5
+                    for i in range(1, len(centers))
+                )
+                boundaries.append(end)
+                for group_index, group in enumerate(compact_groups):
+                    results.append({
+                        "start": round(boundaries[group_index], 3),
+                        "end": round(boundaries[group_index + 1], 3),
+                        "text": group[3],
+                        "words": [],
+                        "ocr_consensus_frames": 2,
+                        "ocr_scan_mode": scan_mode,
+                    })
             if progress_callback is not None:
                 progress_callback(index + 1, total)
         return results

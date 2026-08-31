@@ -83,6 +83,8 @@ class PrepareWorkflow:
         *,
         region: str,
         time_ranges: list[tuple[float, float]],
+        expected_texts: list[str] | None = None,
+        scan_modes: list[str] | None = None,
     ) -> str:
         sources = []
         paths = [video_path] if not timeline_clips else [
@@ -97,13 +99,15 @@ class PrepareWorkflow:
                 identity = [0, 0]
             sources.append([absolute, identity])
         payload = {
-            "version": "two-frame-consensus-v1",
+            "version": "speech-gated-fast-adaptive-subtitle-sequence-v5",
             "sources": sources,
             "timeline": PrepareWorkflow._timeline_signature(timeline_clips),
             "region": str(region or "bottom").strip().lower(),
             "subtitle_rect": str(os.getenv("OCR_SUBTITLE_RECT") or "").strip(),
-            "crop_ratio": str(os.getenv("OCR_CROP_RATIO") or "0.25").strip(),
+            "crop_ratio": str(os.getenv("OCR_CROP_RATIO") or "0.30").strip(),
             "ranges": [[round(start, 3), round(end, 3)] for start, end in time_ranges],
+            "expected_texts": [str(value or "") for value in (expected_texts or [])],
+            "scan_modes": [str(value or "single") for value in (scan_modes or [])],
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -413,13 +417,13 @@ class PrepareWorkflow:
             min_speech_duration=0.05,
         )
         print(
-            f"[SenseVoice] Batch decoding {len(chunks)} pre-segmented chunks "
-            "with one model load; redundant per-chunk VAD is disabled."
+            f"[SenseVoice] Speech-gating {len(chunks)} chunks with Silero VAD, "
+            "then batch decoding only confirmed speech with one model load."
         )
         self._emit_step(
             step_callback,
             "sensevoice_batch",
-            f"Recognizing original speech: 0/{len(chunks)} chunks (0%)",
+            f"Analyzing and recognizing speech: 0/{len(chunks) * 2} work units (0%)",
         )
 
         def _on_batch_progress(done: int, total: int) -> None:
@@ -427,7 +431,7 @@ class PrepareWorkflow:
             self._emit_step(
                 step_callback,
                 "sensevoice_batch",
-                f"Recognizing original speech: {done}/{total} chunks ({percent}%)",
+                f"Analyzing and recognizing speech: {done}/{total} work units ({percent}%)",
             )
 
         batched_segments = self.engine_runtime.transcribe_presegmented_sensevoice_batch(
@@ -516,6 +520,8 @@ class PrepareWorkflow:
         *,
         region: str,
         time_ranges: list[tuple[float, float]],
+        expected_texts: list[str] | None = None,
+        scan_modes: list[str] | None = None,
         progress_callback=None,
     ) -> list[dict]:
         """Read suspect cues with one video handle per source clip."""
@@ -524,6 +530,8 @@ class PrepareWorkflow:
                 video_path,
                 time_ranges,
                 region=region,
+                expected_texts=expected_texts,
+                scan_modes=scan_modes,
                 progress_callback=progress_callback,
             ) or []
 
@@ -542,7 +550,9 @@ class PrepareWorkflow:
             speed = max(0.01, float(clip.get("speed", 1.0) or 1.0))
             timeline_end = timeline_start + source_duration / speed
             source_ranges = []
-            for global_start, global_end in time_ranges:
+            source_expected_texts = [] if expected_texts is not None else None
+            source_scan_modes = [] if scan_modes is not None else None
+            for range_index, (global_start, global_end) in enumerate(time_ranges):
                 overlap_start = max(timeline_start, global_start)
                 overlap_end = min(timeline_end, global_end)
                 if overlap_end <= overlap_start:
@@ -550,12 +560,30 @@ class PrepareWorkflow:
                 scan_start = source_start + (overlap_start - timeline_start) * speed
                 scan_end = source_start + (overlap_end - timeline_start) * speed
                 source_ranges.append((scan_start, scan_end))
+                if source_expected_texts is not None:
+                    source_expected_texts.append(
+                        str(expected_texts[range_index] or "")
+                        if range_index < len(expected_texts)
+                        else ""
+                    )
+                if source_scan_modes is not None:
+                    source_scan_modes.append(
+                        str(scan_modes[range_index] or "single")
+                        if range_index < len(scan_modes)
+                        else "single"
+                    )
             if source_ranges:
-                jobs.append((source, source_start, source_end, timeline_start, speed, source_ranges))
+                jobs.append((
+                    source, source_start, source_end, timeline_start, speed,
+                    source_ranges, source_expected_texts, source_scan_modes,
+                ))
 
-        total_ranges = sum(len(job[-1]) for job in jobs)
+        total_ranges = sum(len(job[-3]) for job in jobs)
         completed_before = 0
-        for source, source_start, source_end, timeline_start, speed, source_ranges in jobs:
+        for (
+            source, source_start, source_end, timeline_start, speed,
+            source_ranges, source_expected_texts, source_scan_modes,
+        ) in jobs:
             base = completed_before
 
             def _job_progress(done: int, _total: int, *, _base=base) -> None:
@@ -566,6 +594,8 @@ class PrepareWorkflow:
                 source,
                 source_ranges,
                 region=region,
+                expected_texts=source_expected_texts,
+                scan_modes=source_scan_modes,
                 progress_callback=_job_progress,
             )
             completed_before += len(source_ranges)
@@ -595,16 +625,24 @@ class PrepareWorkflow:
             return raw_segments, 0
         region = (os.getenv("OCR_SUBTITLE_REGION") or "bottom").strip().lower()
         try:
-            print("[ASR Accuracy] Truncated cue detected; checking burned-in source subtitles via OCR.")
-            time_ranges = service.suspicious_cue_ranges(
+            print("[ASR Accuracy] Risky ASR cues detected; verifying burned-in source subtitles via OCR.")
+            cue_requests = service.suspicious_cue_requests(
                 raw_segments,
                 source_language=source_language,
             )
+            time_ranges = [
+                (request["start"], request["end"])
+                for request in cue_requests
+            ]
+            expected_texts = [request["text"] for request in cue_requests]
+            scan_modes = [request["scan_mode"] for request in cue_requests]
             reference_signature = self._ocr_reference_signature(
                 video_path,
                 timeline_clips,
                 region=region,
                 time_ranges=time_ranges,
+                expected_texts=expected_texts,
+                scan_modes=scan_modes,
             )
             cached_signature = str(
                 project_state.settings.get("asr_ocr_reference_signature", "") or ""
@@ -625,19 +663,21 @@ class PrepareWorkflow:
                     self._emit_step(
                         step_callback,
                         "asr_ocr_repair",
-                        f"OCR verification: {done}/{total} suspicious cues ({percent}%)",
+                        f"Fast OCR precheck: {done}/{total} candidate cues ({percent}%)",
                     )
 
                 self._emit_step(
                     step_callback,
                     "asr_ocr_repair",
-                    f"OCR verification: 0/{len(time_ranges)} suspicious cues (0%)",
+                    f"Fast OCR precheck: 0/{len(time_ranges)} candidate cues (0%)",
                 )
                 ocr_segments = self._ocr_timeline_reference(
                     video_path,
                     timeline_clips,
                     region=region,
                     time_ranges=time_ranges,
+                    expected_texts=expected_texts,
+                    scan_modes=scan_modes,
                     progress_callback=_ocr_progress,
                 )
                 self.project_service.save_json_artifact(
@@ -655,8 +695,8 @@ class PrepareWorkflow:
             )
             if replacement_count:
                 print(
-                    "[ASR Accuracy] Restored "
-                    f"{replacement_count} truncated cue(s) from matching on-screen source subtitles."
+                    "[ASR Accuracy] Corrected or split "
+                    f"{replacement_count} cue(s) from stable on-screen source subtitles."
                 )
             else:
                 print("[ASR Accuracy] OCR found no safe temporal/text match; ASR text was kept unchanged.")
@@ -1290,7 +1330,7 @@ class PrepareWorkflow:
                     self._emit_step(
                         step_callback,
                         "asr_ocr_repair",
-                        "Checking unusually short speech lines against on-screen subtitles",
+                        "Verifying recognition-risk speech lines against source subtitles",
                     )
                     raw_segments, repaired_asr_count = self._repair_truncated_asr_from_video(
                         raw_segments,

@@ -94,6 +94,34 @@ def _pad_and_merge_vad_segments(
     return padded
 
 
+def _read_mono_16k(audio_path: str) -> np.ndarray:
+    """Read a WAV as contiguous mono float32 audio at 16 kHz."""
+    sr, audio = wavfile.read(audio_path)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    if audio.dtype != np.float32:
+        if np.issubdtype(audio.dtype, np.integer):
+            info = np.iinfo(audio.dtype)
+            scale = float(max(abs(info.min), info.max))
+            audio = audio.astype(np.float32) / scale
+        else:
+            audio = audio.astype(np.float32)
+    if sr != 16000:
+        from scipy.signal import resample
+        audio = resample(audio, int(len(audio) * 16000 / sr)).astype(np.float32)
+    return np.ascontiguousarray(audio, dtype=np.float32)
+
+
+def _detect_speech_segments(audio: np.ndarray) -> list[dict]:
+    """Run the speech VAD used as the mandatory SenseVoice input gate."""
+    from vad_processor import get_speech_segments
+
+    return _pad_and_merge_vad_segments(
+        get_speech_segments(audio, 16000),
+        float(len(audio)) / 16000.0,
+    )
+
+
 def load_model(model_dir: str, language: str = "auto"):
     global _recognizer, _current_model_dir, _current_language
     import sherpa_onnx
@@ -131,23 +159,9 @@ def load_model(model_dir: str, language: str = "auto"):
 
 
 def transcribe_audio(audio_path: str, model_dir: str, *, language: str = "auto") -> list[dict]:
-    import sherpa_onnx
-
     load_model(model_dir, language=language)
-    sr, audio = wavfile.read(audio_path)
-    if audio.dtype != np.float32:
-        audio = audio.astype(np.float32) / 32768.0
-    if sr != 16000:
-        from scipy.signal import resample
-        target_len = int(len(audio) * 16000 / sr)
-        audio = resample(audio, target_len)
-
-    from vad_processor import get_speech_segments
-
-    segments = _pad_and_merge_vad_segments(
-        get_speech_segments(audio, 16000),
-        float(len(audio)) / 16000.0,
-    )
+    audio = _read_mono_16k(audio_path)
+    segments = _detect_speech_segments(audio)
     results = []
     for seg in segments:
         start_s = int(seg["start"] * 16000)
@@ -168,16 +182,9 @@ def transcribe_audio(audio_path: str, model_dir: str, *, language: str = "auto")
                 "start": round(seg["start"], 3),
                 "end": round(seg["end"], 3),
                 "text": text,
+                "speech_detected": True,
+                "speech_gate": "silero_vad",
             })
-
-    if not results:
-        stream = _recognizer.create_stream()
-        stream.accept_waveform(16000, audio)
-        _recognizer.decode_stream(stream)
-        text = stream.result.text.strip()
-        if text:
-            duration = float(len(audio)) / 16000.0
-            results.append({"start": 0.0, "end": round(duration, 3), "text": text})
 
     return results
 
@@ -190,42 +197,55 @@ def transcribe_presegmented_audio_batch(
     batch_size: int | None = None,
     progress_callback=None,
 ) -> list[list[dict]]:
-    """Decode speech-focused WAV chunks in batches with one loaded model.
+    """VAD-gate every chunk, then batch-decode only real speech regions.
 
-    ``ChunkingService`` has already applied VAD and bounded these files, so
-    running Silero VAD again for every file only duplicates work.  Sherpa's
-    multi-stream decoder lets the ONNX runtime use its worker threads across
-    several chunks while preserving one result list per input file.
+    ``ChunkingService`` uses FFmpeg amplitude silence detection to make files;
+    background music and effects can therefore remain in a chunk.  It is not
+    a speech detector.  Silero VAD is mandatory here so silent/non-speech
+    spans cannot produce SenseVoice hallucinations.  The resulting VAD bounds
+    are also the real local timestamps; no text-proportional timing is used.
     """
     load_model(model_dir, language=language)
     paths = [str(path) for path in (audio_paths or [])]
     if not paths:
         return []
     size = max(1, min(16, int(batch_size or _sensevoice_thread_count())))
-    all_results: list[list[dict]] = []
+    all_results: list[list[dict]] = [[] for _ in paths]
+    work_items: list[dict] = []
+    last_work_index_by_file: dict[int, int] = {}
+    files_without_speech = set()
 
-    for batch_start in range(0, len(paths), size):
-        batch_paths = paths[batch_start:batch_start + size]
+    for file_index, audio_path in enumerate(paths):
+        audio = _read_mono_16k(audio_path)
+        speech_segments = _detect_speech_segments(audio)
+        if progress_callback is not None:
+            progress_callback(file_index + 1, len(paths) * 2)
+        if not speech_segments:
+            files_without_speech.add(file_index)
+            continue
+        for segment in speech_segments:
+            start_sample = max(0, int(round(float(segment["start"]) * 16000)))
+            end_sample = min(len(audio), int(round(float(segment["end"]) * 16000)))
+            if end_sample <= start_sample:
+                continue
+            work_items.append({
+                "file_index": file_index,
+                "start": round(start_sample / 16000.0, 3),
+                "end": round(end_sample / 16000.0, 3),
+                "audio": audio[start_sample:end_sample],
+            })
+            last_work_index_by_file[file_index] = len(work_items) - 1
+        if file_index not in last_work_index_by_file:
+            files_without_speech.add(file_index)
+
+    reported_done = -1
+    for batch_start in range(0, len(work_items), size):
+        batch_items = work_items[batch_start:batch_start + size]
         streams = []
-        durations = []
-        for audio_path in batch_paths:
-            sr, audio = wavfile.read(audio_path)
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1)
-            if audio.dtype != np.float32:
-                if np.issubdtype(audio.dtype, np.integer):
-                    scale = float(max(abs(np.iinfo(audio.dtype).min), np.iinfo(audio.dtype).max))
-                    audio = audio.astype(np.float32) / scale
-                else:
-                    audio = audio.astype(np.float32)
-            if sr != 16000:
-                from scipy.signal import resample
-                audio = resample(audio, int(len(audio) * 16000 / sr)).astype(np.float32)
-            audio = np.ascontiguousarray(audio, dtype=np.float32)
+        for item in batch_items:
             stream = _recognizer.create_stream()
-            stream.accept_waveform(16000, audio)
+            stream.accept_waveform(16000, item["audio"])
             streams.append(stream)
-            durations.append(float(len(audio)) / 16000.0)
 
         if hasattr(_recognizer, "decode_streams"):
             _recognizer.decode_streams(streams)
@@ -233,12 +253,28 @@ def transcribe_presegmented_audio_batch(
             for stream in streams:
                 _recognizer.decode_stream(stream)
 
-        for stream, duration in zip(streams, durations):
+        for stream, item in zip(streams, batch_items):
             text = str(stream.result.text or "").strip()
-            all_results.append(
-                [{"start": 0.0, "end": round(duration, 3), "text": text}] if text else []
-            )
+            if text:
+                all_results[item["file_index"]].append({
+                    "start": item["start"],
+                    "end": item["end"],
+                    "text": text,
+                    "speech_detected": True,
+                    "speech_gate": "silero_vad",
+                })
         if progress_callback is not None:
-            progress_callback(min(batch_start + len(batch_paths), len(paths)), len(paths))
+            processed_work = batch_start + len(batch_items) - 1
+            completed_files = len(files_without_speech) + sum(
+                1 for last_index in last_work_index_by_file.values()
+                if last_index <= processed_work
+            )
+            completed_files = min(completed_files, len(paths))
+            if completed_files != reported_done:
+                progress_callback(len(paths) + completed_files, len(paths) * 2)
+                reported_done = completed_files
+
+    if progress_callback is not None and reported_done != len(paths):
+        progress_callback(len(paths) * 2, len(paths) * 2)
 
     return all_results

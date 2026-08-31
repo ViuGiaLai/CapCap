@@ -92,12 +92,16 @@ class EngineRuntime:
 
     def transcribe_video_ocr_ranges(
         self, video_path: str, time_ranges: list[tuple[float, float]],
-        *, region: str = "bottom", progress_callback=None,
+        *, region: str = "bottom", expected_texts: list[str] | None = None,
+        scan_modes: list[str] | None = None,
+        progress_callback=None,
     ):
         return self.ocr.transcribe_ranges(
             video_path,
             time_ranges,
             region=region,
+            expected_texts=expected_texts,
+            scan_modes=scan_modes,
             progress_callback=progress_callback,
         )
 

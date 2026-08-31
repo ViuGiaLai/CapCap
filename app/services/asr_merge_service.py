@@ -449,6 +449,9 @@ class AsrMergeService:
                     "words": [],
                     "chunk_id": chunk.chunk_id,
                 }
+                for key in ("language", "confidence", "speech_detected", "speech_gate"):
+                    if key in raw_segment:
+                        global_segment[key] = raw_segment[key]
                 words = []
                 for word in raw_segment.get("words", []) or []:
                     try:

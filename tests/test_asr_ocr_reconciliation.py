@@ -11,6 +11,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "app")]
 
 from services.asr_ocr_reconciliation_service import AsrOcrReconciliationService
 import ocr_processor
+from translation.quality_guard import apply_translation_quality_guard
 from sensevoice_processor import (
     _lang_code,
     _pad_and_merge_vad_segments,
@@ -53,6 +54,72 @@ class AsrOcrReconciliationTests(unittest.TestCase):
 
         self.assertEqual(count, 0)
         self.assertEqual(repaired[0]["text"], "下")
+
+    def test_rejects_preview_card_even_when_it_contains_the_short_asr_text(self):
+        repaired, count = AsrOcrReconciliationService.reconcile(
+            [{"start": 10.0, "end": 10.7, "text": "下", "speech_detected": True}],
+            [{"start": 10.0, "end": 10.7, "text": "下集预告"}],
+            source_language="zh",
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(repaired[0]["text"], "下")
+
+    def test_stable_source_subtitle_repairs_arbitrary_short_asr_error(self):
+        repaired, count = AsrOcrReconciliationService.reconcile(
+            [{"start": 124.863, "end": 126.356, "text": "助手", "speech_detected": True}],
+            [{"start": 124.8, "end": 126.4, "text": "住手", "ocr_consensus_frames": 2}],
+            source_language="zh",
+        )
+        self.assertEqual(count, 1)
+        self.assertEqual(repaired[0]["text"], "住手")
+
+        corrected, corrected_count = AsrOcrReconciliationService.reconcile(
+            [{"start": 124.863, "end": 126.356, "text": "助手", "speech_detected": True}],
+            [{"start": 124.8, "end": 126.4, "text": "天地", "ocr_consensus_frames": 2}],
+            source_language="zh",
+        )
+        self.assertEqual(corrected_count, 1)
+        self.assertEqual(corrected[0]["text"], "天地")
+
+        # One OCR frame is never authoritative for an arbitrary mismatch.
+        unstable, unstable_count = AsrOcrReconciliationService.reconcile(
+            [{"start": 124.863, "end": 126.356, "text": "助手", "speech_detected": True}],
+            [{"start": 124.8, "end": 126.4, "text": "天地", "ocr_consensus_frames": 1}],
+            source_language="zh",
+        )
+        self.assertEqual(unstable_count, 0)
+        self.assertEqual(unstable[0]["text"], "助手")
+
+    def test_explicit_no_speech_never_requests_or_accepts_ocr(self):
+        asr = [{"start": 1.0, "end": 2.0, "text": "下", "speech_detected": False}]
+        self.assertFalse(AsrOcrReconciliationService.should_scan(asr, "zh"))
+        self.assertEqual(
+            AsrOcrReconciliationService.suspicious_cue_requests(
+                asr, source_language="zh"
+            ),
+            [],
+        )
+        repaired, count = AsrOcrReconciliationService.reconcile(
+            asr,
+            [{"start": 1.0, "end": 2.0, "text": "等一下"}],
+            source_language="zh",
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(repaired, asr)
+
+    def test_confirmed_speech_is_kept_when_source_has_no_burned_in_subtitle(self):
+        asr = [{
+            "start": 30.0,
+            "end": 31.2,
+            "text": "我明白了",
+            "speech_detected": True,
+            "speech_gate": "silero_vad",
+        }]
+        repaired, count = AsrOcrReconciliationService.reconcile(
+            asr, [], source_language="zh",
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(repaired, asr)
 
     def test_scan_gate_does_not_use_chinese_signs_for_other_languages(self):
         segments = [{"start": 0.0, "end": 1.0, "text": "下"}]
@@ -103,7 +170,49 @@ class AsrOcrReconciliationTests(unittest.TestCase):
             {"start": 10.0, "end": 10.4, "text": "下"},
             {"start": 11.0, "end": 11.2, "text": "走"},
         ])
-        self.assertEqual(ranges, [(9.25, 11.95)])
+        self.assertEqual(ranges, [(9.25, 11.95), (19.25, 21.15)])
+
+    def test_requests_authoritative_short_and_sequence_long_verification(self):
+        requests = AsrOcrReconciliationService.suspicious_cue_requests([
+            {"start": 4.752, "end": 5.866, "text": "内 曹兄", "speech_detected": True},
+            {"start": 33.446, "end": 36.500, "text": "样简单还我三的命啊", "speech_detected": True},
+        ], source_language="zh")
+        self.assertEqual([item["scan_mode"] for item in requests], ["authoritative", "sequence"])
+        self.assertEqual((requests[1]["start"], requests[1]["end"]), (33.446, 36.5))
+
+    def test_repairs_short_add_drop_and_homophone_examples(self):
+        asr = [
+            {"start": 4.752, "end": 5.866, "text": "内 曹兄", "speech_detected": True},
+            {"start": 13.596, "end": 14.520, "text": "含羞可羞", "speech_detected": True},
+            {"start": 64.476, "end": 65.017, "text": "爹", "speech_detected": True},
+        ]
+        ocr = [
+            {"start": 4.6, "end": 6.0, "text": "曹兄", "ocr_consensus_frames": 2},
+            {"start": 13.4, "end": 14.7, "text": "韩兄贺兄", "ocr_consensus_frames": 2},
+            {"start": 64.3, "end": 65.2, "text": "地儿", "ocr_consensus_frames": 2},
+        ]
+        repaired, count = AsrOcrReconciliationService.reconcile(asr, ocr, source_language="zh")
+        self.assertEqual(count, 3)
+        self.assertEqual([item["text"] for item in repaired], ["曹兄", "韩兄贺兄", "地儿"])
+
+    def test_splits_one_merged_asr_cue_from_stable_ocr_states(self):
+        asr = [{
+            "start": 68.156,
+            "end": 72.500,
+            "text": "你还有多余的儿子吗我一并杀给你看",
+            "speech_detected": True,
+        }]
+        ocr = [
+            {"start": 68.156, "end": 68.671, "text": "湖国", "ocr_consensus_frames": 2, "ocr_scan_mode": "sequence"},
+            {"start": 68.156, "end": 70.328, "text": "你还有多余的儿子吗", "ocr_consensus_frames": 2, "ocr_scan_mode": "sequence"},
+            {"start": 70.328, "end": 72.500, "text": "我一并杀给你看", "ocr_consensus_frames": 2, "ocr_scan_mode": "sequence"},
+        ]
+        repaired, count = AsrOcrReconciliationService.reconcile(asr, ocr, source_language="zh")
+        self.assertEqual(count, 1)
+        self.assertEqual([item["text"] for item in repaired], ["你还有多余的儿子吗", "我一并杀给你看"])
+        self.assertEqual(repaired[0]["start"], 68.156)
+        self.assertEqual(repaired[-1]["end"], 72.5)
+        self.assertTrue(all(item["text_source"] == "ocr_reconciled_split" for item in repaired))
 
     def test_fast_ocr_keeps_one_tight_window_per_suspicious_cue(self):
         ranges = AsrOcrReconciliationService.suspicious_cue_ranges([
@@ -125,6 +234,34 @@ class AsrOcrReconciliationTests(unittest.TestCase):
             ocr_processor._two_frame_ocr_consensus(["等一下", ""]),
             "",
         )
+
+    def test_spatial_filter_removes_corner_title_but_keeps_center_subtitle(self):
+        class Result:
+            txts = ("内", "曹兄")
+            boxes = np.asarray([
+                [[86, 0], [176, 0], [176, 89], [86, 89]],
+                [[455, 74], [570, 72], [571, 144], [456, 146]],
+            ], dtype=np.float32)
+
+        self.assertEqual(
+            ocr_processor._subtitle_lines_from_result(Result(), (173, 1024, 3)),
+            ["曹兄"],
+        )
+
+    def test_sequence_sampling_adapts_to_cue_duration(self):
+        pairs = ocr_processor._representative_ocr_pairs(33.446, 36.500, scan_mode="sequence")
+        self.assertGreater(len(pairs), 4)
+        self.assertTrue(all(len(pair) == 2 for pair in pairs))
+        self.assertGreaterEqual(pairs[0][0], 33.446)
+        self.assertLessEqual(pairs[-1][-1], 36.500)
+        centers = [(pair[0] + pair[-1]) * 0.5 for pair in pairs]
+        self.assertLessEqual(max(b - a for a, b in zip(centers, centers[1:])), 0.70)
+
+    def test_long_vad_cue_samples_near_speech_onset_not_midpoint(self):
+        positions = ocr_processor._representative_ocr_times(124.518, 129.410)
+        self.assertEqual(len(positions), 2)
+        self.assertLess(positions[0], 125.1)
+        self.assertLess(positions[1], 125.4)
 
     def test_range_ocr_opens_video_once_and_returns_only_consensus(self):
         class FakeCapture:
@@ -172,6 +309,54 @@ class AsrOcrReconciliationTests(unittest.TestCase):
         self.assertEqual(result[0]["text"], "等一下")
         self.assertEqual(result[0]["ocr_consensus_frames"], 2)
 
+    def test_sequence_ocr_returns_three_dialogue_states_inside_one_vad_region(self):
+        class FakeCapture:
+            def __init__(self):
+                self.position = 0
+
+            def get(self, prop):
+                return 30.0
+
+            def set(self, prop, value):
+                self.position = int(value)
+                return True
+
+            def read(self):
+                return True, np.full((80, 160, 3), self.position, dtype=np.int32)
+
+            def release(self):
+                pass
+
+        capture = FakeCapture()
+
+        def fake_ocr(_engine, frame):
+            frame_index = int(frame[0, 0, 0])
+            if frame_index < 360:
+                return ["你是谁"]
+            if frame_index < 420:
+                return ["我是谁与你无关"]
+            return ["住手"]
+
+        with (
+            patch.object(ocr_processor, "_open_video", return_value=capture),
+            patch.object(ocr_processor, "_load_ocr_engine", return_value=object()),
+            patch.object(ocr_processor, "crop_subtitle_region", side_effect=lambda frame, region: frame),
+            patch.object(ocr_processor, "_is_blank_region", return_value=False),
+            patch.object(ocr_processor, "ocr_frame", side_effect=fake_ocr),
+        ):
+            result = ocr_processor.transcribe_video_ocr_ranges(
+                "movie.mp4",
+                [(10.0, 15.0)],
+                expected_texts=["你是谁我是谁与你无关住手"],
+                scan_modes=["sequence"],
+            )
+
+        self.assertEqual([item["text"] for item in result], [
+            "你是谁", "我是谁与你无关", "住手",
+        ])
+        self.assertEqual(result[0]["start"], 10.0)
+        self.assertEqual(result[-1]["end"], 15.0)
+
 
 class SenseVoiceBoundaryTests(unittest.TestCase):
     def test_vad_boundaries_are_merged_and_padded(self):
@@ -200,6 +385,15 @@ class SenseVoiceBoundaryTests(unittest.TestCase):
             self.assertFalse(requires_multilingual_whisper(language), language)
         for language in ("auto", "vi", "th", "id", "es", "fr", "de", "pt", "ru", "ar"):
             self.assertTrue(requires_multilingual_whisper(language), language)
+
+    def test_vietnamese_canonical_command_preserves_source_meaning(self):
+        guarded, warnings = apply_translation_quality_guard(
+            source_segments=[{"start": 1.0, "end": 2.0, "text": "住手"}],
+            translated_texts=["Hãy dừng lại đi."],
+            target_lang="vi",
+        )
+        self.assertEqual(guarded, ["Dừng tay!"])
+        self.assertEqual(warnings, [])
 
 
 if __name__ == "__main__":

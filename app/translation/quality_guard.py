@@ -34,6 +34,13 @@ _ENGLISH_CONTRACTION_RE = re.compile(
     r"\b(?:don['\u2019]?t|isn['\u2019]?t|aren['\u2019]?t|can['\u2019]?t|won['\u2019]?t|didn['\u2019]?t|you['\u2019]?re|we['\u2019]?re|they['\u2019]?re)\b",
     re.IGNORECASE,
 )
+
+# Exact, source-conditioned dialogue cues where generic MT commonly returns a
+# grammatical but weak Vietnamese paraphrase. Only known equivalent outputs
+# are normalized; arbitrary translations are never overwritten.
+VI_CANONICAL_CUES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("住手", "Dừng tay!", ("dừng tay", "dừng lại", "hãy dừng lại", "hãy dừng lại đi")),
+)
 _ENGLISH_FUNCTION_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "because", "but", "by",
     "can", "do", "does", "for", "from", "has", "have", "he", "her", "him",
@@ -45,6 +52,10 @@ _ENGLISH_FUNCTION_WORDS = {
 
 def _replace_variant(text: str, variant: str, canonical: str) -> str:
     return re.sub(re.escape(variant), canonical, text, flags=re.IGNORECASE)
+
+
+def _normalized_phrase(text: str) -> str:
+    return re.sub(r"[^\w\s]", "", str(text or "").casefold()).strip()
 
 
 def _target_profile(target_lang: str) -> tuple[str, float]:
@@ -109,6 +120,13 @@ def apply_translation_quality_guard(
         text = " ".join(str(translated or "").split()).strip()
 
         if is_vietnamese:
+            normalized_target = _normalized_phrase(text)
+            for source_cue, canonical, variants in VI_CANONICAL_CUES:
+                if source.strip() == source_cue and normalized_target in {
+                    _normalized_phrase(variant) for variant in variants
+                }:
+                    text = canonical
+                    break
             for source_term, canonical, variants in VI_CANONICAL_TERMS:
                 if source_term not in source:
                     continue

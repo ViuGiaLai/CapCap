@@ -401,7 +401,7 @@ class ProjectService:
                 "video": self._file_signature(video_path),
                 "region": str(region or "bottom").strip().lower(),
                 "subtitle_rect": str(os.getenv("OCR_SUBTITLE_RECT") or "").strip(),
-                "crop_ratio": str(os.getenv("OCR_CROP_RATIO") or "0.25").strip(),
+                "crop_ratio": str(os.getenv("OCR_CROP_RATIO") or "0.30").strip(),
                 "sampling_fps": str(os.getenv("OCR_SAMPLING_FPS") or "auto").strip().lower(),
             }
         )

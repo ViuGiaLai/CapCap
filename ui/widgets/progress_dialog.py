@@ -407,16 +407,17 @@ class PipelineProgressDialog(QDialog):
     def _stop_total_timer(self):
         if self.total_timer.isActive():
             self.total_timer.stop()
-        if self.workflow_start_time is not None:
-            elapsed = int(time.monotonic() - self.workflow_start_time)
-            mins = elapsed // 60
-            secs = elapsed % 60
-            hours, mins = divmod(mins, 60)
+        if self.workflow_start_time is None:
+            return
+        elapsed = int(time.monotonic() - self.workflow_start_time)
+        mins = elapsed // 60
+        secs = elapsed % 60
+        hours, mins = divmod(mins, 60)
         if hours > 0:
             self.total_time_label.setText(f"Total time: {hours}:{mins:02d}:{secs:02d}")
         else:
             self.total_time_label.setText(f"Total time: {mins:02d}:{secs:02d}")
-            self.workflow_start_time = None
+        self.workflow_start_time = None
 
     def _on_stop(self):
         self._stopped = True

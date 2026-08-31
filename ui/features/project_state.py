@@ -708,7 +708,11 @@ class ProjectStateMixin:
                 self._split_segments_for_single_line()
             self._enable_post_pipeline_preview_assets(refresh=True)
             self.apply_segments_to_timeline()
-            self.set_selected_segment_index(0, sync_ui=True)
+            # Loading/rebuilding a project starts at the playhead, not at the
+            # first subtitle. Selecting cue 1 here made the Inspector and the
+            # paused overlay show a future cue while timeline time was 00:00.
+            self._selected_segment_index = -1
+            self.sync_segment_editor_rows()
         # Restore A2 Dub track if TTS was generated
         voice_path = context.get("artifacts", {}).get("voice_vi", "")
         if voice_path and os.path.exists(voice_path) and hasattr(self, "timeline"):
@@ -800,6 +804,11 @@ class ProjectStateMixin:
         try:
             if hasattr(self, "media_player") and self.media_player is not None:
                 self.media_player.pause()
+                self.media_player.setPosition(0)
+            if hasattr(self, "timeline") and self.timeline is not None:
+                self.timeline.set_position(0)
+            if hasattr(self, "update_playback_subtitle_highlight"):
+                self.update_playback_subtitle_highlight(0)
         except Exception:
             pass
         if hasattr(self, "refresh_source_video_list"):

@@ -192,7 +192,10 @@ class SegmentRegroupService:
             payload["words"] = list(segment.get("words") or [])
         if segment.get("chunk_id"):
             payload["chunk_id"] = segment.get("chunk_id")
-        for key in ("speaker", "language", "confidence", "split_from_long_asr"):
+        for key in (
+            "speaker", "language", "confidence", "split_from_long_asr",
+            "speech_detected", "speech_gate",
+        ):
             if key in segment:
                 payload[key] = segment[key]
         return payload

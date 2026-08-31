@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from difflib import SequenceMatcher
 
 
 _SCRIPT_PATTERNS = {
@@ -28,21 +29,46 @@ _SUSPICIOUS_LENGTH = {
 # so require complete tokens there. Other supported scripts commonly attach
 # particles/prefixes without spaces and need compact matching.
 _WORD_BASED_FAMILIES = {"latin"}
+_NON_DIALOGUE_OCR_PATTERNS = (
+    # Common burned-in cards/labels that can contain a short ASR token but are
+    # not the subtitle of the current spoken line.
+    re.compile(r"(?:下集|精彩|剧集)?预告|未完待续|第[一二三四五六七八九十百千万0-9]+集"),
+    re.compile(r"次回予告|つづく|続く", re.IGNORECASE),
+    re.compile(r"다음\s*화\s*예고|미리\s*보기"),
+    re.compile(r"\b(?:next\s+episode|preview|trailer|to\s+be\s+continued)\b", re.IGNORECASE),
+    re.compile(r"\b(?:tập\s+tiếp\s+theo|xem\s+trước|còn\s+tiếp)\b", re.IGNORECASE),
+)
 
 
 class AsrOcrReconciliationService:
-    """Repair clearly truncated ASR cues using matching burned-in subtitles.
+    """Verify recognition-risk ASR cues against burned-in source subtitles.
 
-    Audio remains authoritative for timing. OCR may replace only a very short
-    cue in the same writing system when the longer on-screen text contains the
-    complete ASR token(s) and is visible at the same time. This keeps titles,
-    logos, and unrelated signs out of the spoken transcript.
+    VAD remains authoritative for the presence and outer timing of speech.
+    Spatially filtered OCR becomes authoritative for text only after temporal
+    consensus; a sequence of stable OCR states may split a merged ASR cue.
+    Script checks and title-card rejection keep unrelated visible text out of
+    the spoken transcript.
     """
 
-    VERSION = "multilingual-truncated-cue-v3-two-frame-consensus"
+    VERSION = "multilingual-fast-adaptive-dialogue-segmentation-v7"
     MAX_TIME_SLOP_SECONDS = 0.45
     MAX_OCR_LENGTH = 80
-    MAX_SCAN_RANGES = 32
+    MAX_SCAN_RANGES = 512
+    MERGE_RISK_DURATION_SECONDS = 2.5
+    AUTHORITATIVE_SHORT_LENGTH = {
+        "han": 4, "japanese": 4, "korean": 5, "latin": 8,
+        "cyrillic": 8, "arabic": 8, "thai": 8,
+    }
+
+    @staticmethod
+    def _has_speech_evidence(segment: dict) -> bool:
+        """Honor an explicit VAD result while remaining compatible with Whisper."""
+        return "speech_detected" not in segment or segment.get("speech_detected") is True
+
+    @staticmethod
+    def _is_non_dialogue_ocr_text(value: object) -> bool:
+        text = unicodedata.normalize("NFKC", str(value or "")).strip()
+        return any(pattern.search(text) for pattern in _NON_DIALOGUE_OCR_PATTERNS)
 
     @staticmethod
     def _language_family(source_language: str) -> str:
@@ -96,14 +122,34 @@ class AsrOcrReconciliationService:
         return True
 
     @classmethod
+    def _needs_ocr_verification(cls, segment: dict, family: str) -> bool:
+        """Select cues where SenseVoice commonly loses, adds, or merges text."""
+        text = segment.get("text", "")
+        if family not in cls.AUTHORITATIVE_SHORT_LENGTH or not cls._is_family_text(text, family):
+            return False
+        compact = cls._normalized(text, family).replace(" ", "")
+        if not compact:
+            return False
+        try:
+            start = float(segment.get("start", 0.0) or 0.0)
+            end = max(start, float(segment.get("end", start) or start))
+        except (TypeError, ValueError):
+            start = end = 0.0
+        return bool(
+            len(compact) <= cls.AUTHORITATIVE_SHORT_LENGTH[family]
+            or end - start >= cls.MERGE_RISK_DURATION_SECONDS
+            or segment.get("split_from_long_asr") is True
+        )
+
+    @classmethod
     def should_scan(cls, asr_segments: list[dict], source_language: str) -> bool:
         explicit_family = cls._language_family(source_language)
         language = str(source_language or "auto").strip().lower()
         if not explicit_family and language not in {"", "auto"}:
             return False
         return any(
-            cls._is_suspicious(
-                segment.get("text", ""),
+            cls._has_speech_evidence(segment) and cls._needs_ocr_verification(
+                segment,
                 explicit_family or cls._detect_family(segment.get("text", "")),
             )
             for segment in asr_segments or []
@@ -120,8 +166,10 @@ class AsrOcrReconciliationService:
         explicit_family = cls._language_family(source_language)
         pending = []
         for segment in asr_segments or []:
+            if not cls._has_speech_evidence(segment):
+                continue
             family = explicit_family or cls._detect_family(segment.get("text", ""))
-            if not cls._is_suspicious(segment.get("text", ""), family):
+            if not cls._needs_ocr_verification(segment, family):
                 continue
             start = max(0.0, float(segment.get("start", 0.0) or 0.0) - padding_seconds)
             end = max(start, float(segment.get("end", start) or start) + padding_seconds)
@@ -143,18 +191,54 @@ class AsrOcrReconciliationService:
         padding_seconds: float = 0.15,
     ) -> list[tuple[float, float]]:
         """Return one tight OCR window per suspect cue without merging cues."""
+        return [
+            (request["start"], request["end"])
+            for request in cls.suspicious_cue_requests(
+                asr_segments,
+                source_language=source_language,
+                padding_seconds=padding_seconds,
+            )
+        ]
+
+    @classmethod
+    def suspicious_cue_requests(
+        cls,
+        asr_segments: list[dict],
+        *,
+        source_language: str = "auto",
+        padding_seconds: float = 0.15,
+    ) -> list[dict]:
+        """Return tight OCR windows together with their expected ASR text."""
         explicit_family = cls._language_family(source_language)
-        ranges = []
+        requests = []
         for segment in asr_segments or []:
-            family = explicit_family or cls._detect_family(segment.get("text", ""))
-            if not cls._is_suspicious(segment.get("text", ""), family):
+            if not cls._has_speech_evidence(segment):
                 continue
-            start = max(0.0, float(segment.get("start", 0.0) or 0.0) - padding_seconds)
-            end = max(start, float(segment.get("end", start) or start) + padding_seconds)
-            ranges.append((start, end))
-            if len(ranges) >= cls.MAX_SCAN_RANGES:
+            family = explicit_family or cls._detect_family(segment.get("text", ""))
+            if not cls._needs_ocr_verification(segment, family):
+                continue
+            cue_start = float(segment.get("start", 0.0) or 0.0)
+            cue_end = max(cue_start, float(segment.get("end", cue_start) or cue_start))
+            scan_mode = (
+                "sequence"
+                if cue_end - cue_start >= cls.MERGE_RISK_DURATION_SECONDS
+                else "authoritative"
+            )
+            # Sequence sampling stays inside the VAD/ASR cue. Padding a long
+            # cue pulled in the preceding/following subtitle and could create
+            # a false split. Short cues retain a small decoder-timestamp slop.
+            effective_padding = 0.0 if scan_mode == "sequence" else max(float(padding_seconds), 0.15)
+            start = max(0.0, cue_start - effective_padding)
+            end = max(start, cue_end + effective_padding)
+            requests.append({
+                "start": start,
+                "end": end,
+                "text": str(segment.get("text", "") or "").strip(),
+                "scan_mode": scan_mode,
+            })
+            if len(requests) >= cls.MAX_SCAN_RANGES:
                 break
-        return ranges
+        return requests
 
     @staticmethod
     def _interval_match(asr: dict, ocr: dict) -> tuple[float, float]:
@@ -179,6 +263,20 @@ class AsrOcrReconciliationService:
         return bool(asr_text) and asr_text in ocr_text
 
     @classmethod
+    def _is_safe_text_match(cls, asr_text: str, ocr_text: str, family: str) -> bool:
+        if cls._contains_complete_cue(asr_text, ocr_text, family):
+            return len(ocr_text) > len(asr_text)
+        if family in _WORD_BASED_FAMILIES:
+            return False
+        # Permit only a close, equal-length correction for a compact short
+        # cue. This covers ASR homophones such as 助手 -> 住手 without making
+        # OCR authoritative for arbitrary unrelated on-screen text.
+        return bool(
+            2 <= len(asr_text) == len(ocr_text) <= 4
+            and SequenceMatcher(None, asr_text, ocr_text).ratio() >= 0.5
+        )
+
+    @classmethod
     def reconcile(
         cls,
         asr_segments: list[dict],
@@ -195,21 +293,28 @@ class AsrOcrReconciliationService:
             asr_text = str(item.get("text", "") or "").strip()
             family = explicit_family or cls._detect_family(asr_text)
             asr_normalized = cls._normalized(asr_text, family)
-            if not cls._is_suspicious(asr_text, family):
+            if (
+                not cls._has_speech_evidence(item)
+                or not cls._needs_ocr_verification(item, family)
+            ):
                 repaired.append(item)
                 continue
 
             candidates = []
             for ocr in ocr_segments or []:
                 ocr_text = str(ocr.get("text", "") or "").strip()
+                if cls._is_non_dialogue_ocr_text(ocr_text):
+                    continue
                 if not cls._is_family_text(ocr_text, family):
                     continue
                 ocr_normalized = cls._normalized(ocr_text, family)
                 if not ocr_normalized or len(ocr_normalized.replace(" ", "")) > cls.MAX_OCR_LENGTH:
                     continue
-                if len(ocr_normalized) <= len(asr_normalized):
-                    continue
-                if not cls._contains_complete_cue(asr_normalized, ocr_normalized, family):
+                safe_legacy_match = cls._is_safe_text_match(
+                    asr_normalized, ocr_normalized, family
+                )
+                stable_source_subtitle = int(ocr.get("ocr_consensus_frames", 0) or 0) >= 2
+                if not safe_legacy_match and not stable_source_subtitle:
                     continue
                 overlap, midpoint_distance = cls._interval_match(item, ocr)
                 if overlap <= 0.0 and midpoint_distance > cls.MAX_TIME_SLOP_SECONDS:
@@ -217,13 +322,97 @@ class AsrOcrReconciliationService:
                 candidates.append((overlap > 0.0, overlap, -midpoint_distance, -len(ocr_normalized), ocr))
 
             if candidates:
+                ordered = sorted(
+                    (candidate[-1] for candidate in candidates),
+                    key=lambda value: (
+                        float(value.get("start", 0.0) or 0.0),
+                        float(value.get("end", 0.0) or 0.0),
+                    ),
+                )
+                sequence_related = []
+                for candidate in ordered:
+                    if candidate.get("ocr_scan_mode") != "sequence":
+                        continue
+                    candidate_normalized = cls._normalized(
+                        candidate.get("text", ""), family
+                    )
+                    matcher = SequenceMatcher(None, asr_normalized, candidate_normalized)
+                    longest = matcher.find_longest_match(
+                        0, len(asr_normalized), 0, len(candidate_normalized)
+                    ).size
+                    if (
+                        candidate_normalized in asr_normalized
+                        or asr_normalized in candidate_normalized
+                        or (longest >= 2 and matcher.ratio() >= 0.22)
+                    ):
+                        sequence_related.append(candidate)
+                # During subtitle fade-in a fast recognizer can briefly see a
+                # stable but incomplete/background string. If other states in
+                # the same sequence clearly align with ASR, discard only the
+                # unrelated transition states before cue splitting.
+                if sequence_related:
+                    related_ids = {id(candidate) for candidate in sequence_related}
+                    ordered = [
+                        candidate for candidate in ordered
+                        if candidate.get("ocr_scan_mode") != "sequence"
+                        or id(candidate) in related_ids
+                    ]
+                distinct = []
+                for candidate in ordered:
+                    candidate_text = str(candidate.get("text", "") or "").strip()
+                    candidate_key = cls._normalized(candidate_text, family)
+                    if distinct and distinct[-1][0] == candidate_key:
+                        distinct[-1] = (candidate_key, candidate)
+                    else:
+                        distinct.append((candidate_key, candidate))
+
+                # A sequence scan can prove that one long ASR region contains
+                # two different burned-in subtitle states. Split at the
+                # midpoint between their confirmed sample windows.
+                sequence_candidates = [
+                    candidate for _key, candidate in distinct
+                    if candidate.get("ocr_scan_mode") == "sequence"
+                ]
+                if len(sequence_candidates) > 1:
+                    centers = [
+                        (
+                            float(candidate.get("start", 0.0) or 0.0)
+                            + float(candidate.get("end", 0.0) or 0.0)
+                        ) * 0.5
+                        for candidate in sequence_candidates
+                    ]
+                    asr_start = float(item.get("start", 0.0) or 0.0)
+                    asr_end = max(asr_start, float(item.get("end", asr_start) or asr_start))
+                    boundaries = [asr_start]
+                    boundaries.extend(
+                        max(asr_start, min(asr_end, (centers[i - 1] + centers[i]) * 0.5))
+                        for i in range(1, len(centers))
+                    )
+                    boundaries.append(asr_end)
+                    for index, candidate in enumerate(sequence_candidates):
+                        if boundaries[index + 1] <= boundaries[index] + 0.02:
+                            continue
+                        piece = dict(item)
+                        ocr_text = str(candidate.get("text", "") or "").strip()
+                        piece["start"] = boundaries[index]
+                        piece["end"] = boundaries[index + 1]
+                        piece["asr_text_original"] = asr_text
+                        piece["ocr_text"] = ocr_text
+                        piece["text_source"] = "ocr_reconciled_split"
+                        piece["text"] = ocr_text
+                        piece["words"] = []
+                        repaired.append(piece)
+                    replacement_count += 1
+                    continue
+
                 best = max(candidates, key=lambda candidate: candidate[:4])[-1]
                 ocr_text = str(best.get("text", "") or "").strip()
-                item["asr_text_original"] = asr_text
-                item["ocr_text"] = ocr_text
-                item["text_source"] = "ocr_reconciled"
-                item["text"] = ocr_text
-                replacement_count += 1
+                if cls._normalized(ocr_text, family) != asr_normalized:
+                    item["asr_text_original"] = asr_text
+                    item["ocr_text"] = ocr_text
+                    item["text_source"] = "ocr_reconciled"
+                    item["text"] = ocr_text
+                    replacement_count += 1
             repaired.append(item)
 
         return repaired, replacement_count
