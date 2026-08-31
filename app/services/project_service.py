@@ -29,7 +29,7 @@ class ProjectService:
         project_id = self._build_project_id(video_path)
         project_root = os.path.join(self.projects_root, project_id)
         self._ensure_project_dirs(project_root)
- 
+
         state_path = self.project_file(project_root)
         current_identity = self._input_video_identity(video_path)
         if os.path.exists(state_path):
@@ -46,7 +46,20 @@ class ProjectService:
             state.set_setting("input_video_identity", current_identity)
             self.save_project(state)
             return state
- 
+
+        existing_state = self._find_existing_project_by_identity(current_identity)
+        if existing_state is not None:
+            previous_identity = dict(existing_state.settings.get("input_video_identity") or {})
+            existing_state.input_video = os.path.abspath(video_path)
+            if previous_identity and previous_identity != current_identity:
+                existing_state.set_setting("input_video_content_changed", {
+                    "previous": previous_identity,
+                    "current": current_identity,
+                })
+            existing_state.set_setting("input_video_identity", current_identity)
+            self.save_project(existing_state)
+            return existing_state
+
         state = ProjectState(
             project_id=project_id,
             project_root=project_root,
@@ -121,6 +134,28 @@ class ProjectService:
                 if match:
                     highest = max(highest, int(match.group(1)))
         return highest + 1
+
+    def _find_existing_project_by_identity(self, identity: dict[str, Any]) -> ProjectState | None:
+        if not identity.get("path"):
+            return None
+        try:
+            entries = list(os.scandir(self.projects_root))
+        except OSError:
+            return None
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            state_path = os.path.join(entry.path, "project.json")
+            if not os.path.isfile(state_path):
+                continue
+            try:
+                state = self.load_project(state_path)
+                saved_identity = dict(state.settings.get("input_video_identity") or {})
+                if saved_identity.get("path") and saved_identity.get("path") == identity.get("path") and saved_identity.get("sample_sha1") == identity.get("sample_sha1"):
+                    return state
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                pass
+        return None
 
     @staticmethod
     def _input_video_identity(video_path: str) -> dict[str, Any]:

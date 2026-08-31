@@ -87,6 +87,36 @@ class ProjectIsolationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 service.rename_project(state, "bad/name")
 
+    def test_ensure_project_reuses_existing_project_with_same_video_identity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = ProjectService(folder)
+            video = os.path.join(folder, "3-4_movie_douyin.mp4")
+            Path(video).write_bytes(b"video-content")
+            viustudio_state = service.create_project()
+            viustudio_state.input_video = os.path.abspath(video)
+            viustudio_state.set_setting("input_video_identity", service._input_video_identity(video))
+            service.save_project(viustudio_state)
+
+            ensured_state = service.ensure_project(video)
+            self.assertEqual(ensured_state.project_id, viustudio_state.project_id)
+            self.assertEqual(ensured_state.project_root, viustudio_state.project_root)
+            self.assertEqual(ensured_state.input_video, os.path.abspath(video))
+            self.assertEqual(ensured_state.display_name, viustudio_state.display_name)
+
+    def test_ensure_project_creates_new_project_when_no_matching_identity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = ProjectService(folder)
+            video1 = os.path.join(folder, "3-4_movie_douyin.mp4")
+            video2 = os.path.join(folder, "5-6_movie_youtube.mp4")
+            Path(video1).write_bytes(b"video-content-1")
+            Path(video2).write_bytes(b"video-content-2")
+            viustudio_state = service.create_project()
+            service.save_project(viustudio_state)
+
+            ensured_state = service.ensure_project(video2)
+            self.assertNotEqual(ensured_state.project_id, viustudio_state.project_id)
+            self.assertEqual(ensured_state.input_video, os.path.abspath(video2))
+
 
 if __name__ == "__main__":
     unittest.main()
