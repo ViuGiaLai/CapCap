@@ -87,6 +87,34 @@ class ProjectIsolationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 service.rename_project(state, "bad/name")
 
+    def test_translation_cache_changes_with_provider_and_local_model(self):
+        previous_provider = os.environ.get("OPENAI_PROVIDER")
+        previous_model = os.environ.get("LLAMA_APP_MODEL")
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                service = ProjectService(folder)
+                segments = [{"start": 0.0, "end": 2.0, "text": "你好"}]
+                os.environ["OPENAI_PROVIDER"] = "google"
+                google_signature = service.build_translation_signature(segments)
+                model = os.path.join(folder, "local.gguf")
+                Path(model).write_bytes(b"model-v1")
+                os.environ["OPENAI_PROVIDER"] = "llama_app"
+                os.environ["LLAMA_APP_MODEL"] = model
+                llama_signature = service.build_translation_signature(segments)
+                Path(model).write_bytes(b"model-v2")
+                replaced_model_signature = service.build_translation_signature(segments)
+                self.assertNotEqual(google_signature, llama_signature)
+                self.assertNotEqual(llama_signature, replaced_model_signature)
+        finally:
+            if previous_provider is None:
+                os.environ.pop("OPENAI_PROVIDER", None)
+            else:
+                os.environ["OPENAI_PROVIDER"] = previous_provider
+            if previous_model is None:
+                os.environ.pop("LLAMA_APP_MODEL", None)
+            else:
+                os.environ["LLAMA_APP_MODEL"] = previous_model
+
     def test_ensure_project_reuses_existing_project_with_same_video_identity(self):
         with tempfile.TemporaryDirectory() as folder:
             service = ProjectService(folder)

@@ -300,11 +300,26 @@ class ProjectService:
         optimize_subtitles: bool = False,
         style_instruction: str = "",
     ) -> str:
+        provider = str(os.getenv("OPENAI_PROVIDER") or os.getenv("AI_POLISHER_PROVIDER") or "google").strip().lower()
+        model_env_names = {
+            "google_ai_studio": "GOOGLE_AI_STUDIO_MODEL",
+            "deepseek": "DEEPSEEK_MODEL",
+            "openai": "OPENAI_MODEL",
+            "ollama": "OLLAMA_MODEL",
+            "custom": "CUSTOM_AI_MODEL",
+        }
+        provider_model: Any
+        if provider == "llama_app":
+            provider_model = self._file_signature(os.getenv("LLAMA_APP_MODEL", ""))
+        else:
+            provider_model = str(os.getenv(model_env_names.get(provider, ""), "") or "").strip()
         payload = {
             # Translation behavior includes the contextual-reasoning prompt.
             # Bump this when prompt semantics change so projects do not reuse
             # older, literal translations from the cache.
-            "translation_prompt_version": 5,
+            "translation_prompt_version": 6,
+            "translation_provider": provider,
+            "translation_provider_model": provider_model,
             "src_lang": str(src_lang or "auto").strip().lower(),
             "target_lang": str(target_lang or "vi").strip().lower(),
             "enable_polish": bool(enable_polish),

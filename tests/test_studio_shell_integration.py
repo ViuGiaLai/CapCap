@@ -159,6 +159,29 @@ class TestStudioShellIntegration(unittest.TestCase):
 
         self.assertEqual(calls, [True])
 
+    def test_subtitle_inspector_actions_are_compact_and_not_clipped(self):
+        buttons = (
+            self.window.rewrite_translation_btn,
+            self.window.subtitle_editor_btn,
+            self.window.import_translation_btn,
+            self.window.audio_inspector_regenerate_voice_btn,
+            self.window.inspector_delete_segment_btn,
+        )
+
+        self.assertEqual(
+            [button.text() for button in buttons],
+            ["Rewrite", "Edit", "Import SRT", "Voice", "Delete"],
+        )
+        self.assertTrue(all(button.height() == 32 for button in buttons))
+        self.assertTrue(all(not button.icon().isNull() for button in buttons))
+        occupied_width = sum(button.maximumWidth() for button in buttons) + (len(buttons) - 1) * 6
+        available_width = self.window.inspector_stack.minimumWidth() - 20
+        self.assertLessEqual(occupied_width, available_width)
+        self.assertEqual(
+            self.window.inspector_delete_segment_btn.objectName(),
+            "subtitleInspectorDangerAction",
+        )
+
     def test_target_language_selector_exposes_multilingual_pipeline(self):
         codes = {
             self.window.lang_target_combo.itemData(index)

@@ -1,12 +1,16 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "app")]
 
 from services.asr_ocr_reconciliation_service import AsrOcrReconciliationService
+import ocr_processor
 from sensevoice_processor import (
     _lang_code,
     _pad_and_merge_vad_segments,
@@ -100,6 +104,73 @@ class AsrOcrReconciliationTests(unittest.TestCase):
             {"start": 11.0, "end": 11.2, "text": "走"},
         ])
         self.assertEqual(ranges, [(9.25, 11.95)])
+
+    def test_fast_ocr_keeps_one_tight_window_per_suspicious_cue(self):
+        ranges = AsrOcrReconciliationService.suspicious_cue_ranges([
+            {"start": 10.0, "end": 10.4, "text": "下"},
+            {"start": 11.0, "end": 11.2, "text": "走"},
+        ])
+        self.assertEqual(ranges, [(9.85, 10.55), (10.85, 11.35)])
+
+    def test_two_frame_consensus_rejects_disagreement_or_missing_text(self):
+        self.assertEqual(
+            ocr_processor._two_frame_ocr_consensus(["等一下", "等一下！"]),
+            "等一下！",
+        )
+        self.assertEqual(
+            ocr_processor._two_frame_ocr_consensus(["下", "等一下"]),
+            "",
+        )
+        self.assertEqual(
+            ocr_processor._two_frame_ocr_consensus(["等一下", ""]),
+            "",
+        )
+
+    def test_range_ocr_opens_video_once_and_returns_only_consensus(self):
+        class FakeCapture:
+            def __init__(self):
+                self.read_count = 0
+                self.released = False
+
+            def get(self, prop):
+                return 30.0
+
+            def set(self, prop, value):
+                return True
+
+            def read(self):
+                self.read_count += 1
+                return True, np.ones((100, 200, 3), dtype=np.uint8) * 255
+
+            def release(self):
+                self.released = True
+
+        capture = FakeCapture()
+        progress = []
+        with (
+            patch.object(ocr_processor, "_open_video", return_value=capture) as open_video,
+            patch.object(ocr_processor, "_load_ocr_engine", return_value=object()),
+            patch.object(ocr_processor, "crop_subtitle_region", side_effect=lambda frame, region: frame),
+            patch.object(ocr_processor, "_is_blank_region", return_value=False),
+            patch.object(
+                ocr_processor,
+                "ocr_frame",
+                side_effect=[["等一下"], ["等一下"], ["下"], ["等一下"]],
+            ),
+        ):
+            result = ocr_processor.transcribe_video_ocr_ranges(
+                "movie.mp4",
+                [(1.0, 2.0), (3.0, 4.0)],
+                progress_callback=lambda done, total: progress.append((done, total)),
+            )
+
+        open_video.assert_called_once_with("movie.mp4")
+        self.assertTrue(capture.released)
+        self.assertEqual(capture.read_count, 4)
+        self.assertEqual(progress, [(1, 2), (2, 2)])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "等一下")
+        self.assertEqual(result[0]["ocr_consensus_frames"], 2)
 
 
 class SenseVoiceBoundaryTests(unittest.TestCase):

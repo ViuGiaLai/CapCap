@@ -11,6 +11,18 @@ _lock = threading.Lock()
 _SUPPORTED_LANGUAGE_CODES = {"auto", "zh", "yue", "en", "ja", "ko"}
 
 
+def _sensevoice_thread_count() -> int:
+    """Use the available CPU without making the desktop unresponsive."""
+    configured = str(os.getenv("VIUSTUDIO_ASR_THREADS", "") or "").strip()
+    if configured:
+        try:
+            return max(1, min(16, int(configured)))
+        except ValueError:
+            pass
+    logical_cpus = int(os.cpu_count() or 4)
+    return max(2, min(8, logical_cpus - 2 if logical_cpus > 4 else logical_cpus))
+
+
 def is_available() -> bool:
     global _ENABLED
     if _ENABLED:
@@ -103,7 +115,7 @@ def load_model(model_dir: str, language: str = "auto"):
             _recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
                 model=model_path,
                 tokens=tokens_path,
-                num_threads=4,
+                num_threads=_sensevoice_thread_count(),
                 use_itn=True,
                 sense_voice_language=lang,
             )
@@ -111,7 +123,7 @@ def load_model(model_dir: str, language: str = "auto"):
             _recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
                 model=model_path,
                 tokens=tokens_path,
-                num_threads=4,
+                num_threads=_sensevoice_thread_count(),
                 use_itn=True,
             )
         _current_model_dir = model_dir
@@ -168,3 +180,65 @@ def transcribe_audio(audio_path: str, model_dir: str, *, language: str = "auto")
             results.append({"start": 0.0, "end": round(duration, 3), "text": text})
 
     return results
+
+
+def transcribe_presegmented_audio_batch(
+    audio_paths: list[str],
+    model_dir: str,
+    *,
+    language: str = "auto",
+    batch_size: int | None = None,
+    progress_callback=None,
+) -> list[list[dict]]:
+    """Decode speech-focused WAV chunks in batches with one loaded model.
+
+    ``ChunkingService`` has already applied VAD and bounded these files, so
+    running Silero VAD again for every file only duplicates work.  Sherpa's
+    multi-stream decoder lets the ONNX runtime use its worker threads across
+    several chunks while preserving one result list per input file.
+    """
+    load_model(model_dir, language=language)
+    paths = [str(path) for path in (audio_paths or [])]
+    if not paths:
+        return []
+    size = max(1, min(16, int(batch_size or _sensevoice_thread_count())))
+    all_results: list[list[dict]] = []
+
+    for batch_start in range(0, len(paths), size):
+        batch_paths = paths[batch_start:batch_start + size]
+        streams = []
+        durations = []
+        for audio_path in batch_paths:
+            sr, audio = wavfile.read(audio_path)
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+            if audio.dtype != np.float32:
+                if np.issubdtype(audio.dtype, np.integer):
+                    scale = float(max(abs(np.iinfo(audio.dtype).min), np.iinfo(audio.dtype).max))
+                    audio = audio.astype(np.float32) / scale
+                else:
+                    audio = audio.astype(np.float32)
+            if sr != 16000:
+                from scipy.signal import resample
+                audio = resample(audio, int(len(audio) * 16000 / sr)).astype(np.float32)
+            audio = np.ascontiguousarray(audio, dtype=np.float32)
+            stream = _recognizer.create_stream()
+            stream.accept_waveform(16000, audio)
+            streams.append(stream)
+            durations.append(float(len(audio)) / 16000.0)
+
+        if hasattr(_recognizer, "decode_streams"):
+            _recognizer.decode_streams(streams)
+        else:
+            for stream in streams:
+                _recognizer.decode_stream(stream)
+
+        for stream, duration in zip(streams, durations):
+            text = str(stream.result.text or "").strip()
+            all_results.append(
+                [{"start": 0.0, "end": round(duration, 3), "text": text}] if text else []
+            )
+        if progress_callback is not None:
+            progress_callback(min(batch_start + len(batch_paths), len(paths)), len(paths))
+
+    return all_results

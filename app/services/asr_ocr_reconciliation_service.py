@@ -39,7 +39,7 @@ class AsrOcrReconciliationService:
     logos, and unrelated signs out of the spoken transcript.
     """
 
-    VERSION = "multilingual-truncated-cue-v2"
+    VERSION = "multilingual-truncated-cue-v3-two-frame-consensus"
     MAX_TIME_SLOP_SECONDS = 0.45
     MAX_OCR_LENGTH = 80
     MAX_SCAN_RANGES = 32
@@ -133,6 +133,28 @@ class AsrOcrReconciliationService:
             else:
                 ranges.append((start, end))
         return ranges[:cls.MAX_SCAN_RANGES]
+
+    @classmethod
+    def suspicious_cue_ranges(
+        cls,
+        asr_segments: list[dict],
+        *,
+        source_language: str = "auto",
+        padding_seconds: float = 0.15,
+    ) -> list[tuple[float, float]]:
+        """Return one tight OCR window per suspect cue without merging cues."""
+        explicit_family = cls._language_family(source_language)
+        ranges = []
+        for segment in asr_segments or []:
+            family = explicit_family or cls._detect_family(segment.get("text", ""))
+            if not cls._is_suspicious(segment.get("text", ""), family):
+                continue
+            start = max(0.0, float(segment.get("start", 0.0) or 0.0) - padding_seconds)
+            end = max(start, float(segment.get("end", start) or start) + padding_seconds)
+            ranges.append((start, end))
+            if len(ranges) >= cls.MAX_SCAN_RANGES:
+                break
+        return ranges
 
     @staticmethod
     def _interval_match(asr: dict, ocr: dict) -> tuple[float, float]:

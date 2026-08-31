@@ -100,13 +100,14 @@ class TranslationOrchestrator:
                         target_lang=target_lang,
                         style_instruction=merged_style,
                     )
-                    translated_texts, quality_warnings = self._fallback_unresolved_quality_issues(
-                        source_segments=segments,
-                        translated_texts=translated_texts,
-                        quality_warnings=quality_warnings,
-                        src_lang=normalized_src,
-                        target_lang=target_lang,
-                    )
+                    if provider_type != "llama_app":
+                        translated_texts, quality_warnings = self._fallback_unresolved_quality_issues(
+                            source_segments=segments,
+                            translated_texts=translated_texts,
+                            quality_warnings=quality_warnings,
+                            src_lang=normalized_src,
+                            target_lang=target_lang,
+                        )
                     warnings.extend(quality_warnings)
                     print(f"[AI Translation] Success: completed via {', '.join(providers_used) or 'AI'}")
                     final_segments = clone_with_texts(segments, translated_texts, provider=provider_type, polished=True)
@@ -116,9 +117,16 @@ class TranslationOrchestrator:
                         warnings=warnings,
                         stage="ai_direct",
                         primary_provider=" -> ".join(providers_used) or provider_type,
-                        used_fallback=bool(warnings),
+                        # Readability/quality warnings are not provider
+                        # fallback. Mark this only on the real Google path.
+                        used_fallback=False,
                     )
                 except Exception as exc:
+                    if provider_type == "llama_app":
+                        # A user who explicitly selected an offline model must
+                        # not unknowingly send subtitles to Google. Surface the
+                        # real local-engine error to the pipeline instead.
+                        raise
                     if isinstance(exc, AIBatchTranslationError):
                         msg = "AI batch translation failed. Falling back to Google Translate."
                     else:
@@ -337,10 +345,14 @@ class TranslationOrchestrator:
         # on a cue count though: long subtitle files can still exceed a
         # provider's practical context/output budget.  The same boundaries
         # are used for source and draft text, preventing misaligned rewrites.
+        local_provider = provider_type in {"llama_app", "ollama"}
         batches, full_context_request = self._build_ai_batches(
             source_texts=source_texts,
             translated_texts=translated_texts,
-            requested_max_segments=polish_batch_size,
+            requested_max_segments=min(polish_batch_size, 24) if local_provider else polish_batch_size,
+            force_ordered=local_provider,
+            max_chars_limit=6000 if local_provider else None,
+            response_token_limit=1800 if local_provider else None,
         )
         if not full_context_request:
             print(
@@ -599,6 +611,8 @@ class TranslationOrchestrator:
         translated_texts: list[str] | None,
         requested_max_segments: int,
         force_ordered: bool = False,
+        max_chars_limit: int | None = None,
+        response_token_limit: int | None = None,
     ) -> tuple[list[tuple[list[str], list[str] | None, int]], bool]:
         """Create ordered AI batches with both cue and prompt-size limits.
 
@@ -652,10 +666,11 @@ class TranslationOrchestrator:
         except ValueError:
             configured_max = 80
         max_segments = max(1, min(int(requested_max_segments or 80), max(1, configured_max)))
-        max_chars = _env_int("VIUSTUDIO_AI_TRANSLATION_MAX_CHARS", 18000)
+        max_chars = int(max_chars_limit or _env_int("VIUSTUDIO_AI_TRANSLATION_MAX_CHARS", 18000))
         # Draft rewriting sends both source and translated text in the prompt.
         max_chars = max(2000, max_chars // (2 if translated_texts is not None else 1))
 
+        per_batch_response_limit = int(response_token_limit or 3600)
         batches: list[tuple[list[str], list[str] | None, int]] = []
         current_source: list[str] = []
         current_drafts: list[str] | None = [] if translated_texts is not None else None
@@ -669,9 +684,9 @@ class TranslationOrchestrator:
             if current_source and (
                 len(current_source) >= max_segments
                 or current_chars + item_chars > max_chars
-                or current_response_tokens + item_response_tokens > 3600
+                or current_response_tokens + item_response_tokens > per_batch_response_limit
             ):
-                batches.append((current_source, current_drafts, max(1024, min(4096, current_response_tokens + 128))))
+                batches.append((current_source, current_drafts, max(1024, min(per_batch_response_limit + 256, current_response_tokens + 128))))
                 current_source = []
                 current_drafts = [] if translated_texts is not None else None
                 current_chars = 0
@@ -682,7 +697,7 @@ class TranslationOrchestrator:
             current_chars += item_chars
             current_response_tokens += item_response_tokens
         if current_source:
-            batches.append((current_source, current_drafts, max(1024, min(4096, current_response_tokens + 128))))
+            batches.append((current_source, current_drafts, max(1024, min(per_batch_response_limit + 256, current_response_tokens + 128))))
         return batches, False
 
     def _emit_batch_callback(

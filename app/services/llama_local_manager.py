@@ -19,6 +19,7 @@ class LlamaServerManager:
         self.process = None
         self.port = 49683
         self.current_model = None
+        self.log_handle = None
         self.bin_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "bin", "llama_cpp"))
         self.exe_path = os.path.join(self.bin_dir, "llama-server.exe")
         self.models_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "models", "local_translation"))
@@ -59,7 +60,8 @@ class LlamaServerManager:
             "--threads", "6"
         ]
         
-        log_file = open(os.path.join(self.models_dir, "llama-server.log"), "w")
+        log_path = os.path.join(self.models_dir, "llama-server.log")
+        self.log_handle = open(log_path, "w", encoding="utf-8")
         
         # Start server without a window
         startupinfo = subprocess.STARTUPINFO()
@@ -68,25 +70,55 @@ class LlamaServerManager:
         
         self.process = subprocess.Popen(
             cmd,
-            stdout=log_file,
+            stdout=self.log_handle,
             stderr=subprocess.STDOUT,
             startupinfo=startupinfo,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
         self.current_model = model_path
         
-        # Wait for server to be ready
-        for _ in range(30):
-            if self._is_port_in_use(self.port):
+        # Wait for the actual HTTP health endpoint. A listening socket alone
+        # can appear before the model is ready, which made Test Connection
+        # report success while the translation worker immediately failed.
+        health_url = f"http://127.0.0.1:{self.port}/health"
+        deadline = time.monotonic() + 120.0
+        last_error = ""
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                last_error = f"llama-server exited with code {self.process.returncode}"
                 break
-            time.sleep(1)
+            try:
+                with urllib.request.urlopen(health_url, timeout=1.0) as response:
+                    if response.status == 200:
+                        return
+            except Exception as exc:
+                last_error = str(exc)
+            time.sleep(0.25)
+        self.stop_server()
+        log_tail = ""
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+                log_tail = handle.read()[-1200:]
+        except OSError:
+            pass
+        raise RuntimeError(f"llama.cpp server did not become ready: {last_error}\n{log_tail}".strip())
 
     def stop_server(self):
         if self.process:
-            self.process.terminate()
-            self.process.wait(timeout=5)
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
             self.process = None
             self.current_model = None
+        if self.log_handle is not None:
+            try:
+                self.log_handle.close()
+            except OSError:
+                pass
+            self.log_handle = None
 
     def get_base_url(self) -> str:
         return f"http://127.0.0.1:{self.port}/v1"

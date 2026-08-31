@@ -1360,20 +1360,46 @@ def build_preview_panel(gui):
     inspector_header.addStretch(0)
     inspector_layout.addLayout(inspector_header)
 
-    # --- Action buttons at top ---
+    # --- Compact subtitle actions ---
+    # Keep this row usable at the inspector's 400 px minimum width.  The
+    # previous long labels inherited the application's generous button
+    # padding, so Qt squeezed them until their leading characters vanished.
     inspector_actions_row = QHBoxLayout()
     inspector_actions_row.setSpacing(6)
+    inspector_actions_row.setContentsMargins(0, 0, 0, 0)
     gui.rewrite_translation_btn = QPushButton("Rewrite")
-    gui.subtitle_editor_btn = QPushButton("Subtitle Editor")
+    gui.subtitle_editor_btn = QPushButton("Edit")
     gui.import_translation_btn = QPushButton("Import SRT")
-    gui.audio_inspector_regenerate_voice_btn = QPushButton("Regenerate voice")
+    gui.audio_inspector_regenerate_voice_btn = QPushButton("Voice")
+    gui.rewrite_translation_btn.setIcon(load_icon(asset_path("icons/rewrite.svg"), 15))
+    gui.subtitle_editor_btn.setIcon(load_icon(asset_path("icons/subtitle_edit.svg"), 15))
+    gui.import_translation_btn.setIcon(load_icon(asset_path("icons/import.svg"), 15))
+    gui.audio_inspector_regenerate_voice_btn.setIcon(load_icon(asset_path("icons/audio_preview.svg"), 15))
+    gui.inspector_delete_segment_btn = QPushButton("Delete")
+    gui.inspector_delete_segment_btn.setIcon(load_icon(asset_path("icons/delete.svg"), 15))
+
+    action_buttons = (
+        (gui.rewrite_translation_btn, 72, "Rewrite the selected subtitle with AI."),
+        (gui.subtitle_editor_btn, 52, "Open the full subtitle editor."),
+        (gui.import_translation_btn, 84, "Import subtitles from an SRT file."),
+        (gui.audio_inspector_regenerate_voice_btn, 64, "Re-generate voice for the selected subtitle."),
+        (gui.inspector_delete_segment_btn, 70, "Delete the selected subtitle cue."),
+    )
+    for button, preferred_width, tooltip in action_buttons:
+        button.setObjectName("subtitleInspectorAction")
+        button.setFixedHeight(32)
+        button.setMinimumWidth(preferred_width)
+        button.setMaximumWidth(preferred_width)
+        button.setIconSize(QSize(15, 15))
+        button.setCursor(Qt.PointingHandCursor)
+        button.setToolTip(tooltip)
+
+    gui.inspector_delete_segment_btn.setObjectName("subtitleInspectorDangerAction")
     gui.audio_inspector_regenerate_voice_btn.setToolTip(
         "Re-generate the dubbed voice for the currently selected segment."
     )
-    gui.inspector_delete_segment_btn = QPushButton("🗑️ Delete")
-    gui.inspector_delete_segment_btn.setObjectName("danger")
     gui.inspector_delete_segment_btn.setToolTip(
-        "Delete the currently selected subtitle cue (Xóa câu phụ đề đang chọn)"
+        "Delete the currently selected subtitle cue."
     )
     gui.rewrite_translation_btn.setEnabled(False)
     gui.subtitle_editor_btn.setEnabled(False)
@@ -1381,11 +1407,11 @@ def build_preview_panel(gui):
     gui.inspector_delete_segment_btn.setEnabled(False)
     gui.subtitle_editor_btn.clicked.connect(gui.open_subtitle_editor)
     gui.inspector_delete_segment_btn.clicked.connect(gui.delete_selected_timeline_segment)
-    inspector_actions_row.addWidget(gui.rewrite_translation_btn)
-    inspector_actions_row.addWidget(gui.subtitle_editor_btn)
-    inspector_actions_row.addWidget(gui.import_translation_btn)
-    inspector_actions_row.addWidget(gui.audio_inspector_regenerate_voice_btn)
-    inspector_actions_row.addWidget(gui.inspector_delete_segment_btn)
+    inspector_actions_row.addWidget(gui.rewrite_translation_btn, 0)
+    inspector_actions_row.addWidget(gui.subtitle_editor_btn, 0)
+    inspector_actions_row.addWidget(gui.import_translation_btn, 0)
+    inspector_actions_row.addWidget(gui.audio_inspector_regenerate_voice_btn, 0)
+    inspector_actions_row.addWidget(gui.inspector_delete_segment_btn, 0)
     inspector_actions_row.addStretch(1)
     inspector_layout.addLayout(inspector_actions_row)
 

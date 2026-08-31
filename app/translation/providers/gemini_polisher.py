@@ -1,5 +1,7 @@
 import os
+import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI
 
@@ -44,6 +46,18 @@ class OpenAICompatiblePolisherProvider:
     ) -> tuple[list[str], list[str], str]:
         if not self.is_configured():
             raise TranslationConfigError(f"{self.display_name} is not configured. Set its API key and model in Settings.")
+
+        # HY-MT is a dedicated machine-translation model, not a general
+        # instruction-following chat model. Its official prompt is one
+        # segment per request. Sending the large numbered system prompt made
+        # it echo Chinese unchanged, after which the app silently used Google.
+        if self.provider_id == "llama_app" and re.match(r"(?i)^hy[-_]?mt", os.path.basename(self.model_name)):
+            return self._translate_hy_mt_batch(
+                source_texts=source_texts,
+                target_lang=target_lang,
+                timeout=timeout,
+                max_retries=max_retries,
+            )
 
         system_msg, user_msg = self._build_messages(
             source_texts=source_texts,
@@ -97,6 +111,68 @@ class OpenAICompatiblePolisherProvider:
                     continue
 
         raise TranslationProviderError(f"{self.display_name} failed: {last_error}")
+
+    @staticmethod
+    def _plain_source_text(value: str) -> str:
+        text = str(value or "").strip()
+        match = re.fullmatch(r"<CUE\b[^>]*>(.*)</CUE>", text, flags=re.IGNORECASE | re.DOTALL)
+        return str(match.group(1) if match else text).strip()
+
+    def _translate_hy_mt_batch(self, *, source_texts, target_lang: str, timeout: int, max_retries: int):
+        language_names = {
+            "vi": "Vietnamese", "en": "English", "ja": "Japanese", "ko": "Korean",
+            "th": "Thai", "id": "Indonesian", "es": "Spanish", "fr": "French",
+            "de": "German", "pt": "Portuguese", "ru": "Russian", "ar": "Arabic",
+            "zh-cn": "Simplified Chinese", "zh-tw": "Traditional Chinese",
+        }
+        target_name = language_names.get(str(target_lang or "").strip().lower(), str(target_lang or "Vietnamese"))
+        sources = [self._plain_source_text(value) for value in source_texts]
+        client = self._get_client()
+
+        def translate_one(source: str) -> str:
+            glossary = ""
+            if target_name == "Vietnamese":
+                terms = [
+                    ("师兄", "sư huynh"), ("师姐", "sư tỷ"), ("前辈", "tiền bối"),
+                    ("晚辈", "vãn bối"), ("师尊", "sư tôn"), ("师父", "sư phụ"),
+                    ("神域", "Thần Vực"), ("魔族", "Ma tộc"), ("妖族", "Yêu tộc"),
+                    ("灵力", "linh lực"), ("修为", "tu vi"), ("境界", "cảnh giới"),
+                ]
+                present = [f"{src}={dst}" for src, dst in terms if src in source]
+                if present:
+                    glossary = " Use these required terms: " + ", ".join(present) + "."
+            prompt = (
+                f"Translate the following segment into {target_name}, without additional explanation."
+                f"{glossary}：{source}"
+            )
+            last_error = ""
+            for attempt in range(1, max(1, int(max_retries)) + 1):
+                try:
+                    response = client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.1,
+                        max_tokens=512,
+                        timeout=timeout,
+                    )
+                    translated = str(response.choices[0].message.content or "").strip()
+                    if translated:
+                        return translated
+                    last_error = "empty response"
+                except Exception as exc:
+                    last_error = str(exc)
+                    if attempt < max_retries:
+                        time.sleep(attempt)
+            raise TranslationProviderError(f"{self.display_name} failed: {last_error}")
+
+        workers = max(1, min(4, len(sources)))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hy-mt") as executor:
+            translated = list(executor.map(translate_one, sources))
+        if not validate_texts(translated, len(sources)):
+            raise TranslationValidationError(
+                f"HY-MT returned {len(translated)} translations for {len(sources)} cues."
+            )
+        return translated, [], self.provider_id
 
     def _build_messages(
         self, source_texts, translated_texts, src_lang, target_lang, style_instruction

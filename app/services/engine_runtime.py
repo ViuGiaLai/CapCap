@@ -90,8 +90,28 @@ class EngineRuntime:
     def transcribe_video_ocr(self, video_path: str, *, region: str = "bottom", **kwargs):
         return self.ocr.transcribe(video_path, region=region, **kwargs)
 
+    def transcribe_video_ocr_ranges(
+        self, video_path: str, time_ranges: list[tuple[float, float]],
+        *, region: str = "bottom", progress_callback=None,
+    ):
+        return self.ocr.transcribe_ranges(
+            video_path,
+            time_ranges,
+            region=region,
+            progress_callback=progress_callback,
+        )
+
     def transcribe_audio_sensevoice(self, audio_path: str, model_path: str, *, language: str = "auto"):
         return self.sensevoice.transcribe(audio_path, model_path, language=language)
+
+    def transcribe_presegmented_sensevoice_batch(
+        self, audio_paths: list[str], model_path: str, *, language: str = "auto",
+        progress_callback=None,
+    ):
+        return self.sensevoice.transcribe_presegmented_batch(
+            audio_paths, model_path, language=language,
+            progress_callback=progress_callback,
+        )
 
     def translate_srt(
         self,

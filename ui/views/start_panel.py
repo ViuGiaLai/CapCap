@@ -545,20 +545,20 @@ def build_start_group(gui, left_layout):
 
     # --- Translation Engine Section ---
     trans_engine_card, trans_engine_layout = _section_card()
-    trans_engine_title = QLabel("Translation Engine (AI Dịch)")
+    trans_engine_title = QLabel("Translation Engine")
     trans_engine_title.setObjectName("sectionTitle")
     trans_engine_layout.addWidget(trans_engine_title)
 
     gui.translation_engine_combo = QComboBox()
-    gui.translation_engine_combo.addItem("🌐 Google Translate (Free, không cần Key)", "google")
-    gui.translation_engine_combo.addItem("⚡ Google Gemini (Khuyên dùng, Free Key)", "google_ai_studio")
-    gui.translation_engine_combo.addItem("🐉 DeepSeek AI (Chuyên dịch Tu Tiên / Phim)", "deepseek")
+    gui.translation_engine_combo.addItem("🌐 Google Translate (Free, no API key)", "google")
+    gui.translation_engine_combo.addItem("⚡ Google Gemini (Recommended, free API key)", "google_ai_studio")
+    gui.translation_engine_combo.addItem("🐉 DeepSeek AI (Film and contextual translation)", "deepseek")
     gui.translation_engine_combo.addItem("🤖 ChatGPT / OpenAI", "openai")
     gui.translation_engine_combo.addItem("💻 Ollama (Local Offline)", "ollama")
     gui.translation_engine_combo.addItem("🧠 Llama.cpp (App Engine / GGUF)", "llama_app")
     gui.translation_engine_combo.addItem("⚙️ Custom API (OpenAI Compatible)", "custom")
 
-    trans_engine_layout.addWidget(QLabel("AI Provider / Dịch thuật"))
+    trans_engine_layout.addWidget(QLabel("Translation Provider"))
     trans_engine_layout.addWidget(gui.translation_engine_combo)
 
     # Config panel for API Key & Model
@@ -570,11 +570,11 @@ def build_start_group(gui, left_layout):
     gui.translation_key_label = QLabel("API Key:")
     gui.translation_api_key_edit = QLineEdit()
     gui.translation_api_key_edit.setEchoMode(QLineEdit.Password)
-    gui.translation_api_key_edit.setPlaceholderText("Nhập API key tại đây...")
+    gui.translation_api_key_edit.setPlaceholderText("Enter the API key here...")
 
     gui.translation_model_label = QLabel("AI Model:")
     gui.translation_model_edit = QLineEdit()
-    gui.translation_model_edit.setPlaceholderText("Ví dụ: gemini-2.5-flash")
+    gui.translation_model_edit.setPlaceholderText("Example: gemini-2.5-flash")
 
     gui.translation_base_url_label = QLabel("API URL:")
     gui.translation_base_url_edit = QLineEdit()
@@ -587,7 +587,7 @@ def build_start_group(gui, left_layout):
 
     test_action_layout = QHBoxLayout()
     test_action_layout.setSpacing(8)
-    gui.translation_test_btn = QPushButton("Kiểm tra kết nối")
+    gui.translation_test_btn = QPushButton("Test Connection")
     gui.translation_test_btn.setFixedHeight(26)
     gui.translation_test_status = QLabel("")
     gui.translation_test_status.setObjectName("helperLabel")
@@ -649,12 +649,12 @@ def build_start_group(gui, left_layout):
     # Style Preset for Tu Tien / Recap
     trans_style_row = QVBoxLayout()
     trans_style_row.setSpacing(4)
-    trans_style_row.addWidget(QLabel("Phong cách dịch (Style Preset)"))
+    trans_style_row.addWidget(QLabel("Translation Style"))
     gui.translation_style_preset_combo = QComboBox()
-    gui.translation_style_preset_combo.addItem("Tiêu chuẩn / Tự nhiên (Standard)", "standard")
-    gui.translation_style_preset_combo.addItem("Recap Tu Tiên / Kiếm Hiệp (Ngắn gọn, xưng hô chuẩn)", "tutien_recap")
-    gui.translation_style_preset_combo.addItem("Anime / Manga (Trẻ trung, sinh động)", "anime")
-    gui.translation_style_preset_combo.addItem("Phim Điện Ảnh / Kịch Tính (Drama)", "drama")
+    gui.translation_style_preset_combo.addItem("Standard / Natural", "standard")
+    gui.translation_style_preset_combo.addItem("Cultivation / Wuxia Recap (Concise, consistent honorifics)", "tutien_recap")
+    gui.translation_style_preset_combo.addItem("Anime / Manga (Youthful and lively)", "anime")
+    gui.translation_style_preset_combo.addItem("Cinematic / Dramatic", "drama")
     trans_style_row.addWidget(gui.translation_style_preset_combo)
     trans_engine_layout.addLayout(trans_style_row)
 

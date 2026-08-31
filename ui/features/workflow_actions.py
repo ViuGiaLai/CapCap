@@ -23,8 +23,19 @@ class WorkflowActionsMixin:
         has_voice_audio = bool(selected_audio_path and os.path.exists(selected_audio_path))
         has_subtitle_track = bool(self.last_translated_srt_path and os.path.exists(self.last_translated_srt_path))
         mode = self.get_output_mode_key()
-        steps = getattr(getattr(self, "current_project_state", None), "steps", {}) or {}
-        voice_running = steps.get("generate_tts") == "running" or steps.get("mix_audio") == "running"
+        # A persisted project can contain a stale ``running`` step when a
+        # previous process was interrupted between TTS and audio mixing.
+        # Persisted workflow history must never keep playback disabled after
+        # reopening the project; only a live worker/operation owns that lock.
+        voice_thread = getattr(self, "voice_thread", None)
+        try:
+            live_voice_worker = bool(voice_thread and voice_thread.isRunning())
+        except RuntimeError:
+            live_voice_worker = False
+        voice_running = bool(
+            getattr(self, "_voice_generation_active", False)
+            or live_voice_worker
+        )
         # Translation is sufficient for a final subtitle-only export.  TTS
         # remains optional: if it has not been generated, Export and Fast
         # Preview retain the source audio and burn the translated subtitles.
@@ -273,7 +284,7 @@ class WorkflowActionsMixin:
             step_menu = menu.addMenu("Step-by-Step")
             step_menu.setObjectName("generateStepMenu")
             step_menu.setMinimumWidth(220)
-            transcript_action = QAction("Run to Transcript", step_menu)
+            transcript_action = QAction("Run to Original Transcript", step_menu)
             transcript_action.triggered.connect(lambda: self.run_pipeline_to_stage("transcript"))
             translate_menu = step_menu.addMenu("Run to Translate")
             translate_menu.setObjectName("generateStepMenu")

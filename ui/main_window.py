@@ -239,6 +239,43 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, MultiVideoTimelineMixin, AutoRe
                 border-color: #1a2a3a;
             }
 
+            /* Subtitle Inspector — dense, reliable five-action toolbar */
+            QPushButton#subtitleInspectorAction,
+            QPushButton#subtitleInspectorDangerAction {
+                background-color: #132235;
+                color: #d8e6f5;
+                border: 1px solid #294766;
+                border-radius: 7px;
+                padding: 0px 5px;
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QPushButton#subtitleInspectorAction:hover {
+                background-color: #1a3149;
+                color: #ffffff;
+                border-color: #3d78aa;
+            }
+            QPushButton#subtitleInspectorAction:pressed {
+                background-color: #10273b;
+                border-color: #42b8d6;
+            }
+            QPushButton#subtitleInspectorDangerAction {
+                background-color: #25191f;
+                color: #ffb5bd;
+                border-color: #57303a;
+            }
+            QPushButton#subtitleInspectorDangerAction:hover {
+                background-color: #3a1e27;
+                color: #ffd6da;
+                border-color: #d45d6c;
+            }
+            QPushButton#subtitleInspectorAction:disabled,
+            QPushButton#subtitleInspectorDangerAction:disabled {
+                background-color: #0e1824;
+                color: #52667d;
+                border-color: #1b2c40;
+            }
+
             /* Generate — primary CTA */
             QPushButton#mainActionBtn, QToolButton#mainActionBtn {
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,

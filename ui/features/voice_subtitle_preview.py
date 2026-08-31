@@ -276,7 +276,7 @@ class VoiceSubtitlePreviewMixin:
         # A2 Dub Track Inspector. Disable that one instead.
         if getattr(self, "audio_inspector_regenerate_voice_btn", None) is not None:
             self.audio_inspector_regenerate_voice_btn.setEnabled(False)
-            self.audio_inspector_regenerate_voice_btn.setText("...")
+            self.audio_inspector_regenerate_voice_btn.setText("…")
 
         existing = self._segment_preview_threads.get(index)
         if existing and existing.isRunning():
@@ -303,14 +303,14 @@ class VoiceSubtitlePreviewMixin:
         if error:
             if btn is not None:
                 btn.setEnabled(True)
-                btn.setText("Regenerate voice")
+                btn.setText("Voice")
             self.show_error("Audio Preview Failed", "Could not generate preview audio for this subtitle.", error)
             return
 
         self._voiceover_force_refresh = True
         if btn is not None:
             btn.setEnabled(True)
-            btn.setText("Regenerate voice")
+            btn.setText("Voice")
 
         if getattr(self, "last_voice_vi_path", "") and os.path.exists(self.last_voice_vi_path):
             self.run_voiceover()

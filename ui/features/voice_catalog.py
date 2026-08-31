@@ -6,7 +6,7 @@ import re
 
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
-from runtime_paths import app_path, models_path
+from runtime_paths import app_path, models_path, workspace_root
 
 
 def _default_asr_engine() -> str:
@@ -495,41 +495,50 @@ class VoiceCatalogMixin:
         if status_lbl:
             status_lbl.setText("")
 
+        # Apply immediately in this process. Durable .env synchronization is
+        # performed by prepare_translation_runtime() just before Generate
+        # spawns its worker. This avoids a blank/test window overwriting the
+        # active project's provider merely while constructing the UI.
+        os.environ["OPENAI_PROVIDER"] = provider
+        os.environ["AI_POLISHER_PROVIDER"] = provider
+        if hasattr(self, "settings"):
+            self.settings.setValue("translation_engine", provider)
+
         PRESETS = {
             "google_ai_studio": {
                 "key_env": "GOOGLE_AI_STUDIO_API_KEY", "model_env": "GOOGLE_AI_STUDIO_MODEL",
                 "url_env": "GOOGLE_AI_STUDIO_BASE_URL",
                 "default_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
                 "default_model": "gemini-2.5-flash",
-                "link": "Lấy API Key miễn phí: <a href='https://aistudio.google.com/apikey'>Google AI Studio</a>",
+                "link": "Get a free API key: <a href='https://aistudio.google.com/apikey'>Google AI Studio</a>",
             },
             "deepseek": {
                 "key_env": "DEEPSEEK_API_KEY", "model_env": "DEEPSEEK_MODEL",
                 "url_env": "DEEPSEEK_BASE_URL",
                 "default_url": "https://api.deepseek.com/v1",
                 "default_model": "deepseek-chat",
-                "link": "Lấy API Key: <a href='https://platform.deepseek.com/api_keys'>DeepSeek Platform</a>",
+                "link": "Get an API key: <a href='https://platform.deepseek.com/api_keys'>DeepSeek Platform</a>",
             },
             "openai": {
                 "key_env": "OPENAI_API_KEY", "model_env": "OPENAI_MODEL",
                 "url_env": "OPENAI_BASE_URL",
                 "default_url": "https://api.openai.com/v1/",
                 "default_model": "gpt-4o-mini",
-                "link": "Lấy API Key: <a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>",
+                "link": "Get an API key: <a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>",
             },
             "ollama": {
                 "key_env": "", "model_env": "OLLAMA_MODEL",
                 "url_env": "OLLAMA_BASE_URL",
                 "default_url": "http://localhost:11434/v1",
                 "default_model": "qwen2.5:7b",
-                "link": "Cài Ollama: <a href='https://ollama.com/download'>ollama.com/download</a>. Model gợi ý: <b>qwen2.5:7b</b> hoặc <b>llama3.1:8b</b>",
+                "link": "Install Ollama: <a href='https://ollama.com/download'>ollama.com/download</a>. Suggested models: <b>qwen2.5:7b</b> or <b>llama3.1:8b</b>",
             },
             "custom": {
                 "key_env": "CUSTOM_AI_API_KEY", "model_env": "CUSTOM_AI_MODEL",
                 "url_env": "CUSTOM_AI_BASE_URL",
                 "default_url": "https://api.openai.com/v1/",
                 "default_model": "gpt-4o-mini",
-                "link": "Nhập URL của bất kỳ API tương thích OpenAI nào",
+                "link": "Enter the URL of any OpenAI-compatible API.",
             },
         }
         if provider not in PRESETS:
@@ -551,13 +560,9 @@ class VoiceCatalogMixin:
         if link_label:
             link_label.setText(p["link"])
 
-        # Save provider selection to env
-        self._save_translation_engine_env(provider, "", "", "")
-
     def _save_translation_engine_env(self, provider: str, api_key: str, model: str, base_url: str):
         """Persist the selected provider to .env (provider only, not credentials yet — saved on Save)."""
-        import re
-        env_path = ".env"
+        env_path = os.path.join(workspace_root(), ".env")
         env_lines = []
         try:
             if os.path.exists(env_path):
@@ -569,21 +574,66 @@ class VoiceCatalogMixin:
         new_lines = []
         handled = set()
         for line in env_lines:
-            m = re.match(r"^([^=\s]+)=", line)
-            if m and m.group(1) in updates:
-                new_lines.append(f"{m.group(1)}={updates[m.group(1)]}\n")
-                handled.add(m.group(1))
+            match = re.match(r"^([^=\s]+)=", line)
+            if match and match.group(1) in updates:
+                new_lines.append(f"{match.group(1)}={updates[match.group(1)]}\n")
+                handled.add(match.group(1))
             else:
                 new_lines.append(line)
-        for k, v in updates.items():
-            if k not in handled:
-                new_lines.append(f"{k}={v}\n")
+        for key, value in updates.items():
+            if key not in handled:
+                new_lines.append(f"{key}={value}\n")
         try:
             with open(env_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
-            os.environ[list(updates.keys())[0]] = provider
-            os.environ[list(updates.keys())[1]] = provider
+            os.environ["OPENAI_PROVIDER"] = provider
+            os.environ["AI_POLISHER_PROVIDER"] = provider
         except Exception:
+            pass
+
+    def _save_llama_model_selection(self, model_path: str) -> None:
+        path = os.path.abspath(str(model_path or "").strip()) if model_path else ""
+        if not path:
+            return
+        os.environ["LLAMA_APP_MODEL"] = path
+        if hasattr(self, "settings"):
+            self.settings.setValue("llama_app_model", path)
+        # Keep the selection project-scoped as well as global. Otherwise a
+        # reopened project can restore its previous HY-MT path and appear to
+        # undo a Qwen selection made through Scan Entire PC.
+        state = getattr(self, "current_project_state", None)
+        if state is not None and str(state.settings.get("llama_app_model", "") or "") != path:
+            state.set_setting("llama_app_model", path)
+            project_service = getattr(self, "project_service", None)
+            if project_service is not None:
+                try:
+                    project_service.save_project(state)
+                except OSError:
+                    pass
+        env_path = os.path.join(workspace_root(), ".env")
+        lines = []
+        try:
+            if os.path.isfile(env_path):
+                with open(env_path, "r", encoding="utf-8") as handle:
+                    lines = handle.readlines()
+        except OSError:
+            lines = []
+        replacement = f"LLAMA_APP_MODEL={path}\n"
+        updated = []
+        found = False
+        for line in lines:
+            if re.match(r"^LLAMA_APP_MODEL=", line):
+                if not found:
+                    updated.append(replacement)
+                    found = True
+            else:
+                updated.append(line)
+        if not found:
+            updated.append(replacement)
+        try:
+            with open(env_path, "w", encoding="utf-8") as handle:
+                handle.writelines(updated)
+        except OSError:
             pass
 
     def on_translation_engine_test_connection(self):
@@ -598,13 +648,13 @@ class VoiceCatalogMixin:
         provider = engine_combo.currentData() or "google"
         if provider == "google":
             if status_lbl:
-                status_lbl.setText("Google Translate không cần kết nối — sẵn sàng ✓")
+                status_lbl.setText("Google Translate requires no connection setup — ready ✓")
             return
         url = (url_edit.text().strip() if url_edit else "") or "https://api.openai.com/v1/"
         key = (key_edit.text().strip() if key_edit else "") or ("ollama" if provider == "ollama" else "")
         model = (model_edit.text().strip() if model_edit else "") or "gpt-4o-mini"
         if status_lbl:
-            status_lbl.setText("Đang kiểm tra...")
+            status_lbl.setText("Testing connection...")
             status_lbl.repaint()
         try:
             from openai import OpenAI
@@ -615,10 +665,10 @@ class VoiceCatalogMixin:
                 max_tokens=8,
             )
             if status_lbl:
-                status_lbl.setText(f"Kết nối thành công: {model} ✓")
+                status_lbl.setText(f"Connection successful: {model} ✓")
             # Save credentials on success
             import re
-            env_path = ".env"
+            env_path = os.path.join(workspace_root(), ".env")
             env_lines = []
             try:
                 if os.path.exists(env_path):
@@ -660,48 +710,66 @@ class VoiceCatalogMixin:
             self.log(f"[Translation] Provider saved: {provider} ({model})")
         except Exception as exc:
             if status_lbl:
-                status_lbl.setText(f"Thất bại: {exc}")
+                status_lbl.setText(f"Connection failed: {exc}")
 
 
     def on_selected_voice_changed(self):
         self._update_voice_preview_meta()
         self._preload_active_voice_if_needed()
 
-    def _refresh_llama_models_list(self):
+    def _refresh_llama_models_list(self, preferred_model_path: str = ""):
         import os
         from app.services.llama_local_manager import LlamaServerManager
         manager = LlamaServerManager.get_instance()
         combo = getattr(self, "llama_model_combo", None)
         if not combo:
             return
-        
-        current = combo.currentData()
-        combo.clear()
-        
-        has_models = False
-        if os.path.exists(manager.models_dir):
-            for file in os.listdir(manager.models_dir):
-                if file.lower().endswith(".gguf"):
-                    combo.addItem(f"{file} (Ready)", os.path.join(manager.models_dir, file))
-                    has_models = True
-                    
-        # Also add from env if the user previously selected one via Scan
-        saved = os.getenv("LLAMA_APP_MODEL")
-        if saved and os.path.exists(saved) and saved not in [combo.itemData(i) for i in range(combo.count())]:
-            combo.addItem(f"{os.path.basename(saved)} (Selected)", saved)
-            has_models = True
-            
-        if not has_models:
-            combo.addItem("No model found. Please download or scan.", "")
-        else:
-            if current:
-                idx = combo.findData(current)
-                if idx >= 0:
-                    combo.setCurrentIndex(idx)
+
+        # A model chosen in the scan dialog is authoritative. Previously the
+        # combo's old current item was read first, so refreshing immediately
+        # after selecting Qwen saved Qwen but displayed/used the old HY-MT
+        # model again.
+        current = str(preferred_model_path or "").strip()
+        if not current:
+            current = combo.currentData()
+        if not current and hasattr(self, "settings"):
+            current = self.settings.value("llama_app_model", "")
+        current = str(current or os.getenv("LLAMA_APP_MODEL", "") or "").strip()
+
+        def path_key(value):
+            value = str(value or "").strip()
+            return os.path.normcase(os.path.abspath(value)) if value else ""
+
+        signals_were_blocked = combo.blockSignals(True)
+        try:
+            combo.clear()
+            has_models = False
+            if os.path.exists(manager.models_dir):
+                for file in sorted(os.listdir(manager.models_dir), key=str.lower):
+                    if file.lower().endswith(".gguf"):
+                        combo.addItem(f"{file} (Ready)", os.path.join(manager.models_dir, file))
+                        has_models = True
+
+            # Also add a model outside CapCap's model directory when it was
+            # selected through Scan Entire PC.
+            saved = current or str(os.getenv("LLAMA_APP_MODEL", "") or "").strip()
+            existing_paths = {
+                path_key(combo.itemData(i)) for i in range(combo.count())
+            }
+            if saved and os.path.isfile(saved) and path_key(saved) not in existing_paths:
+                combo.addItem(f"{os.path.basename(saved)} (Selected)", os.path.abspath(saved))
+                has_models = True
+
+            if not has_models:
+                combo.addItem("No model found. Please download or scan.", "")
             elif saved:
-                idx = combo.findData(saved)
-                if idx >= 0:
-                    combo.setCurrentIndex(idx)
+                wanted = path_key(saved)
+                for index in range(combo.count()):
+                    if path_key(combo.itemData(index)) == wanted:
+                        combo.setCurrentIndex(index)
+                        break
+        finally:
+            combo.blockSignals(signals_were_blocked)
 
         # Connect buttons if not connected
         dl_btn = getattr(self, "llama_download_btn", None)
@@ -728,7 +796,26 @@ class VoiceCatalogMixin:
         if combo and index >= 0:
             data = combo.itemData(index)
             if data:
-                os.environ["LLAMA_APP_MODEL"] = data
+                self._save_llama_model_selection(data)
+
+    def prepare_translation_runtime(self) -> tuple[bool, str]:
+        """Synchronize the visible provider/model before a worker is spawned."""
+        combo = getattr(self, "translation_engine_combo", None)
+        provider = str(combo.currentData() if combo is not None else "google").strip() or "google"
+        self._save_translation_engine_env(provider, "", "", "")
+        if provider != "llama_app":
+            return True, ""
+        model_combo = getattr(self, "llama_model_combo", None)
+        model_path = str(model_combo.currentData() if model_combo is not None else "").strip()
+        model_path = model_path or str(os.getenv("LLAMA_APP_MODEL", "") or "").strip()
+        if not model_path or not os.path.isfile(model_path):
+            return False, "The selected llama.cpp GGUF model file no longer exists. Select a valid local model."
+        from app.services.llama_local_manager import LlamaServerManager
+        manager = LlamaServerManager.get_instance()
+        if not os.path.isfile(manager.exe_path):
+            return False, f"llama-server.exe was not found: {manager.exe_path}"
+        self._save_llama_model_selection(model_path)
+        return True, ""
 
     def _on_llama_scan_clicked(self):
         from app.services.llama_local_manager import fast_scan_gguf
@@ -774,8 +861,8 @@ class VoiceCatalogMixin:
         def on_use():
             if lst.currentItem():
                 path = lst.currentItem().data(Qt.UserRole)
-                os.environ["LLAMA_APP_MODEL"] = path
-                self._refresh_llama_models_list()
+                self._save_llama_model_selection(path)
+                self._refresh_llama_models_list(preferred_model_path=path)
                 if lbl:
                     lbl.setText(f"Selected: {os.path.basename(path)}")
                 dlg.accept()
@@ -803,11 +890,14 @@ class VoiceCatalogMixin:
             lbl.setText("Starting Server & Loading Model. Please wait...")
             lbl.repaint()
             
-        model_path = os.environ.get("LLAMA_APP_MODEL")
+        model_path = str(combo.currentData() if (combo := getattr(self, "llama_model_combo", None)) else "").strip()
+        model_path = model_path or os.environ.get("LLAMA_APP_MODEL", "")
         if not model_path or not os.path.exists(model_path):
             if lbl:
                 lbl.setText("Error: Model file not found!")
             return
+        self._save_translation_engine_env("llama_app", "", "", "")
+        self._save_llama_model_selection(model_path)
             
         try:
             manager = LlamaServerManager.get_instance()

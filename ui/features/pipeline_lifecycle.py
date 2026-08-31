@@ -3,7 +3,7 @@ import copy
 import glob
 import hashlib
 from PySide6.QtWidgets import (
-    QApplication, QMessageBox)
+    QApplication, QFileDialog, QMessageBox)
 from PySide6.QtCore import QTimer
 
 from utils.launcher_lifecycle import relaunch_launcher
@@ -89,6 +89,9 @@ class PipelineLifecycleMixin:
             editor_segments,
             self._apply_subtitle_editor_changes,
             self.run_rewrite_translation,
+            self._export_subtitle_translation_xlsx,
+            self._import_subtitle_translation_xlsx,
+            self._build_subtitle_translation_ai_prompt,
         )
         self._subtitle_editor_dialog = dialog
         try:
@@ -96,6 +99,98 @@ class PipelineLifecycleMixin:
         finally:
             if getattr(self, "_subtitle_editor_dialog", None) is dialog:
                 self._subtitle_editor_dialog = None
+
+    def _subtitle_exchange_context(self, segments) -> dict:
+        state = getattr(self, "current_project_state", None)
+        configured_source = str(self.get_source_language_code() or getattr(state, "input_language", "auto") or "auto")
+        target_language = str(self.get_target_language_code() or getattr(state, "target_language", "vi") or "vi")
+        style_parts = []
+        style_combo = getattr(self, "translation_style_preset_combo", None)
+        if style_combo is not None:
+            style_label = str(style_combo.currentText() or "").strip()
+            if style_label:
+                style_parts.append(style_label)
+        custom_style = getattr(self, "translator_style_edit", None)
+        if custom_style is not None and str(custom_style.text() or "").strip():
+            style_parts.append(str(custom_style.text()).strip())
+        project_name = str(
+            getattr(state, "display_name", "")
+            or getattr(state, "project_id", "")
+            or "CapCap Project"
+        )
+        return {
+            "segments": list(segments or []),
+            "configured_source": configured_source,
+            "target_language": target_language,
+            "translation_style": " | ".join(style_parts) or "Standard / Natural",
+            "project_name": project_name,
+        }
+
+    def _build_subtitle_translation_ai_prompt(self, segments) -> str:
+        from services import SubtitleExchangeService
+
+        context = self._subtitle_exchange_context(segments)
+        context.pop("project_name", None)
+        return SubtitleExchangeService().build_prompt(**context)
+
+    def _export_subtitle_translation_xlsx(self, segments):
+        from services import SubtitleExchangeService
+
+        context = self._subtitle_exchange_context(segments)
+        safe_name = "".join(
+            char if char.isalnum() or char in {"-", "_"} else "_"
+            for char in context["project_name"]
+        ).strip("_") or "capcap_subtitles"
+        state = getattr(self, "current_project_state", None)
+        initial_dir = str(getattr(state, "project_root", "") or os.getcwd())
+        default_path = os.path.join(initial_dir, f"{safe_name}_translation_review.xlsx")
+        output_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Export Subtitle Translation XLSX",
+            default_path,
+            "Excel Workbook (*.xlsx)",
+        )
+        if not output_path:
+            return False
+        if not output_path.lower().endswith(".xlsx"):
+            output_path += ".xlsx"
+        try:
+            saved_path = SubtitleExchangeService().export_xlsx(output_path, **context)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export XLSX Failed", str(exc))
+            return False
+        self.log(f"[Subtitle Editor] Exported translation workbook: {saved_path}")
+        QMessageBox.information(
+            self,
+            "XLSX Exported",
+            f"Translation workbook saved successfully:\n{saved_path}\n\n"
+            "Only edit the Translated text column before importing it back.",
+        )
+        return True
+
+    def _import_subtitle_translation_xlsx(self, segments):
+        from services import SubtitleExchangeService
+
+        state = getattr(self, "current_project_state", None)
+        initial_dir = str(getattr(state, "project_root", "") or os.getcwd())
+        input_path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Import Subtitle Translation XLSX",
+            initial_dir,
+            "Excel Workbook (*.xlsx)",
+        )
+        if not input_path:
+            return None
+        try:
+            translated = SubtitleExchangeService().import_translations(
+                input_path,
+                segments=list(segments or []),
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Import XLSX Failed", str(exc))
+            return None
+        self.log(f"[Subtitle Editor] Validated translation workbook: {input_path}")
+        return translated
 
     def _invalidate_dubbed_output_after_subtitle_edit(self):
         """Stop old TTS/mix output from being used after subtitle edits.
@@ -413,6 +508,8 @@ class PipelineLifecycleMixin:
             self.voiceover_btn.setEnabled(False)
             self.voiceover_btn.setText("Generating... (TTS)")
         self.progress_bar.setValue(85)
+        self._voice_generation_active = True
+        self._pending_voice_background_path = str(bg_path or "")
         self.update_project_step("generate_tts", "running")
         if bg_path:
             self.update_project_step("mix_audio", "running")
@@ -577,6 +674,10 @@ class PipelineLifecycleMixin:
         self.persist_translation_project_data(self.current_translated_segments, out_path)
 
     def on_voiceover_finished(self, voice_track, mixed, voice_segments, error):
+        pending_background_path = str(
+            getattr(self, "_pending_voice_background_path", "") or ""
+        ).strip()
+        self._voice_generation_active = False
         if hasattr(self, "voiceover_btn"):
             self.voiceover_btn.setEnabled(True)
             self.voiceover_btn.setText("Generate Voice / Mix")
@@ -586,8 +687,14 @@ class PipelineLifecycleMixin:
             self._voiceover_force_refresh = False
             self._pending_voice_signature = ""
             self.update_project_step("generate_tts", "failed")
-            if self.bg_music_edit.text().strip():
+            if pending_background_path:
                 self.update_project_step("mix_audio", "failed")
+            elif (
+                self.current_project_state
+                and self.current_project_state.steps.get("mix_audio") == "running"
+            ):
+                self.update_project_step("mix_audio", "skipped")
+            self._pending_voice_background_path = ""
             QMessageBox.critical(self, "Error", f"Voiceover failed:\n\n{error}")
             self._pipeline_fail("Voiceover failed.")
             self.refresh_ui_state()
@@ -606,7 +713,10 @@ class PipelineLifecycleMixin:
             self.processed_artifacts["mixed_vi"] = mixed
             self.update_project_artifact("mixed_vi", mixed)
             self.update_project_step("mix_audio", "done")
-        elif self.bg_music_edit.text().strip():
+        elif pending_background_path or (
+            self.current_project_state
+            and self.current_project_state.steps.get("mix_audio") == "running"
+        ):
             self.update_project_step("mix_audio", "skipped")
         if self._apply_generated_tts_texts(voice_segments):
             self._single_line_split_cache = None
@@ -638,6 +748,7 @@ class PipelineLifecycleMixin:
                 self.project_service.save_project(self.current_project_state)
         self._voiceover_force_refresh = False
         self._pending_voice_signature = ""
+        self._pending_voice_background_path = ""
 
         try:
             self._pipeline_advance("voiceover")

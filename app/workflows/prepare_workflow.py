@@ -10,6 +10,7 @@ import time
 from runtime_paths import bin_path, models_path, subprocess_hidden_kwargs, subprocess_text_kwargs
 from runtime_profile import is_remote_profile
 from services import (
+    AsrMergeService,
     AsrOcrReconciliationService,
     ChunkingService,
     EngineRuntime,
@@ -45,6 +46,17 @@ class PrepareWorkflow:
         self.engine_runtime = EngineRuntime()
 
     @staticmethod
+    def _emit_step(step_callback, step_id: str, message: str = "") -> None:
+        if step_callback is None:
+            return
+        try:
+            step_callback(step_id, message)
+        except TypeError:
+            # The in-process Qt worker exposes a legacy one-argument signal;
+            # the HTTP worker accepts the richer status message.
+            step_callback(step_id)
+
+    @staticmethod
     def _timeline_signature(clips: list[dict]) -> str:
         payload = []
         for clip in clips or []:
@@ -62,6 +74,37 @@ class PrepareWorkflow:
                 "timeline_start": round(float(clip.get("timeline_start", 0.0) or 0.0), 6),
                 "speed": round(float(clip.get("speed", 1.0) or 1.0), 6),
             })
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _ocr_reference_signature(
+        video_path: str,
+        timeline_clips: list[dict],
+        *,
+        region: str,
+        time_ranges: list[tuple[float, float]],
+    ) -> str:
+        sources = []
+        paths = [video_path] if not timeline_clips else [
+            str(clip.get("source", "") or "") for clip in timeline_clips
+        ]
+        for path in paths:
+            absolute = os.path.abspath(str(path or ""))
+            try:
+                stat = os.stat(absolute)
+                identity = [stat.st_size, stat.st_mtime_ns]
+            except OSError:
+                identity = [0, 0]
+            sources.append([absolute, identity])
+        payload = {
+            "version": "two-frame-consensus-v1",
+            "sources": sources,
+            "timeline": PrepareWorkflow._timeline_signature(timeline_clips),
+            "region": str(region or "bottom").strip().lower(),
+            "subtitle_rect": str(os.getenv("OCR_SUBTITLE_RECT") or "").strip(),
+            "crop_ratio": str(os.getenv("OCR_CROP_RATIO") or "0.25").strip(),
+            "ranges": [[round(start, 3), round(end, 3)] for start, end in time_ranges],
+        }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
     @staticmethod
@@ -350,8 +393,14 @@ class PrepareWorkflow:
 
     def _transcribe_long_sensevoice_chunked(
         self, *, audio_path: str, project_state, model_dir: str, language: str,
+        step_callback=None,
     ) -> list[dict]:
         """Run SenseVoice on bounded 20-second chunks instead of a full WAV."""
+        self._emit_step(
+            step_callback,
+            "sensevoice_chunking",
+            "Detecting speech and preparing audio chunks",
+        )
         chunk_dir = self.project_service.build_path(project_state, "audio", "sensevoice_chunks")
         chunks = self.chunking_service.build_chunks(
             audio_path,
@@ -363,14 +412,44 @@ class PrepareWorkflow:
             silence_duration=self.CHUNK_SILENCE_DURATION_SECONDS,
             min_speech_duration=0.05,
         )
-        chunk_results = []
-        for index, chunk in enumerate(chunks):
-            segments = self.engine_runtime.transcribe_audio_sensevoice(
-                chunk.audio_path, model_dir, language=language,
+        print(
+            f"[SenseVoice] Batch decoding {len(chunks)} pre-segmented chunks "
+            "with one model load; redundant per-chunk VAD is disabled."
+        )
+        self._emit_step(
+            step_callback,
+            "sensevoice_batch",
+            f"Recognizing original speech: 0/{len(chunks)} chunks (0%)",
+        )
+
+        def _on_batch_progress(done: int, total: int) -> None:
+            percent = int(done * 100 / total) if total else 100
+            self._emit_step(
+                step_callback,
+                "sensevoice_batch",
+                f"Recognizing original speech: {done}/{total} chunks ({percent}%)",
             )
-            chunk_results.append({"chunk": chunk, "segments": list(segments or [])})
-            if (index + 1) % 25 == 0 or index + 1 == len(chunks):
-                print(f"[SenseVoice] Processed {index + 1}/{len(chunks)} long-media chunks.")
+
+        batched_segments = self.engine_runtime.transcribe_presegmented_sensevoice_batch(
+            [chunk.audio_path for chunk in chunks],
+            model_dir,
+            language=language,
+            progress_callback=_on_batch_progress,
+        )
+        if len(batched_segments) != len(chunks):
+            raise RuntimeError(
+                "SenseVoice batch result count does not match the prepared audio chunks."
+            )
+        chunk_results = [
+            {"chunk": chunk, "segments": list(segments or [])}
+            for chunk, segments in zip(chunks, batched_segments)
+        ]
+        print(f"[SenseVoice] Processed {len(chunks)}/{len(chunks)} chunks in batches.")
+        self._emit_step(
+            step_callback,
+            "transcript_finalize",
+            "Merging recognized chunks and finalizing timestamps",
+        )
         from services import AsrMergeService
         merged = AsrMergeService().merge_chunk_results(chunk_results)
         return self.segment_regroup_service.regroup(
@@ -437,21 +516,19 @@ class PrepareWorkflow:
         *,
         region: str,
         time_ranges: list[tuple[float, float]],
+        progress_callback=None,
     ) -> list[dict]:
-        """Read source subtitles only around suspect cues, on global V1 time."""
+        """Read suspect cues with one video handle per source clip."""
         if not timeline_clips:
-            segments = []
-            for start, end in time_ranges:
-                segments.extend(self.engine_runtime.transcribe_video_ocr(
-                    video_path,
-                    region=region,
-                    fps=4.0,
-                    start_seconds=start,
-                    end_seconds=end,
-                ) or [])
-            return segments
+            return self.engine_runtime.transcribe_video_ocr_ranges(
+                video_path,
+                time_ranges,
+                region=region,
+                progress_callback=progress_callback,
+            ) or []
 
         timeline_segments = []
+        jobs = []
         for clip in timeline_clips:
             source = os.path.abspath(str(clip.get("source", "") or ""))
             if not source or not os.path.isfile(source):
@@ -464,6 +541,7 @@ class PrepareWorkflow:
             timeline_start = float(clip.get("timeline_start", 0.0) or 0.0)
             speed = max(0.01, float(clip.get("speed", 1.0) or 1.0))
             timeline_end = timeline_start + source_duration / speed
+            source_ranges = []
             for global_start, global_end in time_ranges:
                 overlap_start = max(timeline_start, global_start)
                 overlap_end = min(timeline_end, global_end)
@@ -471,22 +549,35 @@ class PrepareWorkflow:
                     continue
                 scan_start = source_start + (overlap_start - timeline_start) * speed
                 scan_end = source_start + (overlap_end - timeline_start) * speed
-                clip_segments = self.engine_runtime.transcribe_video_ocr(
-                    source,
-                    region=region,
-                    fps=4.0,
-                    start_seconds=scan_start,
-                    end_seconds=scan_end,
-                )
-                for segment in clip_segments or []:
-                    start = max(source_start, float(segment.get("start", 0.0) or 0.0))
-                    end = min(source_end, float(segment.get("end", 0.0) or 0.0))
-                    if end <= start:
-                        continue
-                    item = dict(segment)
-                    item["start"] = timeline_start + (start - source_start) / speed
-                    item["end"] = timeline_start + (end - source_start) / speed
-                    timeline_segments.append(item)
+                source_ranges.append((scan_start, scan_end))
+            if source_ranges:
+                jobs.append((source, source_start, source_end, timeline_start, speed, source_ranges))
+
+        total_ranges = sum(len(job[-1]) for job in jobs)
+        completed_before = 0
+        for source, source_start, source_end, timeline_start, speed, source_ranges in jobs:
+            base = completed_before
+
+            def _job_progress(done: int, _total: int, *, _base=base) -> None:
+                if progress_callback is not None:
+                    progress_callback(_base + done, total_ranges)
+
+            clip_segments = self.engine_runtime.transcribe_video_ocr_ranges(
+                source,
+                source_ranges,
+                region=region,
+                progress_callback=_job_progress,
+            )
+            completed_before += len(source_ranges)
+            for segment in clip_segments or []:
+                start = max(source_start, float(segment.get("start", 0.0) or 0.0))
+                end = min(source_end, float(segment.get("end", 0.0) or 0.0))
+                if end <= start:
+                    continue
+                item = dict(segment)
+                item["start"] = timeline_start + (start - source_start) / speed
+                item["end"] = timeline_start + (end - source_start) / speed
+                timeline_segments.append(item)
         return timeline_segments
 
     def _repair_truncated_asr_from_video(
@@ -497,6 +588,7 @@ class PrepareWorkflow:
         timeline_clips: list[dict],
         source_language: str,
         project_state,
+        step_callback=None,
     ) -> tuple[list[dict], int]:
         service = AsrOcrReconciliationService()
         if is_remote_profile() or not service.should_scan(raw_segments, source_language):
@@ -504,22 +596,58 @@ class PrepareWorkflow:
         region = (os.getenv("OCR_SUBTITLE_REGION") or "bottom").strip().lower()
         try:
             print("[ASR Accuracy] Truncated cue detected; checking burned-in source subtitles via OCR.")
-            time_ranges = service.suspicious_time_ranges(
+            time_ranges = service.suspicious_cue_ranges(
                 raw_segments,
                 source_language=source_language,
             )
-            ocr_segments = self._ocr_timeline_reference(
+            reference_signature = self._ocr_reference_signature(
                 video_path,
                 timeline_clips,
                 region=region,
                 time_ranges=time_ranges,
             )
-            self.project_service.save_json_artifact(
-                project_state,
-                "asr_ocr_reference",
-                os.path.join("analysis", "asr_ocr_reference.json"),
-                ocr_segments,
+            cached_signature = str(
+                project_state.settings.get("asr_ocr_reference_signature", "") or ""
             )
+            cached_path = str(project_state.artifacts.get("asr_ocr_reference", "") or "")
+            if (
+                cached_signature == reference_signature
+                and cached_path
+                and os.path.exists(cached_path)
+            ):
+                ocr_segments = self.project_service.load_json_artifact(
+                    project_state, "asr_ocr_reference", default=[]
+                ) or []
+                print(f"[ASR Accuracy] Reusing cached OCR verification: {len(ocr_segments)} cue(s).")
+            else:
+                def _ocr_progress(done: int, total: int) -> None:
+                    percent = int(done * 100 / total) if total else 100
+                    self._emit_step(
+                        step_callback,
+                        "asr_ocr_repair",
+                        f"OCR verification: {done}/{total} suspicious cues ({percent}%)",
+                    )
+
+                self._emit_step(
+                    step_callback,
+                    "asr_ocr_repair",
+                    f"OCR verification: 0/{len(time_ranges)} suspicious cues (0%)",
+                )
+                ocr_segments = self._ocr_timeline_reference(
+                    video_path,
+                    timeline_clips,
+                    region=region,
+                    time_ranges=time_ranges,
+                    progress_callback=_ocr_progress,
+                )
+                self.project_service.save_json_artifact(
+                    project_state,
+                    "asr_ocr_reference",
+                    os.path.join("analysis", "asr_ocr_reference.json"),
+                    ocr_segments,
+                )
+                project_state.set_setting("asr_ocr_reference_signature", reference_signature)
+                self.project_service.save_project(project_state)
             reconciled, replacement_count = service.reconcile(
                 raw_segments,
                 ocr_segments,
@@ -554,6 +682,7 @@ class PrepareWorkflow:
         speaker_diarization: bool = False,
         speaker_diarization_num_speakers: int = -1,
         skip_translation: bool = False,
+        repair_asr_with_ocr: bool = True,
         prefetch_voice_name: str = "",
         prefetch_voice_speed: float = 1.0,
         step_callback=None,
@@ -643,6 +772,7 @@ class PrepareWorkflow:
         project_state.set_setting("transcription_engine", transcription_engine)
         project_state.set_setting("speaker_diarization_enabled", speaker_diarization)
         project_state.set_setting("speaker_diarization_num_speakers", speaker_diarization_num_speakers)
+        project_state.set_setting("asr_ocr_repair_enabled", bool(repair_asr_with_ocr))
         self.project_service.save_project(project_state)
 
         if is_ocr:
@@ -1011,9 +1141,10 @@ class PrepareWorkflow:
                 # so a project cannot reuse an aggressively regrouped
                 # transcript. Raw per-chunk ASR cache entries remain valid.
                 audio_handling_mode=(
-                    f"{audio_mode_key}|asr-merge-v6|"
+                    f"{audio_mode_key}|{AsrMergeService.VERSION}|"
                     f"{SegmentRegroupService.VERSION}|"
-                    f"{AsrOcrReconciliationService.VERSION}"
+                    f"{AsrOcrReconciliationService.VERSION}|"
+                    f"ocr-repair={int(bool(repair_asr_with_ocr))}"
                 ),
             )
             cached_transcription_signature = str(project_state.settings.get("transcription_signature", "") or "").strip()
@@ -1050,6 +1181,7 @@ class PrepareWorkflow:
                             project_state=project_state,
                             model_dir=sensevoice_model_dir,
                             language=source_language,
+                            step_callback=step_callback,
                         )
                     else:
                         print("[ASR] Using SenseVoice single-pass transcription with Silero VAD.")
@@ -1076,7 +1208,6 @@ class PrepareWorkflow:
                             "[Prepare Workflow] ASR->Translate overlap enabled for chunked Whisper "
                             f"(translator_ai={bool(translator_ai)}, provider={str(os.getenv('OPENAI_PROVIDER') or 'google').strip().lower()})."
                         )
-                        from services import AsrMergeService
                         asr_merge_service = AsrMergeService()
                         streamed_translation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                         pending_stream_segments = []
@@ -1154,13 +1285,23 @@ class PrepareWorkflow:
                     project_state.set_step_status("transcribe", "failed")
                     self.project_service.save_project(project_state)
                     raise RuntimeError("Transcription failed.")
-                raw_segments, repaired_asr_count = self._repair_truncated_asr_from_video(
-                    raw_segments,
-                    video_path=video_path,
-                    timeline_clips=timeline_clips,
-                    source_language=source_language,
-                    project_state=project_state,
-                )
+                repaired_asr_count = 0
+                if repair_asr_with_ocr:
+                    self._emit_step(
+                        step_callback,
+                        "asr_ocr_repair",
+                        "Checking unusually short speech lines against on-screen subtitles",
+                    )
+                    raw_segments, repaired_asr_count = self._repair_truncated_asr_from_video(
+                        raw_segments,
+                        video_path=video_path,
+                        timeline_clips=timeline_clips,
+                        source_language=source_language,
+                        project_state=project_state,
+                        step_callback=step_callback,
+                    )
+                else:
+                    print("[ASR Accuracy] OCR repair skipped for fast Original Transcript mode.")
                 if repaired_asr_count and streamed_translation_executor is not None:
                     # These batches started from text produced before OCR
                     # reconciliation. Discard them and translate the corrected

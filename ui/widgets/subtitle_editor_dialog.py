@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QHeaderView,
     QHBoxLayout,
@@ -35,11 +36,23 @@ class SubtitleEditorDialog(QDialog):
     _DELETE_COLUMN = 5
     _TEXT_COLUMN = 4
 
-    def __init__(self, parent, segments, on_update, on_rewrite=None):
+    def __init__(
+        self,
+        parent,
+        segments,
+        on_update,
+        on_rewrite=None,
+        on_export_xlsx=None,
+        on_import_xlsx=None,
+        on_copy_ai_prompt=None,
+    ):
         super().__init__(parent)
         self._original_segments = deepcopy(list(segments or []))
         self._on_update = on_update
         self._on_rewrite = on_rewrite
+        self._on_export_xlsx = on_export_xlsx
+        self._on_import_xlsx = on_import_xlsx
+        self._on_copy_ai_prompt = on_copy_ai_prompt
         self._matches: list[tuple[int, int, int]] = []
         self._match_index = -1
 
@@ -209,9 +222,18 @@ class SubtitleEditorDialog(QDialog):
         delete_btn.setObjectName("danger")
         undo_delete_btn = QPushButton("Restore Selected")
         rewrite_btn = QPushButton("AI Rewrite…")
+        export_xlsx_btn = QPushButton("Export XLSX…")
+        import_xlsx_btn = QPushButton("Import XLSX…")
+        copy_prompt_btn = QPushButton("Copy AI Prompt")
+        export_xlsx_btn.setToolTip("Export Original and Translated text for contextual AI translation")
+        import_xlsx_btn.setToolTip("Import only Translated text; timing and Original must remain unchanged")
+        copy_prompt_btn.setToolTip("Copy a prompt using this project's source, target, and translation style")
         actions.addWidget(delete_btn)
         actions.addWidget(undo_delete_btn)
         actions.addWidget(rewrite_btn)
+        actions.addWidget(export_xlsx_btn)
+        actions.addWidget(import_xlsx_btn)
+        actions.addWidget(copy_prompt_btn)
         actions.addStretch(1)
         cancel_btn = QPushButton("Cancel")
         update_btn = QPushButton("Update")
@@ -229,8 +251,15 @@ class SubtitleEditorDialog(QDialog):
         delete_btn.clicked.connect(lambda: self._set_selected_deleted(True))
         undo_delete_btn.clicked.connect(lambda: self._set_selected_deleted(False))
         rewrite_btn.clicked.connect(self._open_rewrite)
+        export_xlsx_btn.clicked.connect(self._export_xlsx)
+        import_xlsx_btn.clicked.connect(self._import_xlsx)
+        copy_prompt_btn.clicked.connect(self._copy_ai_prompt)
         cancel_btn.clicked.connect(self.reject)
         update_btn.clicked.connect(self._apply)
+
+        export_xlsx_btn.setEnabled(self._on_export_xlsx is not None)
+        import_xlsx_btn.setEnabled(self._on_import_xlsx is not None)
+        copy_prompt_btn.setEnabled(self._on_copy_ai_prompt is not None)
 
     def _populate(self):
         for row, segment in enumerate(self._original_segments):
@@ -336,6 +365,54 @@ class SubtitleEditorDialog(QDialog):
             return
         self.accept()
         self._on_rewrite()
+
+    def _staged_segments(self) -> list[dict]:
+        segments = deepcopy(self._original_segments)
+        for row, segment in enumerate(segments):
+            item = self.table.item(row, self._TEXT_COLUMN)
+            segment["text"] = str(item.text() if item else "").strip()
+        return segments
+
+    def _export_xlsx(self):
+        if self._on_export_xlsx is not None:
+            self._on_export_xlsx(self._staged_segments())
+
+    def _import_xlsx(self):
+        if self._on_import_xlsx is None:
+            return
+        translated_texts = self._on_import_xlsx(self._staged_segments())
+        if not translated_texts:
+            return
+        if len(translated_texts) != self.table.rowCount():
+            QMessageBox.warning(self, "Import XLSX", "The imported subtitle count does not match the editor.")
+            return
+        changed = 0
+        for row, text in enumerate(translated_texts):
+            item = self.table.item(row, self._TEXT_COLUMN)
+            value = str(text or "").strip()
+            if item is not None and item.text().strip() != value:
+                item.setText(value)
+                changed += 1
+        self._refresh_matches()
+        QMessageBox.information(
+            self,
+            "XLSX Imported",
+            f"Loaded {len(translated_texts)} subtitle rows; {changed} translation(s) changed.\n"
+            "Review the result, then click Update to apply it to the project.",
+        )
+
+    def _copy_ai_prompt(self):
+        if self._on_copy_ai_prompt is None:
+            return
+        prompt = str(self._on_copy_ai_prompt(self._staged_segments()) or "").strip()
+        if not prompt:
+            return
+        QApplication.clipboard().setText(prompt)
+        QMessageBox.information(
+            self,
+            "AI Prompt Copied",
+            "The dynamic translation prompt was copied to the clipboard.",
+        )
 
     def _apply(self):
         rows = []

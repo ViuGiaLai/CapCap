@@ -753,7 +753,7 @@ class SubtitleController:
             generate_btn.setEnabled(False)
             generate_btn.setText("Generating...")
             self.gui.rewrite_translation_btn.setEnabled(False)
-            self.gui.rewrite_translation_btn.setText("Rewriting...")
+            self.gui.rewrite_translation_btn.setText("Working")
             self.gui.progress_bar.setValue(90)
             self.gui.update_project_step("refine_translation", "running")
 

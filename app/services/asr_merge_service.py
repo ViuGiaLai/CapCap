@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+from collections import Counter
 from difflib import SequenceMatcher
 
 from core.models import AudioChunk
@@ -34,6 +35,7 @@ def _transcribe_chunk_job(audio_path: str, language: str) -> list[dict]:
 
 
 class AsrMergeService:
+    VERSION = "asr-merge-v7"
     DEFAULT_MAX_WORKERS = 3
 
     def _cache_key(self, *, chunk: AudioChunk, model_path: str, language: str, transcription_config: dict) -> str:
@@ -82,6 +84,30 @@ class AsrMergeService:
             return 0.0
         return SequenceMatcher(None, left_normalized, right_normalized).ratio()
 
+    @staticmethod
+    def _lexical_units(text: str) -> list[str]:
+        """Return stable comparison units without assuming one language.
+
+        CJK ASR frequently mixes traditional/simplified characters and can
+        corrupt the end of a phrase differently in adjacent chunks. Character
+        units still retain enough shared anchors for a conservative boundary
+        check. Space-delimited languages use whole words to avoid coincidental
+        character matches.
+        """
+        value = str(text or "").strip().lower()
+        cjk = re.findall(r"[\u3400-\u9fff\uf900-\ufaff]", value)
+        if cjk:
+            return cjk
+        return re.findall(r"[\w]+", value, flags=re.UNICODE)
+
+    def _lexical_coverage(self, left: str, right: str) -> tuple[float, int]:
+        left_units = self._lexical_units(left)
+        right_units = self._lexical_units(right)
+        if not left_units or not right_units:
+            return 0.0, 0
+        common_count = sum((Counter(left_units) & Counter(right_units)).values())
+        return common_count / max(1, min(len(left_units), len(right_units))), common_count
+
     def _segment_midpoint(self, segment: dict) -> float:
         return (float(segment.get("start", 0.0)) + float(segment.get("end", 0.0))) / 2.0
 
@@ -93,6 +119,74 @@ class AsrMergeService:
         start = max(float(left.get("start", 0.0)), float(right.get("start", 0.0)))
         end = min(float(left.get("end", 0.0)), float(right.get("end", 0.0)))
         return max(0.0, end - start)
+
+    @staticmethod
+    def _different_chunks(previous: dict, candidate: dict) -> bool:
+        previous_chunk: AudioChunk = previous["chunk"]
+        candidate_chunk: AudioChunk = candidate["chunk"]
+        return (
+            str(previous_chunk.chunk_id) != str(candidate_chunk.chunk_id)
+            or abs(float(previous_chunk.start_seconds) - float(candidate_chunk.start_seconds)) > 0.001
+        )
+
+    def _is_boundary_leading_partial(
+        self,
+        previous: dict,
+        candidate: dict,
+        *,
+        overlap: float,
+        similarity: float,
+    ) -> bool:
+        """Detect a re-transcribed tail at the start of an overlap chunk.
+
+        This deliberately requires independent timing, chunk-boundary and
+        lexical evidence. Similar target-language subtitles alone are never
+        enough because repeated dialogue can be intentional.
+        """
+        if not self._different_chunks(previous, candidate):
+            return False
+
+        previous_segment = previous["segment"]
+        candidate_segment = candidate["segment"]
+        previous_chunk: AudioChunk = previous["chunk"]
+        candidate_chunk: AudioChunk = candidate["chunk"]
+        if float(candidate_chunk.start_seconds) <= float(previous_chunk.start_seconds):
+            return False
+        if float(candidate_chunk.overlap_left_seconds) <= 0.0:
+            return False
+
+        candidate_start = float(candidate_segment.get("start", 0.0))
+        candidate_end = float(candidate_segment.get("end", candidate_start))
+        previous_start = float(previous_segment.get("start", 0.0))
+        previous_end = float(previous_segment.get("end", previous_start))
+        candidate_duration = max(0.0, candidate_end - candidate_start)
+        previous_duration = max(0.0, previous_end - previous_start)
+        if candidate_duration <= 0.0 or previous_duration <= 0.0:
+            return False
+
+        # The repeated tail must begin at the synthetic left edge of the new
+        # chunk, not merely be a later similar sentence in that chunk.
+        local_start = candidate_start - float(candidate_chunk.start_seconds)
+        boundary_slop = max(0.15, float(candidate_chunk.overlap_left_seconds) * 0.35)
+        if local_start < -0.02 or local_start > boundary_slop:
+            return False
+        if previous_start >= float(candidate_chunk.start_seconds) - 0.05:
+            return False
+
+        # It is a partial repeat only when most of the new cue reuses audio
+        # already represented by the previous cue and adds at most a short
+        # trailing timing error.
+        if overlap < max(0.10, candidate_duration * 0.60):
+            return False
+        if candidate_duration > previous_duration * 1.10:
+            return False
+        if candidate_end - previous_end > max(0.50, candidate_duration * 0.40):
+            return False
+
+        coverage, common_count = self._lexical_coverage(
+            previous_segment.get("text", ""), candidate_segment.get("text", "")
+        )
+        return similarity >= 0.55 or (common_count >= 2 and coverage >= 0.25)
 
     def _recommended_worker_count(self, pending_count: int) -> int:
         if pending_count <= 1:
@@ -396,6 +490,13 @@ class AsrMergeService:
             merged_entries.append(candidate)
             return
 
+        # Never collapse repeated dialogue emitted inside one ASR chunk. The
+        # overlap deduper exists only to reconcile duplicated audio shared by
+        # two adjacent chunks.
+        if not self._different_chunks(previous, candidate):
+            merged_entries.append(candidate)
+            return
+
         previous_in_core = self._midpoint_in_core(previous_segment, previous["chunk"])
         candidate_in_core = self._midpoint_in_core(candidate_segment, candidate["chunk"])
         previous_duration = max(0.0, float(previous_segment["end"]) - float(previous_segment["start"]))
@@ -409,8 +510,25 @@ class AsrMergeService:
         shorter_duration = min(previous_duration, candidate_duration)
         substantial_overlap = overlap >= max(0.10, shorter_duration * 0.60)
         is_boundary_duplicate = substantial_overlap and similarity >= 0.92
-        if not is_boundary_duplicate:
+        is_boundary_partial = self._is_boundary_leading_partial(
+            previous,
+            candidate,
+            overlap=overlap,
+            similarity=similarity,
+        )
+        if not is_boundary_duplicate and not is_boundary_partial:
             merged_entries.append(candidate)
+            return
+
+        if is_boundary_partial:
+            print(
+                "[ASR] Removed duplicated leading fragment at chunk boundary: "
+                f"chunk={candidate['chunk'].chunk_id}, "
+                f"chars={len(str(candidate_segment.get('text', '') or ''))}"
+            )
+            # Timing and lexical evidence identify the candidate specifically
+            # as the shorter re-transcribed tail; keep the fuller previous cue
+            # even if its midpoint falls just outside the previous core.
             return
 
         if previous_in_core != candidate_in_core:

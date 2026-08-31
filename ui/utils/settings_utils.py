@@ -28,6 +28,8 @@ def save_user_settings(gui):
         s.setValue("target_lang", gui.lang_target_combo.currentData() or gui.lang_target_combo.currentText())
     if hasattr(gui, "translation_engine_combo"):
         s.setValue("translation_engine", gui.translation_engine_combo.currentData() or gui.translation_engine_combo.currentText())
+    if hasattr(gui, "llama_model_combo"):
+        s.setValue("llama_app_model", gui.llama_model_combo.currentData() or "")
     if hasattr(gui, "translation_style_preset_combo"):
         s.setValue("translation_style_preset", gui.translation_style_preset_combo.currentData() or gui.translation_style_preset_combo.currentText())
 
@@ -145,6 +147,9 @@ def load_user_settings(gui):
         if idx >= 0:
             gui.lang_target_combo.setCurrentIndex(idx)
 
+    llama_model = str(s.value("llama_app_model", "") or "").strip()
+    if llama_model:
+        os.environ["LLAMA_APP_MODEL"] = llama_model
     trans_engine = s.value("translation_engine", None)
     if trans_engine and hasattr(gui, "translation_engine_combo"):
         idx = gui.translation_engine_combo.findData(trans_engine)

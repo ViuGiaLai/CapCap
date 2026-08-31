@@ -42,7 +42,18 @@ def clear_log(gui):
 def show_error(gui, title: str, short_msg: str, details: str = ""):
     if details:
         print(f"[{title}] {details}")
-        QMessageBox.critical(gui, title, short_msg)
+        box = QMessageBox(gui)
+        box.setIcon(QMessageBox.Critical)
+        box.setWindowTitle(title)
+        box.setText(short_msg)
+        # Keep a concise cause visible without forcing users to find a
+        # terminal. The complete traceback/request error remains available
+        # through the standard "Show Details..." expander.
+        compact = " ".join(str(details).strip().splitlines())
+        if compact:
+            box.setInformativeText(compact[:360] + ("…" if len(compact) > 360 else ""))
+            box.setDetailedText(str(details).strip())
+        box.exec()
     else:
         QMessageBox.critical(gui, title, short_msg)
 

@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import time
+import unicodedata
 
 import cv2
 import numpy as np
@@ -365,6 +366,100 @@ def extract_ocr_text_from_video_region(video_path, position_seconds, normalized_
     # meant for any visible text rather than only spoken subtitles.
     lines = [" ".join(str(value or "").split()) for value in (result.txts or [])]
     return "\n".join(line for line in lines if line).strip()
+
+
+def _representative_ocr_times(start_seconds: float, end_seconds: float) -> list[float]:
+    """Return two nearby, distinct frames around the cue midpoint."""
+    start = max(0.0, float(start_seconds or 0.0))
+    end = max(start, float(end_seconds or start))
+    midpoint = (start + end) * 0.5
+    duration = end - start
+    if duration <= 0.04:
+        return [midpoint]
+    offset = min(0.12, max(0.04, duration * 0.12))
+    first = max(start, midpoint - offset)
+    second = min(end, midpoint + offset)
+    if second - first < 0.02:
+        return [midpoint]
+    return [first, second]
+
+
+def _ocr_consensus_key(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(text or "")).casefold()
+    return "".join(char for char in normalized if char.isalpha() or char.isdigit())
+
+
+def _two_frame_ocr_consensus(frame_texts: list[str], expected_frames: int = 2) -> str:
+    """Accept OCR only when every requested representative frame agrees."""
+    values = [_sanitize_ocr_line(value) for value in (frame_texts or [])]
+    values = [value for value in values if value]
+    if len(values) < max(1, int(expected_frames or 1)):
+        return ""
+    keys = [_ocr_consensus_key(value) for value in values]
+    if not keys[0] or any(key != keys[0] for key in keys[1:]):
+        return ""
+    return max(values, key=len)
+
+
+def transcribe_video_ocr_ranges(
+    video_path: str,
+    time_ranges: list[tuple[float, float]],
+    *,
+    region: str = "bottom",
+    ocr_engine=None,
+    progress_callback=None,
+) -> list[dict]:
+    """OCR two representative frames per cue using one engine/video handle.
+
+    This is the fast, conservative verifier used after audio ASR. It is not
+    a replacement for full subtitle OCR: a cue is returned only when both
+    representative frames produce the same normalized text.
+    """
+    ranges = [
+        (max(0.0, float(start or 0.0)), max(0.0, float(end or 0.0)))
+        for start, end in (time_ranges or [])
+        if float(end or 0.0) > float(start or 0.0)
+    ]
+    if not ranges:
+        return []
+    cap = _open_video(video_path)
+    try:
+        engine = ocr_engine or _load_ocr_engine()
+        video_fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
+        results = []
+        total = len(ranges)
+        for index, (start, end) in enumerate(ranges):
+            positions = _representative_ocr_times(start, end)
+            frame_texts = []
+            for position in positions:
+                frame_index = max(0, int(round(position * video_fps)))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    frame_texts.append("")
+                    continue
+                cropped = crop_subtitle_region(frame, region=region)
+                if cropped.size == 0 or _is_blank_region(cropped):
+                    frame_texts.append("")
+                    continue
+                frame_texts.append(" ".join(ocr_frame(engine, cropped)))
+            consensus = _two_frame_ocr_consensus(
+                frame_texts,
+                expected_frames=len(positions),
+            )
+            if consensus:
+                results.append({
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "text": consensus,
+                    "words": [],
+                    "ocr_consensus_frames": len(positions),
+                })
+            if progress_callback is not None:
+                progress_callback(index + 1, total)
+        return results
+    finally:
+        cap.release()
 
 
 def _texts_equal(current_texts, prev_texts):

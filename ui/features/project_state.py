@@ -195,6 +195,7 @@ class ProjectStateMixin:
             "source_lang": self.lang_whisper_combo.currentText() if hasattr(self, "lang_whisper_combo") else "",
             "target_lang": (self.lang_target_combo.currentData() or self.lang_target_combo.currentText()) if hasattr(self, "lang_target_combo") else "",
             "translation_engine": (self.translation_engine_combo.currentData() or self.translation_engine_combo.currentText()) if hasattr(self, "translation_engine_combo") else "",
+            "llama_app_model": str(self.llama_model_combo.currentData() or "") if hasattr(self, "llama_model_combo") else "",
             "translation_style_preset": (self.translation_style_preset_combo.currentData() or self.translation_style_preset_combo.currentText()) if hasattr(self, "translation_style_preset_combo") else "",
             "voice_engine": (self.voice_engine_combo.currentData() or self.voice_engine_combo.currentText()) if hasattr(self, "voice_engine_combo") else "",
             "free_voice_name": self.free_voice_combo.currentText() if hasattr(self, "free_voice_combo") else "",
@@ -551,6 +552,11 @@ class ProjectStateMixin:
             if idx >= 0:
                 self.lang_target_combo.setCurrentIndex(idx)
 
+        saved_llama_model = str(st.get("llama_app_model", "") or "").strip()
+        if saved_llama_model:
+            os.environ["LLAMA_APP_MODEL"] = saved_llama_model
+            if hasattr(self, "settings"):
+                self.settings.setValue("llama_app_model", saved_llama_model)
         saved_tengine = st.get("translation_engine")
         if saved_tengine and hasattr(self, "translation_engine_combo"):
             idx = self.translation_engine_combo.findData(saved_tengine)

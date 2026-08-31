@@ -623,6 +623,7 @@ class PrepareWorkflowWorker(QThread):
         speaker_diarization=False,
         speaker_diarization_num_speakers=-1,
         skip_translation=False,
+        repair_asr_with_ocr=True,
         prefetch_voice_name="",
         prefetch_voice_speed=1.0,
         remote_api_url="",
@@ -645,6 +646,7 @@ class PrepareWorkflowWorker(QThread):
         self.speaker_diarization = bool(speaker_diarization)
         self.speaker_diarization_num_speakers = int(speaker_diarization_num_speakers or -1)
         self.skip_translation = skip_translation
+        self.repair_asr_with_ocr = bool(repair_asr_with_ocr)
         self.prefetch_voice_name = prefetch_voice_name
         self.prefetch_voice_speed = float(prefetch_voice_speed or 1.0)
         self.remote_api_url = str(remote_api_url or "").strip()
@@ -681,6 +683,7 @@ class PrepareWorkflowWorker(QThread):
                             "speaker_diarization": self.speaker_diarization,
                             "speaker_diarization_num_speakers": self.speaker_diarization_num_speakers,
                             "skip_translation": self.skip_translation,
+                            "repair_asr_with_ocr": self.repair_asr_with_ocr,
                             "prefetch_voice_name": self.prefetch_voice_name,
                             "prefetch_voice_speed": self.prefetch_voice_speed,
                             "timeline_clips": self.timeline_clips,
@@ -715,6 +718,7 @@ class PrepareWorkflowWorker(QThread):
                     speaker_diarization=self.speaker_diarization,
                     speaker_diarization_num_speakers=self.speaker_diarization_num_speakers,
                     skip_translation=self.skip_translation,
+                    repair_asr_with_ocr=self.repair_asr_with_ocr,
                     prefetch_voice_name=self.prefetch_voice_name,
                     prefetch_voice_speed=self.prefetch_voice_speed,
                     step_callback=self.step_started.emit,

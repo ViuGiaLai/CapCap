@@ -315,7 +315,7 @@ class VIUStudioRemoteHandler(BaseHTTPRequestHandler):
         runtime = WorkflowRuntime(workspace_root)
         _set_status("prepare", "Preparing project")
 
-        def step_callback(step_id):
+        def step_callback(step_id, message=""):
             labels = {
                 "prepare": "Preparing project",
                 "extract_audio": "Extracting audio",
@@ -325,7 +325,10 @@ class VIUStudioRemoteHandler(BaseHTTPRequestHandler):
                 "transcription": "Transcribing audio",
                 "translation": "Translating subtitles",
             }
-            _set_status(step_id, labels.get(str(step_id or ""), str(step_id or "Processing")))
+            _set_status(
+                step_id,
+                str(message or labels.get(str(step_id or ""), str(step_id or "Processing"))),
+            )
 
         try:
             state = runtime.run_prepare(
@@ -342,6 +345,7 @@ class VIUStudioRemoteHandler(BaseHTTPRequestHandler):
                 speaker_diarization=bool(payload.get("speaker_diarization", False)),
                 speaker_diarization_num_speakers=int(payload.get("speaker_diarization_num_speakers", -1) or -1),
                 skip_translation=bool(payload.get("skip_translation", False)),
+                repair_asr_with_ocr=bool(payload.get("repair_asr_with_ocr", True)),
                 prefetch_voice_name=str(payload.get("prefetch_voice_name", "") or ""),
                 prefetch_voice_speed=float(payload.get("prefetch_voice_speed", 1.0) or 1.0),
                 step_callback=step_callback,

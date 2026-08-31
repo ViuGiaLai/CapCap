@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import secrets
 import socket
 import subprocess
@@ -34,6 +35,7 @@ class PipelineController:
         self.prepare_run_id = 0
         self.prepare_status_timer = None
         self.prepare_status_phase = ""
+        self.prepare_status_message = ""
         self.active_processing_device = "cpu"
 
     def _app_root(self):
@@ -95,8 +97,11 @@ class PipelineController:
     def _start_prepare_status_polling(self):
         self._stop_prepare_status_polling()
         self.prepare_status_phase = ""
+        self.prepare_status_message = ""
         timer = QTimer(self.gui)
-        timer.setInterval(10000)
+        # Local status polling is cheap. Ten-second polling made a healthy
+        # worker look frozen and hid most batch progress updates.
+        timer.setInterval(1000)
         timer.timeout.connect(self._poll_prepare_status)
         self.prepare_status_timer = timer
         timer.start()
@@ -116,6 +121,15 @@ class PipelineController:
         token = self.local_worker_api_token
         if not api_url:
             return
+        process = self.local_worker_process
+        if process is not None and process.poll() is not None:
+            exit_code = process.returncode
+            self._stop_prepare_status_polling()
+            if getattr(self.gui, "_pipeline_active", False):
+                self.pipeline_fail(
+                    f"Original Transcript worker stopped unexpectedly (exit code {exit_code})."
+                )
+            return
         try:
             request = urllib.request.Request(f"{api_url.rstrip('/')}/v1/status")
             if token:
@@ -124,8 +138,12 @@ class PipelineController:
                 data = json.loads(response.read().decode("utf-8", errors="replace"))
             phase = str(data.get("phase", "") or "").strip()
             message = str(data.get("message", "") or "").strip()
-            if phase and phase != self.prepare_status_phase:
+            if phase and (
+                phase != self.prepare_status_phase
+                or message != self.prepare_status_message
+            ):
                 self.prepare_status_phase = phase
+                self.prepare_status_message = message
                 self._on_prepare_step_started(phase, message)
         except Exception:
             pass
@@ -286,7 +304,9 @@ class PipelineController:
             dlg.show()
         except Exception:
             self.whisper_download_dialog = None
-    def _setup_progress_dialog(self, includes_separation=True, workflow="production"):
+    def _setup_progress_dialog(
+        self, includes_separation=True, workflow="production", target_stage="full"
+    ):
         """Creates and initializes the progress tracking dialog."""
         if self.progress_dialog:
             try:
@@ -310,10 +330,16 @@ class PipelineController:
             self.progress_dialog.add_step("rendering", "Rendering Recap (FFmpeg 1-Pass)")
         else:
             if hasattr(self.progress_dialog, "title_label"):
-                self.progress_dialog.title_label.setText("AI Production Pipeline")
-            self.progress_dialog.add_step("ai_process", "Subtitle Processing (AI)")
-            self.progress_dialog.add_step("voiceover", "Synthesizing AI Voiceover")
-            self.progress_dialog.add_step("preview", "Preparing Video Preview")
+                self.progress_dialog.title_label.setText(
+                    "Original Transcript" if target_stage == "transcript" else "AI Production Pipeline"
+                )
+            self.progress_dialog.add_step(
+                "ai_process",
+                "Recognizing Original Speech" if target_stage == "transcript" else "Subtitle Processing (AI)",
+            )
+            if target_stage != "transcript":
+                self.progress_dialog.add_step("voiceover", "Synthesizing AI Voiceover")
+                self.progress_dialog.add_step("preview", "Preparing Video Preview")
         self.progress_dialog.show()
 
     def run_auto_recap_pipeline(self, video_path=None):
@@ -394,6 +420,18 @@ class PipelineController:
             QMessageBox.warning(self.gui, "Error", "Please select a video file first.")
             return
 
+        requested_stage = str(target_stage or "full").strip().lower()
+        if requested_stage not in {"transcript", "translate", "tts", "full"}:
+            requested_stage = "full"
+
+        # Transcript-only runs do not use a translator. Avoid probing or
+        # stopping a local GGUF translation server before ASR starts.
+        if requested_stage != "transcript" and hasattr(self.gui, "prepare_translation_runtime"):
+            configured, config_error = self.gui.prepare_translation_runtime()
+            if not configured:
+                QMessageBox.warning(self.gui, "Translation Engine", config_error)
+                return
+
         # Determine if we need vocal separation based on UI settings
         if requires_separation is None:
             requires_separation = (self.gui.get_audio_handling_mode() == "clean")
@@ -403,7 +441,7 @@ class PipelineController:
         prepare_run_id = self.prepare_run_id
         self.gui._pipeline_active = True
         self.gui._pipeline_step = "prepare"
-        self.target_stage = str(target_stage or "full").strip().lower()
+        self.target_stage = requested_stage
         self._generate_export_started = False
         
         # UI Feedback
@@ -411,13 +449,26 @@ class PipelineController:
             self.gui.run_all_btn.setEnabled(False)
             self.gui.run_all_btn.setText("Processing...")
             
-        self._setup_progress_dialog(includes_separation=requires_separation, workflow="production")
+        self._setup_progress_dialog(
+            includes_separation=requires_separation,
+            workflow="production",
+            target_stage=self.target_stage,
+        )
         if self.progress_dialog:
             self.progress_dialog.start_step("ai_process")
 
         # Start the background worker
         self.gui.log(f"[Pipeline] Starting prepare workflow for: {video_path}")
         try:
+            if (
+                self.target_stage != "transcript"
+                and str(os.getenv("OPENAI_PROVIDER", "")).strip().lower() == "llama_app"
+            ):
+                # Test Connection may have a UI-owned llama server running.
+                # Stop it before spawning the isolated pipeline worker so the
+                # 1.8B model is not loaded twice and exhausting RAM.
+                from app.services.llama_local_manager import LlamaServerManager
+                LlamaServerManager.get_instance().stop_server()
             self.active_processing_device = (
                 "cuda" if os.getenv("VIUSTUDIO_DEVICE", "cpu").strip().lower() == "cuda" else "cpu"
             )
@@ -449,6 +500,7 @@ class PipelineController:
             speaker_diarization=self.gui.is_speaker_diarization_enabled(),
             speaker_diarization_num_speakers=self.gui.get_speaker_diarization_num_speakers(),
             skip_translation=skip_translation,
+            repair_asr_with_ocr=self.target_stage != "transcript",
             prefetch_voice_name=self.gui.get_active_voice_name() if prefetch_tts else "",
             prefetch_voice_speed=self.gui._parse_voice_speed_value() if prefetch_tts else 1.0,
             remote_api_url=self.local_worker_api_url,
@@ -494,6 +546,23 @@ class PipelineController:
         if label and self.progress_dialog:
             self.progress_dialog.footer.setText(f"Prepare: {label}")
             self.progress_dialog.footer.setStyleSheet("color: #9fb7d5; font-size: 13px; margin-top: 15px;")
+            if self.target_stage == "transcript":
+                progress_value = None
+                match = re.search(r"\((\d{1,3})%\)", label)
+                if match:
+                    # Reserve the first/last few percent for extraction and
+                    # transcript merge so 100% always means genuinely done.
+                    progress_value = 8 + int(match.group(1)) * 88 // 100
+                elif step_id in {"prepare", "extract_audio", "extraction"}:
+                    progress_value = 2
+                elif step_id == "sensevoice_chunking":
+                    progress_value = 6
+                elif step_id == "transcript_finalize":
+                    progress_value = 97
+                if progress_value is not None:
+                    self.progress_dialog.overall_progress.setValue(
+                        max(0, min(99, progress_value))
+                    )
         if step_id == "transcription":
             self._hide_whisper_download_dialog()
 
