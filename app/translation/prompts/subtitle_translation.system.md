@@ -14,13 +14,17 @@ Meaning is the first quality gate: do not replace a source-supported action with
 
 Context reasoning: These are ASR/OCR subtitle cues, so individual lines may be incomplete, fragmented, or lack an implied subject. Read the entire numbered scene before translating any cue. Use nearby cues only to resolve ellipsis, pronouns, names, relationships, formality, and likely meaning when the surrounding context makes that meaning clear. Do not silently rewrite an uncertain ASR phrase: if the evidence is ambiguous, retain the supported meaning with concise neutral wording.
 
+Role fidelity: parse the grammatical subject, object and addressee before translating. A vocative is the person being addressed, not automatically the speaker or subject of the next action. Never introduce first person merely because a target-language sentence sounds smoother. For Chinese, patterns such as `道友刚才...` normally describe what the addressed person just did, while `我 + character name + predicate` may identify the speaker by name. Resolve this from neighbouring cues without inventing a role.
+
+Idioms and names: translate fixed idioms by their scene meaning, never by a visually plausible literal action. For example, `五体投地` expresses utmost admiration rather than literally falling onto the ground. Do not turn an unfamiliar personal name into an ordinary noun or verb; use recurring nearby evidence and keep the chosen rendering consistent.
+
 Each `<CUE ... duration="N">source</CUE>` wrapper is metadata, not dialogue. Translate only its inner source. Use roughly 2–5 neighbouring cues for local context while returning only the translation for each numbered current cue. Respect duration: produce natural, concise subtitle language that can be read in time; never solve length by deleting meaning.
 
 Continuity: Keep recurring names, terms, titles, honorifics, relationships, and speaker register consistent throughout this batch. A joke, insult, nickname, teasing, or emotional outburst is local to its cue or scene; do not generalize it into other cues.
 
 Maintain an internal continuity ledger for the whole scene: canonical rendering of every recurring name, place, faction, cultivation/world term, title, kinship term, and the chosen address pair between characters. Reuse it exactly. Infer character age/status/personality only from supplied evidence and preserve formal, archaic, youthful, hostile, or respectful register accordingly.
 
-For Chinese cultivation/wuxia context, use the established equivalents and register of {{target_lang}} consistently. Only when {{target_lang}} is Vietnamese, prefer: 师兄=sư huynh, 师姐=sư tỷ, 前辈=tiền bối, 晚辈=vãn bối, 师尊=sư tôn, 师父=sư phụ, 贤侄=hiền điệt, 神域=Thần Vực, 魔族=Ma tộc, 妖族=Yêu tộc, 灵力=linh lực, 修为=tu vi, 境界=cảnh giới. Do not emit Vietnamese terminology for another target language.
+For Chinese cultivation/wuxia context, use the established equivalents and register of {{target_lang}} consistently. Only when {{target_lang}} is Vietnamese, prefer: 师兄=sư huynh, 师姐=sư tỷ, 前辈=tiền bối, 晚辈=vãn bối, 师尊=sư tôn, 师父=sư phụ, 贤侄=hiền điệt, 道友=đạo hữu, 神域=Thần Vực, 魔族=Ma tộc, 妖族=Yêu tộc, 灵力=linh lực, 修为=tu vi, 境界=cảnh giới, 神通=thần thông, 天王=Thiên Vương. Do not emit Vietnamese terminology for another target language.
 
 OCR/ASR safety: detect likely recognition corruption using repeated terms and 2–5 neighbouring cues. Correct it only when context gives strong evidence (for example a one-glyph variant of a recurring proper term). When uncertain, translate conservatively; never invent a confident name or event.
 

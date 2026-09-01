@@ -35,6 +35,19 @@ class _FallbackTranslator:
         return ["Đừng tưởng rằng chúng ta sợ ngươi."] * len(texts)
 
 
+class _SemanticReviewPolisher:
+    model_name = "Qwen3-4B-Q4_K_M.gguf"
+
+    def __init__(self):
+        self.calls = []
+
+    def polish_batch(self, *, source_texts, translated_texts=None, style_instruction="", **_kwargs):
+        self.calls.append((list(source_texts), translated_texts, style_instruction))
+        if translated_texts is None:
+            return ["Thưa đạo hữu, tôi vừa chiến đấu với hai vị thiên vương"], [], "llama_app"
+        return ["Đạo hữu vừa liên tiếp giao chiến với hai vị Thiên Vương."], [], "llama_app"
+
+
 class TranslationQualityTests(unittest.TestCase):
     def test_ai_source_contains_timing_metadata_but_keeps_one_line(self):
         value = TranslationOrchestrator._build_timed_ai_source(
@@ -131,6 +144,26 @@ class TranslationQualityTests(unittest.TestCase):
         )
         self.assertNotIn("cụm tiếng Anh", " ".join(name_warnings))
 
+    def test_guard_detects_contextual_role_idiom_and_action_changes(self):
+        _texts, warnings = apply_translation_quality_guard(
+            source_segments=[
+                {"start": 0.0, "end": 3.0, "text": "道友刚才连战两位天王"},
+                {"start": 3.0, "end": 7.0, "text": "我段炼佩服得五体投地"},
+            ],
+            translated_texts=[
+                "Thưa đạo bạn, tôi vừa chiến thắng hai vị thiên vương.",
+                "Ta Đoạn Luyện ngưỡng mộ đến mức ngã xuống đất.",
+            ],
+            target_lang="vi",
+        )
+        joined = " ".join(warnings)
+        self.assertIn("fighting successively, not winning", joined)
+        self.assertIn("addressee was changed", joined)
+        self.assertNotIn("literal fall", joined)
+        self.assertNotIn("emphasis of 五体投地 was omitted", joined)
+        self.assertEqual(_texts[0], "Thưa đạo hữu, tôi vừa chiến thắng hai vị Thiên Vương.")
+        self.assertEqual(_texts[1], "Ta Đoạn Luyện khâm phục sát đất")
+
     def test_translation_prompt_contains_fidelity_context_ocr_and_glossary_rules(self):
         system, _user = build_translation_messages(
             source_texts=['<CUE duration="2.0">师兄来了</CUE>'],
@@ -144,6 +177,40 @@ class TranslationQualityTests(unittest.TestCase):
         self.assertIn("OCR/ASR safety", system)
         self.assertIn("师兄=sư huynh", system)
         self.assertIn("duration", system)
+        self.assertNotIn('id="', _user)
+
+    def test_guard_localizes_wuti_toudi_without_literal_or_mixed_language(self):
+        texts, warnings = apply_translation_quality_guard(
+            source_segments=[{
+                "start": 0.0,
+                "end": 4.0,
+                "text": "这等神通手段我段炼佩服得五体投地",
+            }],
+            translated_texts=[
+                "Loại thần thông này, tôi Đoạn Luyện ngưỡng mộ đến mức cinco thể"
+            ],
+            target_lang="vi",
+        )
+        self.assertEqual(
+            texts,
+            ["Loại thần thông này, Đoạn Luyện ta khâm phục sát đất"],
+        )
+        self.assertNotIn("semantic mismatch", " ".join(warnings))
+
+    def test_guard_keeps_lianzhan_as_successive_fighting_not_victory(self):
+        texts, warnings = apply_translation_quality_guard(
+            source_segments=[{
+                "start": 0.0,
+                "end": 3.0,
+                "text": "道友刚才连战两位天王",
+            }],
+            translated_texts=[
+                "Đạo hữu vừa rồi đã chiến đấu với hai Thiên Vương liên tiếp"
+            ],
+            target_lang="vi",
+        )
+        self.assertEqual(texts, ["Đạo hữu vừa đấu liền hai vị Thiên Vương"])
+        self.assertNotIn("semantic mismatch", " ".join(warnings))
 
     def test_objectively_broken_cue_is_retried_with_local_context(self):
         orchestrator = TranslationOrchestrator()
@@ -187,6 +254,29 @@ class TranslationQualityTests(unittest.TestCase):
         )
         self.assertEqual(repaired, ["Đừng tưởng rằng chúng ta sợ ngươi."])
         self.assertEqual(warnings, [])
+
+    def test_local_chat_translation_receives_source_versus_draft_semantic_review(self):
+        orchestrator = TranslationOrchestrator()
+        polisher = _SemanticReviewPolisher()
+        segments = [{"start": 162.115, "end": 165.126, "text": "道友刚才连战两位天王"}]
+        ai_sources = [orchestrator._build_timed_ai_source(segments[0], 0)]
+
+        reviewed, warnings = orchestrator._review_local_translation_with_context(
+            polisher=polisher,
+            provider_type="llama_app",
+            source_segments=segments,
+            ai_source_texts=ai_sources,
+            translated_texts=["Thưa đạo hữu, tôi vừa chiến đấu với hai vị thiên vương"],
+            src_lang="zh-Hans",
+            target_lang="vi",
+            style_instruction="Standard / Natural",
+        )
+
+        self.assertEqual(reviewed, ["Đạo hữu vừa liên tiếp giao chiến với hai vị Thiên Vương."])
+        self.assertEqual(warnings, [])
+        self.assertIsNotNone(polisher.calls[0][1])
+        self.assertIn("speaker versus addressee", polisher.calls[0][2])
+        self.assertIn("五体投地", polisher.calls[0][2])
 
 
 if __name__ == "__main__":

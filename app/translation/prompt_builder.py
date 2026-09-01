@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import re
+
 from .prompt_loader import render_prompt
+
+
+def _strip_cue_id(value: str) -> str:
+    return re.sub(r'\s+id="[^"]*"', "", str(value), count=1, flags=re.IGNORECASE)
 
 
 def build_translation_messages(
@@ -27,11 +33,14 @@ def build_translation_messages(
         ]
     elif is_direct:
         prompt_key = "subtitle_translation"
-        lines = [f"{index + 1}. {text}" for index, text in enumerate(source_texts)]
+        lines = [
+            f"{index + 1}. {_strip_cue_id(text)}"
+            for index, text in enumerate(source_texts)
+        ]
     else:
         prompt_key = "dubbing_rewrite" if dubbing_mode else "subtitle_refinement"
         lines = [
-            f"{index + 1}. {source} ||| {draft}"
+            f"{index + 1}. {_strip_cue_id(source)} ||| {draft}"
             for index, (source, draft) in enumerate(zip(source_texts, translated_texts or []))
         ]
 

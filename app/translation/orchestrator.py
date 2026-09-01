@@ -90,6 +90,22 @@ class TranslationOrchestrator:
                         translated_texts=translated_texts,
                         target_lang=target_lang,
                     )
+                    translated_texts, review_warnings = self._review_local_translation_with_context(
+                        polisher=polisher,
+                        provider_type=provider_type,
+                        source_segments=segments,
+                        ai_source_texts=ai_source_texts,
+                        translated_texts=translated_texts,
+                        src_lang=normalized_src,
+                        target_lang=target_lang,
+                        style_instruction=merged_style,
+                    )
+                    warnings.extend(review_warnings)
+                    translated_texts, quality_warnings = apply_translation_quality_guard(
+                        source_segments=segments,
+                        translated_texts=translated_texts,
+                        target_lang=target_lang,
+                    )
                     translated_texts, quality_warnings = self._repair_ai_quality_issues(
                         polisher=polisher,
                         source_segments=segments,
@@ -421,6 +437,7 @@ class TranslationOrchestrator:
                     "thiếu số",
                     "bản dịch trống",
                     "cụm tiếng Anh trong bản dịch tiếng Việt",
+                    "semantic mismatch",
                 )
             ):
                 continue
@@ -448,7 +465,13 @@ class TranslationOrchestrator:
                 "was empty. Output only the requested target language. Preserve "
                 "the exact source meaning, names, numbers, negation and speaker register. Use the "
                 "nearby source only for context; never output nearby cues.\n"
-                f"Nearby source context:\n{nearby}"
+                "The following automatic checks describe the exact defect; satisfy them rather than merely "
+                "rephrasing the draft:\n"
+                + "\n".join(
+                    f"- {warning}" for warning in quality_warnings
+                    if re.match(rf"Cue\s+{index + 1}:", str(warning))
+                )
+                + f"\nNearby source context:\n{nearby}"
             )
             try:
                 result, _warnings, _provider = polisher.polish_batch(
@@ -524,6 +547,89 @@ class TranslationOrchestrator:
             translated_texts=repaired,
             target_lang=target_lang,
         )
+
+    @staticmethod
+    def _is_dedicated_sentence_mt(polisher) -> bool:
+        """Return True for local models that cannot follow review instructions."""
+        model_name = os.path.basename(str(getattr(polisher, "model_name", "") or ""))
+        return bool(re.match(r"(?i)^hy[-_]?mt", model_name))
+
+    def _review_local_translation_with_context(
+        self,
+        *,
+        polisher,
+        provider_type: str,
+        source_segments: list[dict],
+        ai_source_texts: list[str],
+        translated_texts: list[str],
+        src_lang: str,
+        target_lang: str,
+        style_instruction: str,
+    ) -> tuple[list[str], list[str]]:
+        """Audit local-chat-model drafts against source in ordered scene batches.
+
+        A grammatical target-language line can still reverse the speaker and
+        listener, translate an idiom literally, or hallucinate a name. Surface
+        checks cannot detect those errors. General local chat models therefore
+        get one source-versus-draft review pass with neighbouring cues. Dedicated
+        sentence MT models are excluded because their native prompt does not
+        support scene context or draft refinement.
+        """
+        if provider_type not in {"llama_app", "ollama"}:
+            return list(translated_texts), []
+        if self._is_dedicated_sentence_mt(polisher):
+            return list(translated_texts), [
+                "Contextual semantic review skipped: the selected dedicated MT model only supports isolated cues."
+            ]
+        enabled = str(os.getenv("VIUSTUDIO_LOCAL_TRANSLATION_REVIEW", "1")).strip().lower()
+        if enabled in {"0", "false", "no", "off"}:
+            return list(translated_texts), []
+
+        review_instruction = (
+            f"{style_instruction}\n\n[mode=semantic_translation_review] "
+            "Audit every draft against its own source before returning the complete numbered batch. "
+            "Correct meaning errors even when the draft is fluent. Check grammatical subject and object, "
+            "speaker versus addressee, negation, time/aspect, names, titles, fixed idioms and recurring terms. "
+            "A vocative such as Chinese 道友 addresses the listener; it does not make a following action "
+            "first-person. Translate idioms by their intended meaning: 五体投地 expresses utmost admiration, "
+            "not a literal fall. In constructions such as 我 + character name + predicate, keep the name as "
+            "the speaker identity and do not merge it into the verb. Use nearby cues only to disambiguate. "
+            "Never add a person, name, pronoun, action or fact unsupported by the current source. Keep an "
+            "already-correct draft unchanged. Output every requested cue exactly once."
+        )
+        try:
+            reviewed, providers, batch_warnings = self._run_ai_batches(
+                polisher=polisher,
+                provider_type=provider_type,
+                source_texts=ai_source_texts,
+                translated_texts=list(translated_texts),
+                src_lang=src_lang,
+                target_lang=target_lang,
+                style_instruction=review_instruction,
+                # Smaller review scenes reduce attention drift on 4B-class
+                # local models while retaining enough dialogue context.
+                polish_batch_size=16,
+            )
+            if not validate_texts(reviewed, len(source_segments)):
+                raise TranslationValidationError("semantic review returned an invalid cue count")
+            guarded, _review_quality_warnings = apply_translation_quality_guard(
+                source_segments=source_segments,
+                translated_texts=reviewed,
+                target_lang=target_lang,
+            )
+            print(
+                "[Translation QA] Contextual semantic review completed via "
+                f"{', '.join(providers) or provider_type}."
+            )
+            # The caller runs the quality guard once after review and owns
+            # targeted repair. Returning its warnings here would duplicate
+            # every readability warning in the final project report.
+            return guarded, list(batch_warnings)
+        except Exception as exc:
+            print(f"[Translation QA] Contextual semantic review skipped: {exc}")
+            return list(translated_texts), [
+                f"Contextual semantic review failed; the first-pass translation was kept. ({exc})"
+            ]
 
     @staticmethod
     def _run_ai_batch_requests(*, polisher, batches, src_lang, target_lang, style_instruction, max_workers):

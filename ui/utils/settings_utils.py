@@ -147,9 +147,14 @@ def load_user_settings(gui):
         if idx >= 0:
             gui.lang_target_combo.setCurrentIndex(idx)
 
-    llama_model = str(s.value("llama_app_model", "") or "").strip()
+    llama_model = ""
+    if hasattr(gui, "_llama_model_from_env_file"):
+        llama_model = str(gui._llama_model_from_env_file() or "").strip()
+    if not llama_model:
+        llama_model = str(s.value("llama_app_model", "") or "").strip()
     if llama_model:
         os.environ["LLAMA_APP_MODEL"] = llama_model
+        s.setValue("llama_app_model", llama_model)
     trans_engine = s.value("translation_engine", None)
     if trans_engine and hasattr(gui, "translation_engine_combo"):
         idx = gui.translation_engine_combo.findData(trans_engine)

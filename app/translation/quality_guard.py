@@ -20,6 +20,9 @@ VI_CANONICAL_TERMS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("师尊", "sư tôn", ("sư tôn", "tôn sư")),
     ("师父", "sư phụ", ("sư phụ", "thầy")),
     ("贤侄", "hiền điệt", ("hiền điệt", "cháu hiền")),
+    ("道友", "đạo hữu", ("đạo hữu", "đạo bạn", "bạn đạo")),
+    ("神通", "thần thông", ("thần thông", "phép thần thông", "năng lực thần kỳ", "sức mạnh thần kỳ")),
+    ("天王", "Thiên Vương", ("thiên vương",)),
 )
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
@@ -49,9 +52,23 @@ _ENGLISH_FUNCTION_WORDS = {
     "was", "we", "were", "what", "when", "with", "you", "your",
 }
 
+_VI_FIRST_PERSON_RE = re.compile(r"\b(?:tôi|ta|chúng ta|mình)\b", re.IGNORECASE)
+_VI_VICTORY_RE = re.compile(r"\b(?:chiến thắng|đánh bại|hạ gục)\b", re.IGNORECASE)
+_VI_LITERAL_FALL_RE = re.compile(
+    r"\b(?:ngã|rơi|nằm|quỳ)(?:\s+\w+){0,3}\s+(?:đất|mặt đất)\b",
+    re.IGNORECASE,
+)
+
 
 def _replace_variant(text: str, variant: str, canonical: str) -> str:
-    return re.sub(re.escape(variant), canonical, text, flags=re.IGNORECASE)
+    def replacement(match: re.Match) -> str:
+        value = canonical
+        original = match.group(0)
+        if original[:1].isupper() and value[:1].islower():
+            value = value[:1].upper() + value[1:]
+        return value
+
+    return re.sub(re.escape(variant), replacement, text, flags=re.IGNORECASE)
 
 
 def _normalized_phrase(text: str) -> str:
@@ -132,6 +149,88 @@ def apply_translation_quality_guard(
                     continue
                 for variant in variants:
                     text = _replace_variant(text, variant, canonical)
+
+            if "五体投地" in source and re.search(r"\b(?:ngưỡng mộ|khâm phục)\b", text, re.IGNORECASE):
+                # This is a fixed idiom, so a source-conditioned correction is
+                # safer than allowing a small model to retain a literal fall,
+                # omit the emphasis, or leak an intermediate-language phrase.
+                text = re.sub(
+                    r"\b(?:rất\s+)?(?:ngưỡng mộ|khâm phục)\b.*$",
+                    "khâm phục sát đất",
+                    text,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+                if re.search(r"我[\u3400-\u9fff]{1,3}佩服", source):
+                    text = re.sub(
+                        r"\btôi\s+(.+?)\s+khâm phục sát đất$",
+                        r"\1 ta khâm phục sát đất",
+                        text,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    )
+            if "连战" in source and not _VI_VICTORY_RE.search(text):
+                text = re.sub(r"\bvừa rồi\b", "vừa", text, flags=re.IGNORECASE)
+                text = re.sub(
+                    r"\b(?:đã\s+)?chiến đấu với\s+(.+?)\s+liên tiếp\b",
+                    r"đấu liền \1",
+                    text,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+                text = re.sub(
+                    r"\b(?:đã\s+)?(?:chiến đấu|giao chiến)\s+liên tiếp\s+với\b",
+                    "đấu liền",
+                    text,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+                if "两位天王" in source:
+                    text = re.sub(
+                        r"\bhai\s+Thiên Vương\b",
+                        "hai vị Thiên Vương",
+                        text,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    )
+
+            # These checks are source-conditioned. They do not attempt a new
+            # translation; they identify objectively changed semantics that a
+            # fluent-looking local-model answer would otherwise hide.
+            if "连战" in source and _VI_VICTORY_RE.search(text):
+                warnings.append(
+                    f"Cue {index + 1}: semantic mismatch: 连战 means fighting successively, not winning."
+                )
+            if "五体投地" in source and _VI_LITERAL_FALL_RE.search(text):
+                warnings.append(
+                    f"Cue {index + 1}: semantic mismatch: 五体投地 expresses utmost admiration, not a literal fall."
+                )
+            if "五体投地" in source and not re.search(
+                r"\b(?:khâm phục sát đất|bái phục|khâm phục (?:vô cùng|hết mực)|vô cùng khâm phục)\b",
+                text,
+                flags=re.IGNORECASE,
+            ):
+                warnings.append(
+                    f"Cue {index + 1}: semantic mismatch: the emphasis of 五体投地 was omitted."
+                )
+            # A leading Chinese vocative plus 刚才 normally refers to the
+            # addressee's recent action. Flag a newly invented first-person
+            # subject so the contextual repair pass can resolve it.
+            if re.match(r"^\s*(?:道友|阁下|前辈|兄台|公子|姑娘).*刚才", source):
+                if _VI_FIRST_PERSON_RE.search(text):
+                    warnings.append(
+                        f"Cue {index + 1}: semantic mismatch: the addressee was changed into a first-person subject."
+                    )
+            if re.match(r"^\s*道友实力", source) and re.match(
+                r"^\s*Đạo hữu\s+(?:có\s+)?thực lực", text, flags=re.IGNORECASE
+            ):
+                text = re.sub(
+                    r"^\s*Đạo hữu\s+(?:có\s+)?thực lực",
+                    "Thực lực của đạo hữu",
+                    text,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
 
         if not text:
             warnings.append(f"Cue {index + 1}: bản dịch trống.")

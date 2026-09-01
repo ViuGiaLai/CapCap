@@ -431,6 +431,10 @@ class PipelineController:
             if not configured:
                 QMessageBox.warning(self.gui, "Translation Engine", config_error)
                 return
+            self.gui.log(
+                "[Translation] Generate will use provider: "
+                f"{str(os.getenv('OPENAI_PROVIDER') or 'google').strip().lower()}."
+            )
 
         # Determine if we need vocal separation based on UI settings
         if requires_separation is None:

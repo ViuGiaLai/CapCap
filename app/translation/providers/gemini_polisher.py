@@ -71,7 +71,7 @@ class OpenAICompatiblePolisherProvider:
         last_error = ""
         for attempt in range(1, max_retries + 1):
             try:
-                response = client.chat.completions.create(
+                request_kwargs = dict(
                     model=self.model_name,
                     messages=[
                         {"role": "system", "content": system_msg},
@@ -81,6 +81,16 @@ class OpenAICompatiblePolisherProvider:
                     max_tokens=max(1024, int(max_tokens or 4096)),
                     timeout=timeout,
                 )
+                if self.provider_id in {"llama_app", "ollama"}:
+                    # Qwen3-class local models otherwise spend most of the
+                    # response budget on hidden/visible reasoning, frequently
+                    # timing out before producing the strict numbered subtitle
+                    # payload. llama.cpp and Ollama both forward this template
+                    # option to models that support thinking mode.
+                    request_kwargs["extra_body"] = {
+                        "chat_template_kwargs": {"enable_thinking": False}
+                    }
+                response = client.chat.completions.create(**request_kwargs)
                 text = response.choices[0].message.content.strip()
                 if not text:
                     raise Exception("Empty response text")
@@ -93,7 +103,7 @@ class OpenAICompatiblePolisherProvider:
                     raise TranslationValidationError(
                         f"Malformed or incomplete numbered output: expected IDs 1..{expected}, got {actual_ids[:8]}..."
                     )
-                lines = [line for _number, line in numbered_items]
+                lines = [self._clean_translation_line(line) for _number, line in numbered_items]
                 if not validate_texts(lines, expected):
                     raise TranslationValidationError(
                         f"Expected {expected} lines, got {len(lines)}"
@@ -117,6 +127,17 @@ class OpenAICompatiblePolisherProvider:
         text = str(value or "").strip()
         match = re.fullmatch(r"<CUE\b[^>]*>(.*)</CUE>", text, flags=re.IGNORECASE | re.DOTALL)
         return str(match.group(1) if match else text).strip()
+
+    @staticmethod
+    def _clean_translation_line(value: str) -> str:
+        """Remove source/draft scaffolding echoed by small local models."""
+        text = str(value or "").strip()
+        if "|||" in text:
+            text = text.rsplit("|||", 1)[-1].strip()
+        cue = re.fullmatch(r"<CUE\b[^>]*>(.*)</CUE>", text, flags=re.IGNORECASE | re.DOTALL)
+        if cue:
+            text = str(cue.group(1) or "").strip()
+        return text
 
     def _translate_hy_mt_batch(self, *, source_texts, target_lang: str, timeout: int, max_retries: int):
         language_names = {

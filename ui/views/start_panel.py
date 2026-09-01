@@ -615,6 +615,37 @@ def build_start_group(gui, left_layout):
     
     gui.llama_model_combo = QComboBox()
     llama_layout.addWidget(gui.llama_model_combo)
+
+    gui.llama_recommended_models = {}
+    recommended_title = QLabel("Recommended models")
+    recommended_title.setObjectName("helperLabel")
+    llama_layout.addWidget(recommended_title)
+    recommended_models = (
+        ("hy_mt_1_8b", "HY-MT 1.8B", "Translation specialist · Recommended"),
+        ("qwen3_4b", "Qwen3 4B", "Better context · Slower"),
+        ("qwen2_5_1_5b", "Qwen2.5 1.5B", "Lightweight · Faster on low-end PCs"),
+    )
+    for model_id, title, description in recommended_models:
+        row = QWidget(gui.llama_app_config_panel)
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(8, 4, 4, 4)
+        row_layout.setSpacing(8)
+        text_label = QLabel(f"{title}\n{description}")
+        text_label.setWordWrap(True)
+        status_label = QLabel("Checking...")
+        status_label.setObjectName("helperLabel")
+        download_btn = QPushButton("Download")
+        download_btn.setFixedHeight(26)
+        download_btn.setProperty("llamaModelId", model_id)
+        row_layout.addWidget(text_label, 1)
+        row_layout.addWidget(status_label)
+        row_layout.addWidget(download_btn)
+        llama_layout.addWidget(row)
+        gui.llama_recommended_models[model_id] = {
+            "row": row,
+            "status": status_label,
+            "download": download_btn,
+        }
     
     llama_action_layout = QHBoxLayout()
     llama_action_layout.setSpacing(8)
@@ -623,6 +654,9 @@ def build_start_group(gui, left_layout):
     gui.llama_scan_btn.setFixedHeight(26)
     gui.llama_download_btn = QPushButton("Download Model")
     gui.llama_download_btn.setFixedHeight(26)
+    # Kept for compatibility with older settings/tests. Per-model download
+    # buttons above are now the visible download controls.
+    gui.llama_download_btn.hide()
     
     llama_action_layout.addWidget(gui.llama_scan_btn)
     llama_action_layout.addWidget(gui.llama_download_btn)

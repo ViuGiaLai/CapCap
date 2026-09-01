@@ -62,6 +62,14 @@ class _Widget:
         pass
 
 
+class _LineEdit:
+    def __init__(self, value=""):
+        self.value = value
+
+    def text(self):
+        return self.value
+
+
 class _ProviderHarness(VoiceCatalogMixin):
     def __init__(self):
         self.translation_engine_combo = _Combo("llama_app")
@@ -69,6 +77,14 @@ class _ProviderHarness(VoiceCatalogMixin):
         self.llama_app_config_panel = _Widget()
         self.translation_test_status = _Widget()
         self.llama_model_combo = _Combo("")
+        self.translation_api_key_edit = _LineEdit("")
+        self.translation_model_edit = _LineEdit("")
+        self.translation_base_url_edit = _LineEdit("")
+        self.current_project_state = None
+        self.project_service = None
+
+    def log(self, _message):
+        pass
 
     def _refresh_llama_models_list(self):
         pass
@@ -81,6 +97,16 @@ class _ModelSelectionHarness(VoiceCatalogMixin):
 
 
 class TranslationProviderConfigTests(unittest.TestCase):
+    def test_recommended_model_download_visibility_uses_detected_files(self):
+        availability = VoiceCatalogMixin._llama_recommended_model_availability([
+            "D:/models/HY-MT1.5-1.8B-Q4_K_M.gguf",
+            "D:/models/Qwen3-4B-Q4_K_M.gguf",
+        ])
+
+        self.assertTrue(availability["hy_mt_1_8b"])
+        self.assertTrue(availability["qwen3_4b"])
+        self.assertFalse(availability["qwen2_5_1_5b"])
+
     def test_scanned_model_replaces_old_visible_local_model(self):
         with tempfile.TemporaryDirectory() as root:
             model_dir = Path(root, "managed")
@@ -136,6 +162,44 @@ class TranslationProviderConfigTests(unittest.TestCase):
             else:
                 os.environ["AI_POLISHER_PROVIDER"] = previous_polisher
 
+    def test_gemini_preflight_locks_visible_provider_and_credentials(self):
+        old_values = {
+            key: os.environ.get(key)
+            for key in (
+                "OPENAI_PROVIDER", "AI_POLISHER_PROVIDER", "GOOGLE_AI_STUDIO_API_KEY",
+                "GOOGLE_AI_STUDIO_MODEL", "GOOGLE_AI_STUDIO_BASE_URL",
+            )
+        }
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                Path(root, ".env").write_text(
+                    "OPENAI_PROVIDER=llama_app\nAI_POLISHER_PROVIDER=llama_app\n",
+                    encoding="utf-8",
+                )
+                harness = _ProviderHarness()
+                harness.translation_engine_combo = _Combo("google_ai_studio")
+                harness.translation_api_key_edit = _LineEdit("gemini-test-key")
+                harness.translation_model_edit = _LineEdit("gemini-2.5-flash")
+                harness.translation_base_url_edit = _LineEdit(
+                    "https://generativelanguage.googleapis.com/v1beta/openai/"
+                )
+                with patch("ui.features.voice_catalog.workspace_root", return_value=root):
+                    configured, error = harness.prepare_translation_runtime()
+
+                self.assertTrue(configured, error)
+                self.assertEqual(os.environ["OPENAI_PROVIDER"], "google_ai_studio")
+                content = Path(root, ".env").read_text(encoding="utf-8")
+                self.assertIn("OPENAI_PROVIDER=google_ai_studio", content)
+                self.assertIn("AI_POLISHER_PROVIDER=google_ai_studio", content)
+                self.assertIn("GOOGLE_AI_STUDIO_API_KEY=gemini-test-key", content)
+                self.assertIn("GOOGLE_AI_STUDIO_MODEL=gemini-2.5-flash", content)
+        finally:
+            for key, value in old_values.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def test_hy_mt_uses_native_one_segment_translation_prompt(self):
         os.environ["UNIT_LLAMA_MODEL"] = "HY-MT1.5-1.8B-Q4_K_M.gguf"
         os.environ["UNIT_LLAMA_BASE_URL"] = "http://127.0.0.1:1/v1"
@@ -170,6 +234,68 @@ class TranslationProviderConfigTests(unittest.TestCase):
         self.assertTrue(all("Translate the following segment into Vietnamese" in value for value in prompts))
         self.assertTrue(all("<CUE" not in value for value in prompts))
         self.assertTrue(any("师兄=sư huynh" in value for value in prompts))
+
+    def test_qwen_local_translation_disables_thinking_for_structured_subtitles(self):
+        os.environ["UNIT_QWEN_MODEL"] = "Qwen3-4B-Q4_K_M.gguf"
+        os.environ["UNIT_QWEN_BASE_URL"] = "http://127.0.0.1:1/v1"
+        provider = OpenAICompatiblePolisherProvider(
+            provider_id="llama_app",
+            display_name="Local",
+            env_prefix="UNIT_QWEN",
+            default_base_url="http://127.0.0.1:1/v1",
+        )
+        captured = {}
+
+        def create(**kwargs):
+            captured.update(kwargs)
+            answer = "1. Đạo hữu vừa liên tiếp giao chiến với hai vị Thiên Vương."
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
+
+        provider._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        translated, warnings, used = provider.polish_batch(
+            source_texts=['<CUE id="1">道友刚才连战两位天王</CUE>'],
+            src_lang="zh-Hans",
+            target_lang="vi",
+            max_retries=1,
+        )
+
+        self.assertEqual(translated, ["Đạo hữu vừa liên tiếp giao chiến với hai vị Thiên Vương."])
+        self.assertEqual(warnings, [])
+        self.assertEqual(used, "llama_app")
+        self.assertEqual(
+            captured["extra_body"],
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        )
+
+    def test_local_refinement_strips_echoed_cue_and_draft_scaffolding(self):
+        os.environ["UNIT_CLEAN_MODEL"] = "Qwen3-4B-Q4_K_M.gguf"
+        os.environ["UNIT_CLEAN_BASE_URL"] = "http://127.0.0.1:1/v1"
+        provider = OpenAICompatiblePolisherProvider(
+            provider_id="llama_app",
+            display_name="Local",
+            env_prefix="UNIT_CLEAN",
+            default_base_url="http://127.0.0.1:1/v1",
+        )
+
+        def create(**_kwargs):
+            answer = (
+                '1. <CUE id="1">Đạo hữu vừa giao chiến</CUE> ||| '
+                "Đạo hữu vừa liên tiếp giao chiến với hai vị Thiên Vương."
+            )
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
+
+        provider._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        translated, _warnings, _used = provider.polish_batch(
+            source_texts=['<CUE id="1">道友刚才连战两位天王</CUE>'],
+            translated_texts=["Đạo hữu vừa giao chiến"],
+            src_lang="zh-Hans",
+            target_lang="vi",
+            max_retries=1,
+        )
+        self.assertEqual(
+            translated,
+            ["Đạo hữu vừa liên tiếp giao chiến với hai vị Thiên Vương."],
+        )
 
 
 if __name__ == "__main__":

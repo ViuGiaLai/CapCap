@@ -9,11 +9,62 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from runtime_paths import app_path, models_path, workspace_root
 
 
+LLAMA_RECOMMENDED_MODELS = {
+    "hy_mt_1_8b": {
+        "tokens": ("hy-mt1.5", "1.8b", "q4_k_m"),
+        "url": "https://huggingface.co/tencent/HY-MT1.5-1.8B-GGUF/resolve/main/HY-MT1.5-1.8B-Q4_K_M.gguf?download=true",
+        "filename": "HY-MT1.5-1.8B-Q4_K_M.gguf",
+    },
+    "qwen3_4b": {
+        "tokens": ("qwen3", "4b", "q4_k_m"),
+        "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf?download=true",
+        "filename": "Qwen3-4B-Q4_K_M.gguf",
+    },
+    "qwen2_5_1_5b": {
+        "tokens": ("qwen2.5", "1.5b", "q4_k_m"),
+        "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf?download=true",
+        "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    },
+}
+
+
 def _default_asr_engine() -> str:
     return "sensevoice"
 
 
 class VoiceCatalogMixin:
+    @staticmethod
+    def _llama_model_from_env_file() -> str:
+        env_path = os.path.join(workspace_root(), ".env")
+        try:
+            with open(env_path, "r", encoding="utf-8") as handle:
+                matches = [
+                    line.split("=", 1)[1].strip()
+                    for line in handle
+                    if line.startswith("LLAMA_APP_MODEL=") and "=" in line
+                ]
+            return matches[-1] if matches else ""
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _llama_recommended_model_availability(model_paths) -> dict:
+        names = [
+            os.path.basename(str(path or "")).casefold()
+            for path in list(model_paths or [])
+            if str(path or "").strip()
+        ]
+        availability = {}
+        for model_id, definition in LLAMA_RECOMMENDED_MODELS.items():
+            tokens = tuple(
+                str(token).casefold() for token in definition.get("tokens", ())
+            )
+            availability[model_id] = any(
+                tokens and all(token in name for token in tokens)
+                for name in names
+            )
+        return availability
+
     def setup_audio_preview_player(self):
         if getattr(self, "_preview_audio_signals_bound", False):
             return
@@ -503,6 +554,18 @@ class VoiceCatalogMixin:
         os.environ["AI_POLISHER_PROVIDER"] = provider
         if hasattr(self, "settings"):
             self.settings.setValue("translation_engine", provider)
+        # Provider choice belongs to the open project. Persist it immediately
+        # so a later project-context refresh cannot restore an older llama.cpp
+        # selection after the user has visibly chosen Gemini/DeepSeek/etc.
+        state = getattr(self, "current_project_state", None)
+        project_service = getattr(self, "project_service", None)
+        if state is not None and str(state.settings.get("translation_engine", "") or "") != provider:
+            state.set_setting("translation_engine", provider)
+            if project_service is not None:
+                try:
+                    project_service.save_project(state)
+                except OSError:
+                    pass
 
         PRESETS = {
             "google_ai_studio": {
@@ -561,7 +624,7 @@ class VoiceCatalogMixin:
             link_label.setText(p["link"])
 
     def _save_translation_engine_env(self, provider: str, api_key: str, model: str, base_url: str):
-        """Persist the selected provider to .env (provider only, not credentials yet — saved on Save)."""
+        """Persist the exact provider configuration used by the next worker."""
         env_path = os.path.join(workspace_root(), ".env")
         env_lines = []
         try:
@@ -571,6 +634,22 @@ class VoiceCatalogMixin:
         except Exception:
             pass
         updates = {"OPENAI_PROVIDER": provider, "AI_POLISHER_PROVIDER": provider}
+        provider_env = {
+            "google_ai_studio": (
+                "GOOGLE_AI_STUDIO_API_KEY", "GOOGLE_AI_STUDIO_MODEL", "GOOGLE_AI_STUDIO_BASE_URL"
+            ),
+            "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL"),
+            "openai": ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"),
+            "ollama": ("", "OLLAMA_MODEL", "OLLAMA_BASE_URL"),
+            "custom": ("CUSTOM_AI_API_KEY", "CUSTOM_AI_MODEL", "CUSTOM_AI_BASE_URL"),
+        }
+        key_env, model_env, url_env = provider_env.get(provider, ("", "", ""))
+        if key_env and str(api_key or "").strip():
+            updates[key_env] = str(api_key).strip()
+        if model_env and str(model or "").strip():
+            updates[model_env] = str(model).strip()
+        if url_env and str(base_url or "").strip():
+            updates[url_env] = str(base_url).strip()
         new_lines = []
         handled = set()
         for line in env_lines:
@@ -586,8 +665,8 @@ class VoiceCatalogMixin:
         try:
             with open(env_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
-            os.environ["OPENAI_PROVIDER"] = provider
-            os.environ["AI_POLISHER_PROVIDER"] = provider
+            for key, value in updates.items():
+                os.environ[key] = value
         except Exception:
             pass
 
@@ -731,15 +810,20 @@ class VoiceCatalogMixin:
         # model again.
         current = str(preferred_model_path or "").strip()
         if not current:
-            current = combo.currentData()
+            current = str(os.getenv("LLAMA_APP_MODEL", "") or "").strip()
+        if not current:
+            current = self._llama_model_from_env_file()
         if not current and hasattr(self, "settings"):
             current = self.settings.value("llama_app_model", "")
-        current = str(current or os.getenv("LLAMA_APP_MODEL", "") or "").strip()
+        if not current:
+            current = combo.currentData()
+        current = str(current or "").strip()
 
         def path_key(value):
             value = str(value or "").strip()
             return os.path.normcase(os.path.abspath(value)) if value else ""
 
+        discovered_paths = []
         signals_were_blocked = combo.blockSignals(True)
         try:
             combo.clear()
@@ -747,7 +831,9 @@ class VoiceCatalogMixin:
             if os.path.exists(manager.models_dir):
                 for file in sorted(os.listdir(manager.models_dir), key=str.lower):
                     if file.lower().endswith(".gguf"):
-                        combo.addItem(f"{file} (Ready)", os.path.join(manager.models_dir, file))
+                        model_path = os.path.join(manager.models_dir, file)
+                        combo.addItem(f"{file} (Ready)", model_path)
+                        discovered_paths.append(model_path)
                         has_models = True
 
             # Also add a model outside CapCap's model directory when it was
@@ -758,7 +844,12 @@ class VoiceCatalogMixin:
             }
             if saved and os.path.isfile(saved) and path_key(saved) not in existing_paths:
                 combo.addItem(f"{os.path.basename(saved)} (Selected)", os.path.abspath(saved))
+                discovered_paths.append(os.path.abspath(saved))
                 has_models = True
+
+            for scanned_path in list(getattr(self, "_llama_scanned_model_paths", []) or []):
+                if os.path.isfile(scanned_path):
+                    discovered_paths.append(os.path.abspath(scanned_path))
 
             if not has_models:
                 combo.addItem("No model found. Please download or scan.", "")
@@ -774,7 +865,19 @@ class VoiceCatalogMixin:
         # Connect buttons if not connected
         dl_btn = getattr(self, "llama_download_btn", None)
         if dl_btn:
-            dl_btn.setVisible(not has_models)
+            dl_btn.setVisible(False)
+
+        recommended_rows = getattr(self, "llama_recommended_models", {}) or {}
+        availability = self._llama_recommended_model_availability(discovered_paths)
+        for model_id, row in recommended_rows.items():
+            installed = bool(availability.get(model_id, False))
+            status = row.get("status")
+            download = row.get("download")
+            if status is not None:
+                status.setText("Ready ✓" if installed else "")
+                status.setVisible(installed)
+            if download is not None:
+                download.setVisible(not installed)
             
         if not getattr(self, "_llama_buttons_connected", False):
             scan_btn = getattr(self, "llama_scan_btn", None)
@@ -783,6 +886,12 @@ class VoiceCatalogMixin:
                 scan_btn.clicked.connect(self._on_llama_scan_clicked)
             if dl_btn:
                 dl_btn.clicked.connect(self._on_llama_download_clicked)
+            for model_id, row in recommended_rows.items():
+                download = row.get("download")
+                if download is not None:
+                    download.clicked.connect(
+                        lambda _checked=False, key=model_id: self._on_llama_download_clicked(key)
+                    )
             if test_btn:
                 test_btn.clicked.connect(self._on_llama_test_clicked)
             
@@ -802,8 +911,42 @@ class VoiceCatalogMixin:
         """Synchronize the visible provider/model before a worker is spawned."""
         combo = getattr(self, "translation_engine_combo", None)
         provider = str(combo.currentData() if combo is not None else "google").strip() or "google"
-        self._save_translation_engine_env(provider, "", "", "")
+        key_edit = getattr(self, "translation_api_key_edit", None)
+        model_edit = getattr(self, "translation_model_edit", None)
+        url_edit = getattr(self, "translation_base_url_edit", None)
+        api_key = str(key_edit.text() if key_edit is not None else "").strip()
+        model = str(model_edit.text() if model_edit is not None else "").strip()
+        base_url = str(url_edit.text() if url_edit is not None else "").strip()
+        self._save_translation_engine_env(provider, api_key, model, base_url)
+
+        state = getattr(self, "current_project_state", None)
+        project_service = getattr(self, "project_service", None)
+        if state is not None:
+            state.set_setting("translation_engine", provider)
+            if project_service is not None:
+                try:
+                    project_service.save_project(state)
+                except OSError:
+                    pass
+
+        remote_key_env = {
+            "google_ai_studio": "GOOGLE_AI_STUDIO_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "custom": "CUSTOM_AI_API_KEY",
+        }
+        required_key_env = remote_key_env.get(provider, "")
+        if required_key_env and not str(os.getenv(required_key_env, "") or "").strip():
+            return False, f"{provider} requires an API key. Enter it and test the connection before Generate."
+
         if provider != "llama_app":
+            try:
+                self.log(
+                    f"[Translation] Provider locked for Generate: {provider} "
+                    f"(model={model or '<default>'})."
+                )
+            except Exception:
+                pass
             return True, ""
         model_combo = getattr(self, "llama_model_combo", None)
         model_path = str(model_combo.currentData() if model_combo is not None else "").strip()
@@ -815,6 +958,13 @@ class VoiceCatalogMixin:
         if not os.path.isfile(manager.exe_path):
             return False, f"llama-server.exe was not found: {manager.exe_path}"
         self._save_llama_model_selection(model_path)
+        try:
+            self.log(
+                f"[Translation] Provider locked for Generate: llama_app "
+                f"(model={os.path.basename(model_path)})."
+            )
+        except Exception:
+            pass
         return True, ""
 
     def _on_llama_scan_clicked(self):
@@ -826,6 +976,11 @@ class VoiceCatalogMixin:
             lbl.repaint()
         
         results = fast_scan_gguf()
+        self._llama_scanned_model_paths = [
+            str(result.get("path", "") or "") for result in results
+            if str(result.get("path", "") or "")
+        ]
+        self._refresh_llama_models_list()
         
         if not results:
             if lbl:
@@ -873,14 +1028,19 @@ class VoiceCatalogMixin:
         
         dlg.exec()
 
-    def _on_llama_download_clicked(self):
+    def _on_llama_download_clicked(self, model_id="qwen2_5_1_5b"):
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
-        # Open huggingface download link
-        QDesktopServices.openUrl(QUrl("https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"))
+        definition = LLAMA_RECOMMENDED_MODELS.get(
+            str(model_id or ""), LLAMA_RECOMMENDED_MODELS["qwen2_5_1_5b"]
+        )
+        QDesktopServices.openUrl(QUrl(str(definition["url"])))
         lbl = getattr(self, "llama_status_label", None)
         if lbl:
-            lbl.setText("Browser opened for download. Once finished, click 'Scan Entire PC' to select it.")
+            lbl.setText(
+                f"Downloading {definition['filename']} in your browser. "
+                "When it finishes, click 'Scan Entire PC' to select it."
+            )
 
     def _on_llama_test_clicked(self):
         import os
