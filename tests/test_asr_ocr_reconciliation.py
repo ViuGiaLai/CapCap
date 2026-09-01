@@ -180,6 +180,125 @@ class AsrOcrReconciliationTests(unittest.TestCase):
         self.assertEqual([item["scan_mode"] for item in requests], ["authoritative", "sequence"])
         self.assertEqual((requests[1]["start"], requests[1]["end"]), (33.446, 36.5))
 
+    def test_normal_length_hardsub_dialogue_is_verified_for_names_and_timing(self):
+        requests = AsrOcrReconciliationService.suspicious_cue_requests([
+            {"start": 45.436, "end": 47.572, "text": "你就是那个韩念川曹仲曾", "speech_detected": True},
+            {"start": 47.612, "end": 49.804, "text": "草中层是你打的", "speech_detected": True},
+        ], source_language="zh")
+
+        self.assertEqual(len(requests), 2)
+        self.assertEqual([item["scan_mode"] for item in requests], ["sequence", "sequence"])
+
+    def test_two_second_cue_uses_dense_sequence_checkpoints(self):
+        pairs = ocr_processor._representative_ocr_pairs(45.436, 47.572, scan_mode="sequence")
+        self.assertGreaterEqual(len(pairs), 4)
+        centers = [(pair[0] + pair[-1]) * 0.5 for pair in pairs]
+        self.assertLessEqual(max(b - a for a, b in zip(centers, centers[1:])), 0.56)
+
+    def test_exact_stable_ocr_aligns_early_asr_timing(self):
+        asr = [{
+            "start": 199.704,
+            "end": 203.755,
+            "text": "韩念川是吧",
+            "speech_detected": True,
+            "tts_group_start": 199.704,
+            "tts_group_end": 203.755,
+            "_audio_end": 201.2,
+        }]
+        ocr = [{
+            "start": 199.704,
+            "end": 202.229,
+            "text": "金面金",
+            "ocr_consensus_frames": 2,
+            "ocr_scan_mode": "sequence",
+        }, {
+            "start": 202.229,
+            "end": 203.207,
+            "text": "韩念川是吧",
+            "ocr_consensus_frames": 2,
+            "ocr_scan_mode": "sequence",
+        }]
+
+        repaired, count = AsrOcrReconciliationService.reconcile(
+            asr, ocr, source_language="zh"
+        )
+
+        self.assertEqual(count, 1)
+        self.assertAlmostEqual(repaired[0]["start"], 202.229)
+        self.assertAlmostEqual(repaired[0]["end"], 203.207)
+        self.assertEqual(repaired[0]["text_source"], "ocr_timing_aligned")
+        self.assertAlmostEqual(repaired[0]["asr_start_original"], 199.704)
+        self.assertAlmostEqual(repaired[0]["tts_group_start"], 202.229)
+        self.assertAlmostEqual(repaired[0]["tts_group_end"], 203.207)
+        self.assertNotIn("_audio_end", repaired[0])
+
+    def test_reconciliation_merges_flicker_duplicate_and_embedded_fragment(self):
+        source = [
+            {"start": 54.520, "end": 55.384, "text": "打了我的人还敢主动接我带队的任务"},
+            {"start": 56.408, "end": 57.786, "text": "打了我的人还敢主动接我带队的任务"},
+            {"start": 209.032, "end": 209.165, "text": "二人不成"},
+            {"start": 209.165, "end": 212.344, "text": "你以为你还能斗得过我们父子二人不成"},
+        ]
+
+        normalized, changes = AsrOcrReconciliationService._normalize_reconciled_timeline(source)
+
+        self.assertEqual(changes, 2)
+        self.assertEqual(len(normalized), 2)
+        self.assertEqual(normalized[0]["start"], 54.520)
+        self.assertEqual(normalized[0]["end"], 57.786)
+        self.assertEqual(normalized[1]["start"], 209.032)
+        self.assertEqual(normalized[1]["text"], "你以为你还能斗得过我们父子二人不成")
+
+    def test_reconciliation_merges_consecutive_ocr_spelling_variants(self):
+        normalized, changes = AsrOcrReconciliationService._normalize_reconciled_timeline([
+            {
+                "start": 110.717,
+                "end": 112.109,
+                "text": "以极度暴力的手段暴虐悬镜使",
+                "text_source": "ocr_reconciled_split",
+            },
+            {
+                "start": 112.109,
+                "end": 112.995,
+                "text": "以概度最力的手段學信悬機使",
+                "text_source": "ocr_reconciled_split",
+            },
+        ])
+
+        self.assertEqual(changes, 1)
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["text"], "以极度暴力的手段暴虐悬镜使")
+        self.assertEqual(normalized[0]["end"], 112.995)
+
+    def test_reconciled_timeline_has_no_overlapping_cues(self):
+        normalized, changes = AsrOcrReconciliationService._normalize_reconciled_timeline([
+            {"start": 154.492, "end": 156.492, "text": "在下赤炼刀宗宗主段赤炎"},
+            {"start": 155.704, "end": 157.842, "text": "这位是犬子段炼"},
+        ])
+
+        self.assertEqual(changes, 1)
+        self.assertEqual(normalized[0]["end"], normalized[1]["start"])
+
+    def test_fuzzy_sequence_correction_uses_confirmed_ocr_timing(self):
+        repaired, count = AsrOcrReconciliationService.reconcile(
+            [{
+                "start": 198.947,
+                "end": 202.414,
+                "text": "神兵韩念穿是吧你不",
+                "speech_detected": True,
+            }],
+            [
+                {"start": 200.130, "end": 201.304, "text": "金面金", "ocr_consensus_frames": 2, "ocr_scan_mode": "sequence"},
+                {"start": 201.987, "end": 202.414, "text": "韩念川是吧", "ocr_consensus_frames": 2, "ocr_scan_mode": "sequence"},
+            ],
+            source_language="zh",
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(repaired[0]["text"], "韩念川是吧")
+        self.assertAlmostEqual(repaired[0]["start"], 201.987)
+        self.assertAlmostEqual(repaired[0]["end"], 202.414)
+
     def test_repairs_short_add_drop_and_homophone_examples(self):
         asr = [
             {"start": 4.752, "end": 5.866, "text": "内 曹兄", "speech_detected": True},
@@ -357,6 +476,49 @@ class AsrOcrReconciliationTests(unittest.TestCase):
         self.assertEqual(result[0]["start"], 10.0)
         self.assertEqual(result[-1]["end"], 15.0)
 
+    def test_sequence_ocr_does_not_backdate_text_over_blank_checkpoints(self):
+        class FakeCapture:
+            def __init__(self):
+                self.position = 0
+
+            def get(self, prop):
+                return 30.0
+
+            def set(self, prop, value):
+                self.position = int(value)
+                return True
+
+            def read(self):
+                return True, np.full((80, 160, 3), self.position, dtype=np.int32)
+
+            def release(self):
+                pass
+
+        capture = FakeCapture()
+
+        def fake_ocr(_engine, frame):
+            frame_index = int(frame[0, 0, 0])
+            return ["韩念川是吧"] if 60 <= frame_index < 105 else []
+
+        with (
+            patch.object(ocr_processor, "_open_video", return_value=capture),
+            patch.object(ocr_processor, "_load_ocr_engine", return_value=object()),
+            patch.object(ocr_processor, "crop_subtitle_region", side_effect=lambda frame, region: frame),
+            patch.object(ocr_processor, "_is_blank_region", return_value=False),
+            patch.object(ocr_processor, "ocr_frame", side_effect=fake_ocr),
+        ):
+            result = ocr_processor.transcribe_video_ocr_ranges(
+                "movie.mp4",
+                [(0.0, 4.0)],
+                expected_texts=["韩念川是吧"],
+                scan_modes=["sequence"],
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["text"], "韩念川是吧")
+        self.assertGreater(result[0]["start"], 1.0)
+        self.assertLess(result[0]["end"], 4.0)
+
 
 class SenseVoiceBoundaryTests(unittest.TestCase):
     def test_vad_boundaries_are_merged_and_padded(self):
@@ -369,8 +531,14 @@ class SenseVoiceBoundaryTests(unittest.TestCase):
             4.0,
         )
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], {"start": 0.78, "end": 1.98})
-        self.assertEqual(result[1], {"start": 2.78, "end": 3.38})
+        self.assertEqual(result[0], {
+            "start": 0.78, "end": 1.98,
+            "speech_start": 1.0, "speech_end": 1.8,
+        })
+        self.assertEqual(result[1], {
+            "start": 2.78, "end": 3.38,
+            "speech_start": 3.0, "speech_end": 3.2,
+        })
 
     def test_vietnamese_is_not_forced_through_chinese_decoder(self):
         self.assertEqual(_lang_code("vi"), "auto")

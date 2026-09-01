@@ -354,6 +354,11 @@ def _subtitle_lines_from_result(result, image_shape) -> list[str]:
         score += max(0.0, 1.0 - norm_x_offset * 2.0)
         # Length bonus (complete dialogue line vs tiny noise)
         key_len = len(_ocr_consensus_key(cleaned))
+        normalized_center_x = center_x / max(1.0, float(width))
+        if key_len <= 1 and not 0.20 <= normalized_center_x <= 0.80:
+            # A lone glyph in a far corner is almost always a watermark/title
+            # marker, not the horizontally centred dialogue subtitle.
+            continue
         score += min(5.0, float(key_len)) * 0.5
 
         candidates.append((score, top, left, index, cleaned))
@@ -557,10 +562,10 @@ def _representative_ocr_pairs(
     """
     start = max(0.0, float(start_seconds or 0.0))
     end = max(start, float(end_seconds or start))
-    if scan_mode != "sequence" or end - start < 2.2:
+    if scan_mode != "sequence" or end - start < 1.0:
         return [_representative_ocr_times(start, end)]
     duration = end - start
-    max_checkpoint_gap = 0.70
+    max_checkpoint_gap = 0.55
     checkpoint_count = max(4, int(np.ceil(duration / max_checkpoint_gap)) + 1)
     # VAD/SenseVoice cues are normally capped at five seconds. Keep a hard
     # ceiling for malformed input so one cue cannot monopolize CPU OCR.
@@ -740,6 +745,7 @@ def transcribe_video_ocr_ranges(
                 # merge detection accurate without blindly running 8 OCR calls
                 # for every long cue.
                 first_pass = []
+                checkpoint_times = [positions[0] for positions in position_groups]
                 for positions in position_groups:
                     value = _sanitize_ocr_line(_read_position(positions[0]))
                     key = _ocr_consensus_key(value)
@@ -794,12 +800,34 @@ def transcribe_video_ocr_ranges(
                     compact_groups.append([positions[0], positions[-1], key, consensus])
             if compact_groups:
                 centers = [(group[0] + group[1]) * 0.5 for group in compact_groups]
-                boundaries = [start]
+                outer_start = start
+                outer_end = end
+                if scan_mode == "sequence":
+                    # Blank checkpoints are useful timing evidence too. If a
+                    # subtitle first appears well after the VAD window opens,
+                    # do not assign it to the entire speech window. Bound the
+                    # state transition halfway between the last blank sample
+                    # and the first confirmed text sample (and likewise at
+                    # the end). This is what keeps visible subtitles aligned
+                    # when ASR starts on music, breath, or preceding dialogue.
+                    previous_checkpoints = [
+                        value for value in checkpoint_times
+                        if value < compact_groups[0][0] - 0.01
+                    ]
+                    following_checkpoints = [
+                        value for value in checkpoint_times
+                        if value > compact_groups[-1][1] + 0.01
+                    ]
+                    if previous_checkpoints:
+                        outer_start = (previous_checkpoints[-1] + compact_groups[0][0]) * 0.5
+                    if following_checkpoints:
+                        outer_end = (compact_groups[-1][1] + following_checkpoints[0]) * 0.5
+                boundaries = [max(start, outer_start)]
                 boundaries.extend(
                     (centers[i - 1] + centers[i]) * 0.5
                     for i in range(1, len(centers))
                 )
-                boundaries.append(end)
+                boundaries.append(min(end, max(boundaries[-1], outer_end)))
                 for group_index, group in enumerate(compact_groups):
                     results.append({
                         "start": round(boundaries[group_index], 3),

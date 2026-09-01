@@ -93,6 +93,7 @@ class VoiceWorkflow:
     MAX_STUBBORN_SEGMENT_SPEED = 1.10
     TARGET_RATIO_FLOOR = 0.84
     TARGET_RATIO_CEIL = 1.08
+    VOICE_COLLISION_GUARD_SECONDS = 0.04
 
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root
@@ -1143,14 +1144,61 @@ class VoiceWorkflow:
             synced_wavs.append(fitted_path)
         return synced_wavs
 
+    def _enforce_non_overlapping_voice_windows(self, *, segments, wavs, tmp_dir: str):
+        """Guarantee that one generated voice cannot play over the next one.
+
+        Earlier passes retain the natural wording and use only bounded speed
+        changes. This final pass borrows any silence before the next cue, then
+        fades only the unavoidable tail that still crosses that hard deadline.
+        """
+        segment_list = list(segments or [])
+        guarded_wavs = list(wavs or [])
+        capped_count = 0
+        for index in range(min(len(segment_list) - 1, len(guarded_wavs))):
+            seg = segment_list[index]
+            wav_path = guarded_wavs[index]
+            if not wav_path or not os.path.exists(wav_path):
+                continue
+            try:
+                start_s = float(seg.get("start", 0.0) or 0.0)
+                next_start_s = float(segment_list[index + 1].get("start", 0.0) or 0.0)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            available = next_start_s - start_s - self.VOICE_COLLISION_GUARD_SECONDS
+            if available <= 0.05:
+                continue
+            actual = self._probe_wav_duration_seconds(wav_path)
+            if actual <= available + 0.01:
+                continue
+
+            capped_path = os.path.join(tmp_dir, f"seg_{index:04d}_no_overlap.wav")
+            guarded_wavs[index] = self.engine_runtime.cap_wav_to_duration(
+                input_wav_path=wav_path,
+                output_wav_path=capped_path,
+                target_duration_seconds=available,
+                fade_out_seconds=min(0.06, available / 3.0),
+            )
+            capped_count += 1
+            action = str(seg.get("action_taken") or "accept")
+            if "no_overlap_fade" not in action:
+                seg["action_taken"] = f"{action}+no_overlap_fade"
+            metrics = dict(seg.get("_tts_metrics") or {})
+            metrics["collision_source_duration"] = round(actual, 3)
+            metrics["collision_limit_duration"] = round(available, 3)
+            metrics["action_taken"] = seg["action_taken"]
+            seg["_tts_metrics"] = metrics
+
+        if capped_count:
+            print(f"[Voice Timing] Prevented {capped_count} overlapping voice cue(s).")
+        return guarded_wavs
+
     def _extend_segment_ends_to_audio(self, *, segments, wavs, sync_mode: str = "off") -> None:
         """Synchronize subtitle windows with measured TTS duration.
 
         In Smart mode, long speech extends the visual subtitle to its measured
-        end. Speech that is far too short to stretch naturally closes the
-        subtitle shortly after the last spoken sample instead of leaving a
-        long, silent subtitle on screen. ``_audio_end`` is also retained for
-        overlap handling on the timeline.
+        end. Short speech never shortens the source subtitle window: burned-in
+        subtitle/OCR timing remains the visual source of truth, while
+        ``_audio_end`` is retained separately for overlap handling.
         """
         mode_key = (sync_mode or "off").strip().lower()
         segment_list = list(segments or [])
@@ -1189,25 +1237,10 @@ class VoiceWorkflow:
                         seg["action_taken"] = f"{action}+subtitle_sync"
                 continue
 
-            # Normal Smart fitting safely stretches clips down to 0.77 of the
-            # subtitle duration.  Anything still substantially shorter would
-            # sound unnatural if stretched further; align the subtitle end to
-            # the real speech instead. Keep a small reading tail and never run
-            # into the next subtitle.
-            if mode_key == "smart" and audio_end < end_s - 0.12:
-                aligned_end = audio_end + 0.10
-                if visual_ceiling is not None:
-                    aligned_end = min(aligned_end, visual_ceiling)
-                aligned_end = max(start_s + 0.25, min(end_s, aligned_end))
-                if visual_ceiling is not None:
-                    aligned_end = max(start_s, min(aligned_end, visual_ceiling))
-                if aligned_end < end_s - 0.02:
-                    if "_original_end" not in seg:
-                        seg["_original_end"] = end_s
-                    seg["end"] = aligned_end
-                    action = str(seg.get("action_taken") or "accept")
-                    if "subtitle_sync" not in action:
-                        seg["action_taken"] = f"{action}+subtitle_sync"
+            # Do not collapse the visual cue to the shorter TTS file. Doing so
+            # moves/removes translated subtitles while the matching source
+            # subtitle is still visible. Audio timing and visual timing are
+            # deliberately stored independently.
 
     def _synthesize_segment_wavs(
         self,
@@ -1489,6 +1522,11 @@ class VoiceWorkflow:
             wavs=wavs,
             tmp_dir=tmp_dir,
             sync_mode=timing_sync_mode,
+        )
+        wavs = self._enforce_non_overlapping_voice_windows(
+            segments=segments,
+            wavs=wavs,
+            tmp_dir=tmp_dir,
         )
         self._extend_segment_ends_to_audio(
             segments=segments,

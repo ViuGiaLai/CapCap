@@ -35,13 +35,16 @@ TRACK_ICONS: dict[str, str] = {
     "M1": "\u25a0",
 }
 
-AUDIO_PREFIXES = {"A1", "A2"}
 BLUR_PREFIXES = {"B1"}
 LOGO_PREFIXES = {"L1"}
 MASK_PREFIXES = {"M1"}
 TEXT_PREFIXES = {"T1"}
 SUBTITLE_PREFIXES = {"TS1", "S1"}
-MUTE_PREFIXES = {"A1", "A2", "TS1"}
+# Subtitle visibility and dubbed-audio playback are independent controls.
+# TS1 used to be included here because a DubSubtitleLayer stores both text
+# and TTS metadata.  That made a click in the subtitle header mutate the dub
+# audio state, even when the user only wanted to inspect/show subtitles.
+MUTE_PREFIXES = {"A1", "A2"}
 
 
 class TrackLabelBar(QFrame):
@@ -256,39 +259,38 @@ class TrackLabelBar(QFrame):
                 return
 
     def mousePressEvent(self, event: QMouseEvent):
-        # Track labels select/focus only. Visibility/mute and lock changes
-        # are handled by the two dedicated icon cells on the right.
+        # Track labels select/focus only.  The final two 24 px cells are
+        # explicit, non-overlapping controls:
+        #   audio track    -> mute | lock
+        #   subtitle/layer -> show | lock
+        # In particular TS1 never changes dubbed-audio playback here.
         if event.button() == Qt.LeftButton:
             idx = self._track_index_at(event.position().y())
             if 0 <= idx < len(self._track_names):
                 name = self._track_names[idx]
                 prefix = name.split(" ")[0] if name else ""
                 x = event.position().x()
-                if x >= self.TRACK_HEADER_W - 72 and not self._controls_enabled:
+                controls_start = self.TRACK_HEADER_W - 48
+                lock_start = self.TRACK_HEADER_W - 24
+                if x >= controls_start and not self._controls_enabled:
                     event.accept()
                     return
-                if x < self.TRACK_HEADER_W - 72:
+                if x < controls_start:
                     self.trackSelected.emit(name)
                     event.accept()
                     return
-                mute_boundary = self.TRACK_HEADER_W - (32 if prefix in AUDIO_PREFIXES else 48)
-                if x < mute_boundary:
+                if x < lock_start:
                     if prefix in MUTE_PREFIXES:
                         new_muted = not self._track_muted[idx]
                         self._track_muted[idx] = new_muted
                         self.update()
                         self.muteToggled.emit(name, new_muted)
-                    event.accept()
-                    return
-                if x < self.TRACK_HEADER_W - 24:
-                    if prefix in SUBTITLE_PREFIXES:
+                    elif prefix in SUBTITLE_PREFIXES:
                         new_state = not self._track_subtitle_shown[idx]
                         self._track_subtitle_shown[idx] = new_state
                         self.update()
                         self.subtitleToggled.emit(name, new_state)
-                        event.accept()
-                        return
-                    if prefix in BLUR_PREFIXES:
+                    elif prefix in BLUR_PREFIXES:
                         new_state = not self._track_blur_on[idx]
                         self._track_blur_on[idx] = new_state
                         self.update()
@@ -310,55 +312,12 @@ class TrackLabelBar(QFrame):
                         self.textToggled.emit(name, new_state)
                     event.accept()
                     return
-                if event.position().x() >= self.TRACK_HEADER_W - 24:
+                if x >= lock_start:
                     new_locked = not bool(self._track_locked[idx] if idx < len(self._track_locked) else False)
                     if idx < len(self._track_locked):
                         self._track_locked[idx] = new_locked
                     self.update()
                     self.lockToggled.emit(name, new_locked)
-                    event.accept()
-                    return
-                if prefix in MUTE_PREFIXES:
-                    new_muted = not self._track_muted[idx]
-                    self._track_muted[idx] = new_muted
-                    self.update()
-                    self.muteToggled.emit(name, new_muted)
-                    event.accept()
-                    return
-                if prefix in BLUR_PREFIXES:
-                    new_state = not (
-                        self._track_blur_on[idx]
-                        if idx < len(self._track_blur_on)
-                        else False
-                    )
-                    if idx < len(self._track_blur_on):
-                        self._track_blur_on[idx] = new_state
-                    self.update()
-                    self.blurToggled.emit(name, new_state)
-                    event.accept()
-                    return
-                if prefix in LOGO_PREFIXES:
-                    new_state = not (
-                        self._track_logo_shown[idx]
-                        if idx < len(self._track_logo_shown)
-                        else False
-                    )
-                    if idx < len(self._track_logo_shown):
-                        self._track_logo_shown[idx] = new_state
-                    self.update()
-                    self.logoToggled.emit(name, new_state)
-                    event.accept()
-                    return
-                if prefix in MASK_PREFIXES:
-                    new_state = not (
-                        self._track_mask_shown[idx]
-                        if idx < len(self._track_mask_shown)
-                        else False
-                    )
-                    if idx < len(self._track_mask_shown):
-                        self._track_mask_shown[idx] = new_state
-                    self.update()
-                    self.maskToggled.emit(name, new_state)
                     event.accept()
                     return
         super().mousePressEvent(event)
@@ -372,37 +331,37 @@ class TrackLabelBar(QFrame):
             prefix = self._track_names[idx].split(" ")[0] if self._track_names[idx] else ""
             is_clickable = bool(prefix)
         x = event.position().x()
-        if is_clickable and x >= self.TRACK_HEADER_W - 72 and not self._controls_enabled:
+        controls_start = self.TRACK_HEADER_W - 48
+        lock_start = self.TRACK_HEADER_W - 24
+        if is_clickable and x >= controls_start and not self._controls_enabled:
             self.setToolTip("Pause playback to edit layer controls")
             self.setCursor(Qt.ForbiddenCursor)
             return
-        if is_clickable and x >= self.TRACK_HEADER_W - 24:
+        if is_clickable and x >= lock_start:
             self.setToolTip("Unlock layer" if self._track_locked[idx] else "Lock layer")
-        elif is_clickable and x >= self.TRACK_HEADER_W - 48 and prefix in SUBTITLE_PREFIXES:
-            self.setToolTip("Hide subtitle track" if self._track_subtitle_shown[idx] else "Show subtitle track")
-        elif is_clickable and x >= self.TRACK_HEADER_W - 48 and (prefix in BLUR_PREFIXES or prefix in LOGO_PREFIXES or prefix in MASK_PREFIXES or prefix in TEXT_PREFIXES):
-            hidden = False
-            if prefix in BLUR_PREFIXES:
-                hidden = not self._track_blur_on[idx]
-            elif prefix in LOGO_PREFIXES:
-                hidden = not self._track_logo_shown[idx]
-            elif prefix in MASK_PREFIXES:
-                hidden = not self._track_mask_shown[idx]
-            elif prefix in TEXT_PREFIXES:
-                hidden = not self._track_text_shown[idx]
-            self.setToolTip("Show layer" if hidden else "Hide layer")
-        elif is_clickable and x >= self.TRACK_HEADER_W - 72 and prefix in MUTE_PREFIXES:
-            self.setToolTip("Unmute track" if self._track_muted[idx] else "Mute track")
             self.setCursor(Qt.PointingHandCursor)
             return
-        if is_clickable and x >= self.TRACK_HEADER_W - 72:
-            self.setToolTip("")
+        if is_clickable and x >= controls_start:
+            if prefix in SUBTITLE_PREFIXES:
+                self.setToolTip("Hide subtitle track" if self._track_subtitle_shown[idx] else "Show subtitle track")
+            elif prefix in BLUR_PREFIXES or prefix in LOGO_PREFIXES or prefix in MASK_PREFIXES or prefix in TEXT_PREFIXES:
+                hidden = False
+                if prefix in BLUR_PREFIXES:
+                    hidden = not self._track_blur_on[idx]
+                elif prefix in LOGO_PREFIXES:
+                    hidden = not self._track_logo_shown[idx]
+                elif prefix in MASK_PREFIXES:
+                    hidden = not self._track_mask_shown[idx]
+                elif prefix in TEXT_PREFIXES:
+                    hidden = not self._track_text_shown[idx]
+                self.setToolTip("Show layer" if hidden else "Hide layer")
+            elif prefix in MUTE_PREFIXES:
+                self.setToolTip("Unmute track" if self._track_muted[idx] else "Mute track")
+            else:
+                self.setToolTip("")
             self.setCursor(Qt.PointingHandCursor)
             return
-        if is_clickable and event.position().x() >= self.TRACK_HEADER_W - 28:
-            self.setToolTip("Unlock layer" if self._track_locked[idx] else "Lock layer")
-        else:
-            self.setToolTip("")
+        self.setToolTip("")
         self.setCursor(Qt.PointingHandCursor if is_clickable else Qt.ArrowCursor)
 
     def leaveEvent(self, event):
@@ -520,9 +479,9 @@ class TrackLabelBar(QFrame):
         font = QFont("Segoe UI", 9, QFont.DemiBold)
         painter.setFont(font)
         fm = QFontMetrics(font)
-        # Reserve compact cells on every track. Audio uses mute + lock;
-        # subtitles use mute + visibility + lock; overlays use visibility + lock.
-        icon_col_w = 72
+        # Reserve two compact cells: audio uses mute + lock, while subtitle
+        # and visual tracks use visibility + lock.
+        icon_col_w = 48
         text_x = 8
         text_w = self.TRACK_HEADER_W - text_x - icon_col_w - 4
 
@@ -584,15 +543,14 @@ class TrackLabelBar(QFrame):
                 if not self._controls_enabled:
                     icon_color = QColor("#36404d")
                 self._draw_visibility_icon(painter, self.TRACK_HEADER_W - 48, y + 4, h - 8, hidden, icon_color)
-            # Audio/subtitle mute control occupies the left control cell.
+            # Audio mute control occupies the left control cell. Subtitle
+            # tracks deliberately have no mute control: their eye affects
+            # only subtitle rendering, never translated voice playback.
             if prefix in MUTE_PREFIXES:
                 icon_color = QColor("#5a2525") if muted else QColor("#4f5c6e")
                 if not self._controls_enabled:
                     icon_color = QColor("#36404d")
-                # Keep A1's two controls visually grouped. TS1 retains the
-                # left column for mute so its three controls stay ordered.
-                mute_x = self.TRACK_HEADER_W - 60 if prefix in AUDIO_PREFIXES else self.TRACK_HEADER_W - 72
-                self._draw_mute_icon(painter, mute_x, y + 4, h - 8, muted, icon_color)
+                self._draw_mute_icon(painter, self.TRACK_HEADER_W - 48, y + 4, h - 8, muted, icon_color)
 
             # Per-track lock control. It affects only this editable track,
             # never preview visibility or export.

@@ -50,7 +50,7 @@ class AsrOcrReconciliationService:
     the spoken transcript.
     """
 
-    VERSION = "multilingual-fast-adaptive-dialogue-segmentation-v8"
+    VERSION = "multilingual-fast-adaptive-dialogue-segmentation-v13"
     MAX_TIME_SLOP_SECONDS = 0.45
     MAX_OCR_LENGTH = 80
     MAX_SCAN_RANGES = 512
@@ -153,7 +153,17 @@ class AsrOcrReconciliationService:
                 low_confidence = float(segment["confidence"]) < 0.75
             except (TypeError, ValueError):
                 pass
+        # When a video has burned-in source subtitles, a stable two-frame OCR
+        # result is stronger evidence than ASR for names and compact dialogue.
+        # Verify every normally sized spoken cue, not only very short ASR text;
+        # the hardsub precheck still prevents this work on ordinary videos.
+        hardsub_verifiable = (
+            0.20 <= duration <= 12.0
+            and char_count <= cls.MAX_OCR_LENGTH
+        )
         return bool(
+            hardsub_verifiable
+            or
             char_count <= cls.AUTHORITATIVE_SHORT_LENGTH[family]
             or merge_risk
             or low_density
@@ -249,11 +259,10 @@ class AsrOcrReconciliationService:
                 continue
             cue_start = float(segment.get("start", 0.0) or 0.0)
             cue_end = max(cue_start, float(segment.get("end", cue_start) or cue_start))
-            scan_mode = (
-                "sequence"
-                if cue_end - cue_start >= cls.MERGE_RISK_DURATION_SECONDS
-                else "authoritative"
-            )
+            # A two-second VAD cue can already contain two burned-in subtitle
+            # states. Sequence sampling catches that transition instead of
+            # assigning the midpoint text to the whole speech interval.
+            scan_mode = "sequence" if cue_end - cue_start >= 1.35 else "authoritative"
             effective_padding = 0.0 if scan_mode == "sequence" else max(float(padding_seconds), 0.15)
             start = max(0.0, cue_start - effective_padding)
             end = max(start, cue_end + effective_padding)
@@ -318,6 +327,104 @@ class AsrOcrReconciliationService:
         return False
 
     @classmethod
+    def _normalize_reconciled_timeline(cls, segments: list[dict]) -> tuple[list[dict], int]:
+        """Remove OCR flicker duplicates and return one non-overlapping lane."""
+        ordered = sorted(
+            (dict(segment) for segment in segments or []),
+            key=lambda item: (
+                float(item.get("start", 0.0) or 0.0),
+                float(item.get("end", 0.0) or 0.0),
+            ),
+        )
+        normalized: list[dict] = []
+        changes = 0
+        for item in ordered:
+            try:
+                item_start = max(0.0, float(item.get("start", 0.0) or 0.0))
+                item_end = max(item_start, float(item.get("end", item_start) or item_start))
+            except (TypeError, ValueError):
+                continue
+            item["start"], item["end"] = item_start, item_end
+            item_family = cls._detect_family(item.get("text", ""))
+            item_key = cls._normalized(item.get("text", ""), item_family)
+
+            if normalized:
+                previous = normalized[-1]
+                previous_family = cls._detect_family(previous.get("text", ""))
+                previous_key = cls._normalized(previous.get("text", ""), previous_family)
+                gap = item_start - float(previous.get("end", item_start) or item_start)
+                substantial_text = len(item_key.replace(" ", "")) >= 4
+                text_similarity = (
+                    SequenceMatcher(None, previous_key, item_key).ratio()
+                    if previous_key and item_key
+                    else 0.0
+                )
+                both_ocr_states = (
+                    str(previous.get("text_source", "")).startswith("ocr_")
+                    and str(item.get("text_source", "")).startswith("ocr_")
+                )
+                flicker_duplicate = (
+                    item_key == previous_key
+                    or (both_ocr_states and gap <= 0.08 and text_similarity >= 0.55)
+                    or (gap <= 1.75 and text_similarity >= 0.86)
+                )
+
+                # Burned-in subtitles can briefly disappear during a cut or
+                # glow transition, causing the same stable sentence to be
+                # emitted twice. One spoken ASR cue must remain one cue.
+                if (
+                    substantial_text
+                    and item_key
+                    and flicker_duplicate
+                ):
+                    previous["start"] = min(float(previous["start"]), item_start)
+                    previous["end"] = max(float(previous["end"]), item_end)
+                    previous["text_source"] = "ocr_reconciled_deduplicated"
+                    previous["ocr_duplicate_merged"] = int(previous.get("ocr_duplicate_merged", 0) or 0) + 1
+                    previous["words"] = []
+                    previous.pop("_audio_end", None)
+                    if "tts_group_start" in previous:
+                        previous["tts_group_start"] = previous["start"]
+                    if "tts_group_end" in previous:
+                        previous["tts_group_end"] = previous["end"]
+                    changes += 1
+                    continue
+
+                # A very short OCR fragment that is already contained in the
+                # following complete cue is a transition sample, not another
+                # line of dialogue (for example ``二人不成`` immediately before
+                # the full sentence ending in those same characters).
+                duration = item_end - item_start
+                previous_duration = float(previous["end"]) - float(previous["start"])
+                if (
+                    previous_duration < 0.22
+                    and previous_key
+                    and previous_key in item_key
+                ):
+                    item["start"] = min(float(previous["start"]), item_start)
+                    normalized.pop()
+                    changes += 1
+
+            if normalized and float(normalized[-1]["end"]) > float(item["start"]):
+                previous = normalized[-1]
+                boundary = (
+                    float(previous["end"]) + float(item["start"])
+                ) * 0.5
+                boundary = max(float(previous["start"]) + 0.02, boundary)
+                boundary = min(float(item["end"]) - 0.02, boundary)
+                previous["end"] = boundary
+                item["start"] = boundary
+                previous.pop("_audio_end", None)
+                item.pop("_audio_end", None)
+                if "tts_group_end" in previous:
+                    previous["tts_group_end"] = boundary
+                if "tts_group_start" in item:
+                    item["tts_group_start"] = boundary
+                changes += 1
+            normalized.append(item)
+        return normalized, changes
+
+    @classmethod
     def reconcile(
         cls,
         asr_segments: list[dict],
@@ -351,11 +458,21 @@ class AsrOcrReconciliationService:
                 ocr_normalized = cls._normalized(ocr_text, family)
                 if not ocr_normalized or len(ocr_normalized.replace(" ", "")) > cls.MAX_OCR_LENGTH:
                     continue
-                stable_source_subtitle = int(ocr.get("ocr_consensus_frames", 0) or 0) >= 2
+                # Full/legacy OCR artifacts predate the consensus metadata and
+                # are already temporally consolidated. Fast verification emits
+                # the field explicitly; one frame there is never sufficient.
+                stable_source_subtitle = (
+                    "ocr_consensus_frames" not in ocr
+                    or int(ocr.get("ocr_consensus_frames", 0) or 0) >= 2
+                )
                 if not stable_source_subtitle:
                     continue
-                safe_legacy_match = cls._is_safe_text_match(
-                    asr_normalized, ocr_normalized, family
+                safe_legacy_match = (
+                    cls._is_safe_text_match(asr_normalized, ocr_normalized, family)
+                    or (
+                        int(ocr.get("ocr_consensus_frames", 0) or 0) >= 2
+                        and cls._is_suspicious(asr_text, family)
+                    )
                 )
                 if not safe_legacy_match:
                     continue
@@ -426,12 +543,23 @@ class AsrOcrReconciliationService:
                     ]
                     asr_start = float(item.get("start", 0.0) or 0.0)
                     asr_end = max(asr_start, float(item.get("end", asr_start) or asr_start))
-                    boundaries = [asr_start]
+                    first_ocr_start = float(sequence_candidates[0].get("start", asr_start) or asr_start)
+                    last_ocr_end = float(sequence_candidates[-1].get("end", asr_end) or asr_end)
+                    boundaries = [max(asr_start, min(asr_end, first_ocr_start))]
                     boundaries.extend(
-                        max(asr_start, min(asr_end, (centers[i - 1] + centers[i]) * 0.5))
+                        max(
+                            boundaries[-1],
+                            min(
+                                asr_end,
+                                (
+                                    float(sequence_candidates[i - 1].get("end", centers[i - 1]) or centers[i - 1])
+                                    + float(sequence_candidates[i].get("start", centers[i]) or centers[i])
+                                ) * 0.5,
+                            ),
+                        )
                         for i in range(1, len(centers))
                     )
-                    boundaries.append(asr_end)
+                    boundaries.append(max(boundaries[-1], min(asr_end, last_ocr_end)))
                     for index, candidate in enumerate(sequence_candidates):
                         if boundaries[index + 1] <= boundaries[index] + 0.02:
                             continue
@@ -448,14 +576,84 @@ class AsrOcrReconciliationService:
                     replacement_count += 1
                     continue
 
-                best = max(candidates, key=lambda candidate: candidate[:4])[-1]
+                # Exact text agreement must outrank raw temporal overlap. A
+                # nearby transition/title fragment can occupy more of the VAD
+                # window than the real subtitle (for example ``金面金`` beside
+                # ``韩念川是吧``); choosing by overlap first corrupts correct
+                # ASR and prevents the useful OCR timing alignment.
+                exact_candidates = [
+                    candidate for candidate in candidates
+                    if cls._normalized(candidate[-1].get("text", ""), family) == asr_normalized
+                ]
+                if exact_candidates:
+                    best = max(exact_candidates, key=lambda candidate: candidate[:4])[-1]
+                else:
+                    best = max(
+                        candidates,
+                        key=lambda candidate: (
+                            SequenceMatcher(
+                                None,
+                                asr_normalized,
+                                cls._normalized(candidate[-1].get("text", ""), family),
+                            ).ratio(),
+                            *candidate[:4],
+                        ),
+                    )[-1]
                 ocr_text = str(best.get("text", "") or "").strip()
-                if cls._normalized(ocr_text, family) != asr_normalized:
+                ocr_normalized = cls._normalized(ocr_text, family)
+
+                # An exact, stable burned-in subtitle is also authoritative
+                # timing evidence. ASR/VAD commonly opens a cue on music or a
+                # breath before the character speaks; keeping those outer VAD
+                # bounds made the translated cue appear seconds before the
+                # hard subtitle. Align only exact text matches, so a fuzzy OCR
+                # correction cannot unexpectedly move dialogue.
+                timing_aligned = False
+                timing_is_authoritative = (
+                    ocr_normalized == asr_normalized
+                    or best.get("ocr_scan_mode") == "sequence"
+                )
+                if timing_is_authoritative:
+                    try:
+                        old_start = float(item.get("start", 0.0) or 0.0)
+                        old_end = max(old_start, float(item.get("end", old_start) or old_start))
+                        ocr_start = max(0.0, float(best.get("start", old_start) or old_start))
+                        ocr_end = max(ocr_start, float(best.get("end", old_end) or old_end))
+                    except (TypeError, ValueError):
+                        ocr_start = ocr_end = old_start = old_end = 0.0
+                    if (
+                        ocr_end - ocr_start >= 0.20
+                        and ocr_start < old_end + cls.MAX_TIME_SLOP_SECONDS
+                        and ocr_end > old_start - cls.MAX_TIME_SLOP_SECONDS
+                        and (
+                            abs(ocr_start - old_start) >= 0.08
+                            or abs(ocr_end - old_end) >= 0.08
+                        )
+                    ):
+                        item.setdefault("asr_start_original", old_start)
+                        item.setdefault("asr_end_original", old_end)
+                        item["start"] = ocr_start
+                        item["end"] = ocr_end
+                        if "tts_group_start" in item:
+                            item["tts_group_start"] = ocr_start
+                        if "tts_group_end" in item:
+                            item["tts_group_end"] = ocr_end
+                        item.pop("_audio_end", None)
+                        item.pop("_original_end", None)
+                        item["ocr_text"] = ocr_text
+                        item["text_source"] = "ocr_timing_aligned"
+                        item["words"] = []
+                        replacement_count += 1
+                        timing_aligned = True
+
+                if ocr_normalized != asr_normalized:
                     item["asr_text_original"] = asr_text
                     item["ocr_text"] = ocr_text
                     item["text_source"] = "ocr_reconciled"
                     item["text"] = ocr_text
-                    replacement_count += 1
+                    if not timing_aligned:
+                        replacement_count += 1
             repaired.append(item)
 
-        return repaired, replacement_count
+        repaired, timeline_changes = cls._normalize_reconciled_timeline(repaired)
+        return repaired, replacement_count + timeline_changes

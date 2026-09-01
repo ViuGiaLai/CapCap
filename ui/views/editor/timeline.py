@@ -1887,13 +1887,14 @@ class EditorTimeline(QGraphicsView):
                         "start_time": float(layer.start),
                         "end_time": float(effective_end),
                         "layer_start_x": float(self.CONTENT_LEFT_PAD + int(layer.start * self.pixels_per_second) - scroll_x),
+                        "changed": False,
+                        "edit_started": False,
                     }
                     self._selected_layer_id = lid
                     self.layerSelected.emit(lid)
                     idx = self.segment_index_for_layer_id(lid)
                     if idx >= 0:
                         self._manual_subtitle_selection = True
-                        self.segmentTimingEditStarted.emit(idx, float(layer.start), float(effective_end))
                         self.segmentSelected.emit(idx)
                     self.viewport().update()
                     event.accept()
@@ -1920,9 +1921,6 @@ class EditorTimeline(QGraphicsView):
                 idx = self.segment_index_for_layer_id(lid)
                 if idx >= 0:
                     self._manual_subtitle_selection = True
-                    self.segmentTimingEditStarted.emit(
-                        idx, float(layer.start), float(self._get_effective_layer_end(layer))
-                    )
                     self.segmentSelected.emit(idx)
                 self._drag_state = {
                     "type": "move",
@@ -1932,6 +1930,8 @@ class EditorTimeline(QGraphicsView):
                     "anchor_time": self._pos_to_time(pos.x(), scroll_x),
                     "start_time": float(layer.start),
                     "end_time": float(self._get_effective_layer_end(layer)),
+                    "changed": False,
+                    "edit_started": False,
                 }
                 self.viewport().update()
                 event.accept()
@@ -2051,7 +2051,11 @@ class EditorTimeline(QGraphicsView):
             self.setCursor(Qt.ArrowCursor)
             lid = drag["layer_id"]
             track, layer = self._find_layer_by_id(lid)
-            if layer and str(getattr(track, "id", "") or "") == str(drag.get("track_id", "") or ""):
+            if (
+                drag.get("changed", False)
+                and layer
+                and str(getattr(track, "id", "") or "") == str(drag.get("track_id", "") or "")
+            ):
                 from app.layers.video import VideoLayer
                 if isinstance(layer, VideoLayer) and drag.get("type") == "resize_left":
                     source_delta = (float(layer.start) - float(drag["start_time"])) * max(0.01, float(layer.speed))
@@ -2088,6 +2092,8 @@ class EditorTimeline(QGraphicsView):
             t = max(0.0, min(t, self._duration))
             track, layer = self._find_layer_by_id(drag["layer_id"])
             if layer and str(getattr(track, "id", "") or "") == str(drag.get("track_id", "") or ""):
+                before_start = float(getattr(layer, "start", 0.0) or 0.0)
+                before_end = float(self._get_effective_layer_end(layer))
                 if drag["type"] == "move":
                     delta = t - float(drag["anchor_time"])
                     original_start = float(drag["start_time"])
@@ -2127,6 +2133,19 @@ class EditorTimeline(QGraphicsView):
                         
                     new_end = max(new_end, drag["start_time"] + self.MIN_DUR)
                     layer.end = new_end
+                after_start = float(getattr(layer, "start", 0.0) or 0.0)
+                after_end = float(self._get_effective_layer_end(layer))
+                if abs(after_start - before_start) > 0.0001 or abs(after_end - before_end) > 0.0001:
+                    if not drag.get("edit_started", False):
+                        idx = self.segment_index_for_layer_id(drag["layer_id"])
+                        if idx >= 0:
+                            self.segmentTimingEditStarted.emit(
+                                idx,
+                                float(drag.get("start_time", before_start)),
+                                float(drag.get("end_time", before_end)),
+                            )
+                        drag["edit_started"] = True
+                    drag["changed"] = True
                 # Timing is being edited in place, so the cached overlap
                 # layout is no longer valid until the next paint.
                 self._overlap_layout_cache.clear()

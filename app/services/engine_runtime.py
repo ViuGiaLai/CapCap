@@ -269,6 +269,21 @@ class EngineRuntime:
             smart_max_ratio=smart_max_ratio,
         )
 
+    def cap_wav_to_duration(
+        self,
+        *,
+        input_wav_path: str,
+        output_wav_path: str,
+        target_duration_seconds: float,
+        fade_out_seconds: float = 0.06,
+    ) -> str:
+        return self.audio_mix.cap_wav_to_duration(
+            input_wav_path=input_wav_path,
+            output_wav_path=output_wav_path,
+            target_duration_seconds=target_duration_seconds,
+            fade_out_seconds=fade_out_seconds,
+        )
+
     def trim_trailing_silence(
         self,
         *,

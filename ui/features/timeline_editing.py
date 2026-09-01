@@ -1224,6 +1224,20 @@ class TimelineEditingMixin:
         self._commit_subtitle_mutation(selected_index=target_selection)
 
     def on_timeline_segment_timing_changed(self, index: int, start: float, end: float):
+        # A selection click used to reach this handler with the cue's existing
+        # timestamps.  Treat an identical update as a no-op so it can never
+        # invalidate an already-generated TTS track, even if another timeline
+        # input path emits a redundant timing signal in the future.
+        timing_targets = []
+        for segments in (self.current_segments or [], self.current_translated_segments or []):
+            if 0 <= index < len(segments):
+                timing_targets.append(segments[index])
+        if timing_targets and all(
+            abs(float(segment.get("start", 0.0) or 0.0) - float(start)) <= 0.0001
+            and abs(float(segment.get("end", 0.0) or 0.0) - float(end)) <= 0.0001
+            for segment in timing_targets
+        ):
+            return
         updated = False
         if 0 <= index < len(self.current_segments or []):
             self._apply_segment_timing(self.current_segments[index], start, end)

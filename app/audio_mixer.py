@@ -215,6 +215,52 @@ def fit_wav_to_duration(
     return output_wav_path
 
 
+def cap_wav_to_duration(
+    *,
+    input_wav_path: str,
+    output_wav_path: str,
+    target_duration_seconds: float,
+    fade_out_seconds: float = 0.06,
+) -> str:
+    """Hard-limit a WAV without changing its speaking rate.
+
+    This is a last-resort collision guard used only after the natural timing
+    and rewrite passes.  A short fade removes the click that a raw sample cut
+    would otherwise create.
+    """
+    if not os.path.exists(input_wav_path):
+        raise FileNotFoundError(f"Input wav not found: {input_wav_path}")
+
+    source_duration = _probe_wav_duration_seconds(input_wav_path)
+    target_duration = max(0.0, float(target_duration_seconds))
+    if source_duration <= 0.0 or target_duration <= 0.0:
+        return input_wav_path
+    if source_duration <= target_duration + 0.01:
+        return input_wav_path
+
+    ffmpeg = _ffmpeg_path()
+    if not os.path.exists(ffmpeg):
+        raise FileNotFoundError(f"FFmpeg not found at {ffmpeg}")
+
+    fade_duration = min(max(0.015, float(fade_out_seconds)), target_duration / 3.0)
+    fade_start = max(0.0, target_duration - fade_duration)
+    filter_chain = (
+        f"afade=t=out:st={fade_start:.6f}:d={fade_duration:.6f},"
+        f"atrim=end={target_duration:.6f},asetpts=N/SR/TB"
+    )
+    os.makedirs(os.path.dirname(output_wav_path) or ".", exist_ok=True)
+    cmd = [
+        ffmpeg, "-y", "-i", input_wav_path,
+        "-filter:a", filter_chain,
+        "-ar", "16000", "-ac", "1",
+        output_wav_path,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, timeout=120, **subprocess_text_kwargs())
+    if proc.returncode != 0:
+        raise RuntimeError(f"FFmpeg duration cap failed:\n{proc.stderr or proc.stdout}")
+    return output_wav_path
+
+
 def change_wav_speed(
     *,
     input_wav_path: str,
@@ -489,6 +535,17 @@ def build_voice_track_from_srt_segments(
                 clip = clip.set_frame_rate(sr).set_channels(1)
                 if gain_db:
                     clip = clip + gain_db
+
+                # Voice clips must never be summed across cue boundaries. The
+                # workflow normally resolves overruns through concise wording
+                # and natural speed adjustment; this mixer-level cap is the
+                # final defence for stale caches and manually edited timings.
+                if idx + 1 < len(segments):
+                    next_start_ms = int(float(_seg_val(segments[idx + 1], "start", 0.0) or 0.0) * 1000)
+                    collision_limit_ms = max(0, next_start_ms - start_ms)
+                    if collision_limit_ms > 0 and len(clip) > collision_limit_ms:
+                        fade_ms = min(60, max(15, collision_limit_ms // 4))
+                        clip = clip[:collision_limit_ms].fade_out(duration=fade_ms)
 
                 if max_len > 0:
                     clip_len = len(clip)

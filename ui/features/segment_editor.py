@@ -1396,6 +1396,11 @@ class SegmentEditorMixin:
         """Handle timeline audio track mute toggling.
         Maps timeline mute to per-track mute on the dual-track player.
         """
+        # TS1 is a subtitle/edit track even though each DubSubtitleLayer may
+        # carry a generated voice path. Subtitle selection/visibility must
+        # never alter the dubbed-audio channel.
+        if track_name not in ("A1 Audio", "A2 Dub"):
+            return
         if not hasattr(self, "timeline") or not self.timeline._timeline:
             return
         for t in self.timeline._timeline.tracks:
@@ -1410,7 +1415,7 @@ class SegmentEditorMixin:
                     self.media_player.set_mute_original(muted)
                 except Exception:
                     pass
-        elif track_name in ("A2 Dub", "TS1"):
+        elif track_name == "A2 Dub":
             self._mute_dubbed = muted
             if hasattr(self, "media_player"):
                 try:
@@ -1561,7 +1566,7 @@ class SegmentEditorMixin:
         for t in self.timeline._timeline.tracks:
             if t.name == "A1 Audio":
                 a1_muted = bool(t.muted)
-            elif t.name in ("A2 Dub", "TS1"):
+            elif t.name == "A2 Dub":
                 a2_muted = bool(t.muted)
         self._mute_original = a1_muted
         self._mute_dubbed = a2_muted
@@ -1576,7 +1581,7 @@ class SegmentEditorMixin:
                 pass
         if hasattr(self, "track_label_bar"):
             self.track_label_bar.set_muted("A1 Audio", a1_muted)
-            self.track_label_bar.set_muted("TS1", a2_muted)
+            self.track_label_bar.set_muted("A2 Dub", a2_muted)
 
     def _is_active_timeline_audio_track_muted(self) -> bool:
         track_mutes = self._timeline_audio_track_mutes()

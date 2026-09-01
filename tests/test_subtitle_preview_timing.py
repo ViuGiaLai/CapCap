@@ -1,12 +1,16 @@
 import os
 import sys
+import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path[:0] = [os.path.join(ROOT, "ui"), os.path.join(ROOT, "app"), ROOT]
 
 from features.voice_subtitle_preview import VoiceSubtitlePreviewMixin
+import preview_processor
 
 
 class _SubtitleItem:
@@ -60,6 +64,35 @@ class _PreviewHarness(VoiceSubtitlePreviewMixin):
 
 
 class SubtitlePreviewTimingTests(unittest.TestCase):
+    def test_exact_frame_renderer_preserves_absolute_ass_timestamps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            video = os.path.join(folder, "video.mp4")
+            srt = os.path.join(folder, "subtitle.srt")
+            ass = os.path.join(folder, "subtitle.ass")
+            output = os.path.join(folder, "frame.png")
+            for path in (video, srt, ass):
+                with open(path, "wb") as handle:
+                    handle.write(b"test")
+
+            with (
+                patch.object(preview_processor, "_ffmpeg_path", return_value=video),
+                patch("video_processor.get_video_dimensions", return_value=(1024, 576)),
+                patch("video_processor.srt_to_ass", return_value=ass),
+                patch.object(
+                    preview_processor.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=0, stderr="", stdout=""),
+                ) as run,
+            ):
+                preview_processor.render_subtitle_frame_preview(
+                    video, srt, output, 202.1
+                )
+
+            command = run.call_args.args[0]
+            self.assertIn("-copyts", command)
+            self.assertLess(command.index("-copyts"), command.index("-ss"))
+            self.assertLess(command.index("-ss"), command.index("-i"))
+
     def test_paused_preview_hides_selected_future_subtitle(self):
         harness = _PreviewHarness(0)
         harness._show_subtitle_drag_layer([

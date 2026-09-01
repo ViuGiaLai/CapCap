@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,14 @@ class _FallbackTranslator:
         return ["Đừng tưởng rằng chúng ta sợ ngươi."] * len(texts)
 
 
+class _FailingConfiguredPolisher:
+    def is_configured(self):
+        return True
+
+    def polish_batch(self, **_kwargs):
+        raise RuntimeError("provider quota exhausted")
+
+
 class _SemanticReviewPolisher:
     model_name = "Qwen3-4B-Q4_K_M.gguf"
 
@@ -49,6 +58,23 @@ class _SemanticReviewPolisher:
 
 
 class TranslationQualityTests(unittest.TestCase):
+    def test_selected_ai_provider_failure_never_silently_uses_google_web(self):
+        orchestrator = TranslationOrchestrator()
+        orchestrator.google_web = _FallbackTranslator()
+        with patch.object(
+            orchestrator,
+            "_resolve_ai_provider",
+            return_value=("google_ai_studio", _FailingConfiguredPolisher()),
+        ):
+            with self.assertRaises(Exception) as raised:
+                orchestrator.translate_segments(
+                    segments=[{"start": 0.0, "end": 2.0, "text": "你是谁"}],
+                    src_lang="zh-Hans",
+                    target_lang="vi",
+                    enable_polish=True,
+                )
+
+        self.assertIn("provider quota exhausted", str(raised.exception))
     def test_ai_source_contains_timing_metadata_but_keeps_one_line(self):
         value = TranslationOrchestrator._build_timed_ai_source(
             {"start": 2.5, "end": 4.75, "text": "原来他\n一直在骗我"},
@@ -277,6 +303,30 @@ class TranslationQualityTests(unittest.TestCase):
         self.assertIsNotNone(polisher.calls[0][1])
         self.assertIn("speaker versus addressee", polisher.calls[0][2])
         self.assertIn("五体投地", polisher.calls[0][2])
+
+    def test_single_line_split_does_not_repeat_unsplit_model_text(self):
+        orchestrator = TranslationOrchestrator()
+        full_text = "Đánh người của ta mà còn dám chủ động nhận nhiệm vụ do ta dẫn đội?"
+        split = orchestrator._split_segments_for_single_line(
+            [{
+                "id": 17,
+                "start": 54.520,
+                "end": 57.785,
+                "text": full_text,
+                "final_text": full_text,
+                "raw_translation": full_text,
+                "tts_text": full_text,
+            }],
+            words_per_segment=5,
+        )
+
+        self.assertGreater(len(split), 1)
+        self.assertEqual(" ".join(item["text"] for item in split), full_text)
+        self.assertTrue(all(item["final_text"] == item["text"] for item in split))
+        self.assertTrue(all(item["raw_translation"] == item["text"] for item in split))
+        # Voice remains one complete grouped utterance; only the visible cue is split.
+        self.assertTrue(all(item["tts_text"] == full_text for item in split))
+        self.assertFalse(any(item["text"] == full_text for item in split))
 
 
 if __name__ == "__main__":

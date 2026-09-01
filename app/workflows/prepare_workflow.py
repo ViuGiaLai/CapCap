@@ -99,7 +99,7 @@ class PrepareWorkflow:
                 identity = [0, 0]
             sources.append([absolute, identity])
         payload = {
-            "version": "speech-gated-fast-adaptive-subtitle-sequence-v5",
+            "version": "speech-gated-fast-adaptive-subtitle-sequence-v6",
             "sources": sources,
             "timeline": PrepareWorkflow._timeline_signature(timeline_clips),
             "region": str(region or "bottom").strip().lower(),

@@ -66,7 +66,12 @@ def _pad_and_merge_vad_segments(
     start_padding: float = 0.22,
     end_padding: float = 0.18,
 ) -> list[dict]:
-    """Keep short word onsets from being clipped by hard VAD boundaries."""
+    """Keep decode padding separate from the real speech timeline.
+
+    ``start``/``end`` remain the padded decode window so recognition does not
+    clip consonants. ``speech_start``/``speech_end`` are the unpadded VAD
+    bounds and must be used for subtitle timestamps.
+    """
     ordered = []
     for segment in segments or []:
         start = max(0.0, float(segment.get("start", 0.0) or 0.0))
@@ -90,7 +95,12 @@ def _pad_and_merge_vad_segments(
             padded[-1]["end"] = min(padded[-1]["end"], boundary)
             padded_start = max(padded_start, boundary)
         if padded_end > padded_start:
-            padded.append({"start": round(padded_start, 3), "end": round(padded_end, 3)})
+            padded.append({
+                "start": round(padded_start, 3),
+                "end": round(padded_end, 3),
+                "speech_start": round(start, 3),
+                "speech_end": round(end, 3),
+            })
     return padded
 
 
@@ -179,8 +189,8 @@ def transcribe_audio(audio_path: str, model_dir: str, *, language: str = "auto")
         text = stream.result.text.strip()
         if text:
             results.append({
-                "start": round(seg["start"], 3),
-                "end": round(seg["end"], 3),
+                "start": round(float(seg.get("speech_start", seg["start"])), 3),
+                "end": round(float(seg.get("speech_end", seg["end"])), 3),
                 "text": text,
                 "speech_detected": True,
                 "speech_gate": "silero_vad",
@@ -230,8 +240,8 @@ def transcribe_presegmented_audio_batch(
                 continue
             work_items.append({
                 "file_index": file_index,
-                "start": round(start_sample / 16000.0, 3),
-                "end": round(end_sample / 16000.0, 3),
+                "start": round(float(segment.get("speech_start", start_sample / 16000.0)), 3),
+                "end": round(float(segment.get("speech_end", end_sample / 16000.0)), 3),
                 "audio": audio[start_sample:end_sample],
             })
             last_work_index_by_file[file_index] = len(work_items) - 1

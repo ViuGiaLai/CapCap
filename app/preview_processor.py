@@ -463,6 +463,11 @@ def render_subtitle_frame_preview(
         "-loglevel",
         "error",
         "-y",
+        # Keep the source timeline when seeking. Without ``-copyts`` FFmpeg
+        # resets the decoded frame to t=0 while the ASS events retain their
+        # absolute project timestamps, so an exact-frame preview around 03:22
+        # silently renders no translated subtitle even though the cue exists.
+        "-copyts",
         "-ss",
         str(max(0.0, float(timestamp_seconds))),
         "-i",

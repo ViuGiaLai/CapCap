@@ -634,7 +634,7 @@ class RuntimeMediaMixin:
         for track in self.timeline._timeline.tracks:
             if track.name == "A1 Audio":
                 a1_muted = bool(track.muted)
-            elif track.name in ("A2 Dub", "TS1"):
+            elif track.name == "A2 Dub":
                 a2_muted = bool(track.muted)
         if a1_muted is None and a2_muted is None:
             return None

@@ -1,7 +1,22 @@
-from audio_mixer import build_voice_track_from_srt_segments, change_wav_speed, fit_wav_to_duration, mix_voice_with_background, mix_original_with_dub, trim_trailing_silence
+from audio_mixer import build_voice_track_from_srt_segments, cap_wav_to_duration, change_wav_speed, fit_wav_to_duration, mix_voice_with_background, mix_original_with_dub, trim_trailing_silence
 
 
 class AudioMixAdapter:
+    def cap_wav_to_duration(
+        self,
+        *,
+        input_wav_path: str,
+        output_wav_path: str,
+        target_duration_seconds: float,
+        fade_out_seconds: float = 0.06,
+    ) -> str:
+        return cap_wav_to_duration(
+            input_wav_path=input_wav_path,
+            output_wav_path=output_wav_path,
+            target_duration_seconds=target_duration_seconds,
+            fade_out_seconds=fade_out_seconds,
+        )
+
     def change_wav_speed(
         self,
         *,

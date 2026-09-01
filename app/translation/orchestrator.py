@@ -138,10 +138,13 @@ class TranslationOrchestrator:
                         used_fallback=False,
                     )
                 except Exception as exc:
-                    if provider_type == "llama_app":
-                        # A user who explicitly selected an offline model must
-                        # not unknowingly send subtitles to Google. Surface the
-                        # real local-engine error to the pipeline instead.
+                    if provider_type != "google":
+                        # Respect the provider the user explicitly selected.
+                        # Silent fallback changes both privacy expectations and
+                        # translation quality; in practice a Gemini quota error
+                        # used to replace the contextual translation with a much
+                        # weaker Google Web result while Generate still looked
+                        # successful. Surface the real provider error instead.
                         raise
                     if isinstance(exc, AIBatchTranslationError):
                         msg = "AI batch translation failed. Falling back to Google Translate."
@@ -1126,7 +1129,17 @@ class TranslationOrchestrator:
             )
             if len(chunks) <= 1:
                 updated = dict(seg)
-                updated['text'] = chunks[0] if chunks else text
+                visible_text = chunks[0] if chunks else text
+                updated['text'] = visible_text
+                # ``translation_final`` dictionaries may still carry the
+                # unsplit sentence in these model fields.  Segment.from_dict
+                # prefers them over ``text`` when an SRT is rendered, which
+                # used to repeat the complete sentence in every visual chunk.
+                # A split changes display text only; ``tts_text`` intentionally
+                # remains the complete grouped utterance for voice synthesis.
+                for key in ('final_text', 'refined_translation', 'raw_translation'):
+                    if key in updated:
+                        updated[key] = visible_text
                 updated['tts_group_id'] = group_id
                 updated['tts_group_start'] = round(start, 3)
                 updated['tts_group_end'] = round(end, 3)
@@ -1140,6 +1153,9 @@ class TranslationOrchestrator:
                 updated = dict(seg)
                 updated.pop('_audio_end', None)
                 updated['text'] = chunk
+                for key in ('final_text', 'refined_translation', 'raw_translation'):
+                    if key in updated:
+                        updated[key] = chunk
                 updated['tts_group_id'] = group_id
                 updated['tts_group_start'] = round(start, 3)
                 updated['tts_group_end'] = round(end, 3)
