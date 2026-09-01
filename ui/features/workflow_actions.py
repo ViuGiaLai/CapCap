@@ -18,6 +18,7 @@ class WorkflowActionsMixin:
         v_ok = bool(self.video_path_edit.text().strip()) and os.path.exists(self.video_path_edit.text().strip())
         a_ok = bool(self.audio_source_edit.text().strip()) and os.path.exists(self.audio_source_edit.text().strip())
         has_translated_text = bool(self.translated_text.toPlainText().strip())
+        has_any_subtitles = bool(self.current_translated_segments or self.current_segments)
         translation_ready = self._translation_phase_complete()
         selected_audio_path = self.resolve_selected_audio_path()
         has_voice_audio = bool(selected_audio_path and os.path.exists(selected_audio_path))
@@ -63,7 +64,9 @@ class WorkflowActionsMixin:
                 translation_ready and bool(self.transcript_text.toPlainText().strip()) and has_translated_text
             )
         if hasattr(self, "subtitle_editor_btn"):
-            self.subtitle_editor_btn.setEnabled(translation_ready and not review_mode)
+            # Original-only projects need the editor in order to export the
+            # review XLSX, fill Translated text externally, and import it.
+            self.subtitle_editor_btn.setEnabled(has_any_subtitles and not review_mode)
         if hasattr(self, "rewrite_selected_segment_btn"):
             has_selected_segment = 0 <= int(getattr(self, "_selected_segment_index", -1)) < len(self.current_translated_segments or [])
             self.rewrite_selected_segment_btn.setEnabled(

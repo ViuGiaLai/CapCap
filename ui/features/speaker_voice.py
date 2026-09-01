@@ -162,6 +162,7 @@ class SpeakerVoiceMixin:
         state.set_setting("speaker_voice_assignments", assignments)
         self.project_service.save_project(state)
         self._voiceover_force_refresh = True
+        self._invalidate_dubbed_output_after_subtitle_edit()
 
     def _voice_display_entries(
         self,
@@ -366,6 +367,7 @@ class SpeakerVoiceMixin:
             return
         self._sync_segment_models_from_current_segments()
         self._voiceover_force_refresh = True
+        self._invalidate_dubbed_output_after_subtitle_edit()
         # Speaker identity changes the TS1 color and future voice selection,
         # not subtitle text, timing, or visual style.  Avoid the full
         # apply_segments_to_timeline() path here because it refreshes the
@@ -398,6 +400,7 @@ class SpeakerVoiceMixin:
             return
         self._sync_segment_models_from_current_segments()
         self._voiceover_force_refresh = True
+        self._invalidate_dubbed_output_after_subtitle_edit()
         if hasattr(self, "timeline"):
             self.timeline.set_segments(self.get_active_segments())
             self.timeline.set_highlighted_speaker(target_speaker)

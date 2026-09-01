@@ -44,6 +44,51 @@ class SubtitleExchangeServiceTests(unittest.TestCase):
         self.assertIn("Target language: Vietnamese", prompt)
         self.assertIn("Cultivation / Wuxia Recap", prompt)
         self.assertIn('edit ONLY the "Translated text" column', prompt)
+        self.assertIn("unverified draft", prompt)
+        self.assertIn("Work in two internal passes", prompt)
+        self.assertIn("Chinese-to-Vietnamese semantic rules", prompt)
+        self.assertIn("verb-object phrase", prompt)
+
+    def test_prompt_omits_chinese_specific_rules_for_other_language_pairs(self):
+        prompt = self.service.build_prompt(
+            segments=[{"source_text": "Wait here.", "text": "Espere aquí."}],
+            configured_source="en",
+            target_language="es",
+        )
+
+        self.assertIn("unverified draft", prompt)
+        self.assertNotIn("Chinese-to-Vietnamese semantic rules", prompt)
+
+    def test_semantic_qa_warns_about_source_leak_and_adjacent_duplicate(self):
+        segments = [
+            {"start": 0.0, "end": 2.0, "source_text": "怎么回事"},
+            {"start": 2.0, "end": 4.0, "source_text": "悬镜司攻山了"},
+            {"start": 4.1, "end": 6.0, "source_text": "他们来了"},
+        ]
+        translations = ["Có chuyện gì vậy?", "悬镜司攻山了", "悬镜司攻山了"]
+
+        warnings = self.service.assess_translation_quality(
+            segments=segments,
+            translated_texts=translations,
+            target_language="vi",
+        )
+
+        self.assertTrue(any("chữ viết nguồn" in warning for warning in warnings))
+        self.assertTrue(any("bản dịch trùng hệt" in warning for warning in warnings))
+
+    def test_semantic_qa_allows_real_repeated_source_dialogue(self):
+        repeated = [
+            {"start": 0.0, "end": 1.0, "source_text": "快走"},
+            {"start": 1.0, "end": 2.0, "source_text": "快走"},
+        ]
+
+        warnings = self.service.assess_translation_quality(
+            segments=repeated,
+            translated_texts=["Đi mau!", "Đi mau!"],
+            target_language="vi",
+        )
+
+        self.assertFalse(any("bản dịch trùng hệt" in warning for warning in warnings))
 
     def test_xlsx_round_trip_changes_only_translated_text(self):
         import openpyxl
@@ -110,6 +155,9 @@ class SubtitleExchangeServiceTests(unittest.TestCase):
             with zipfile.ZipFile(path, "r") as archive:
                 files = {name: archive.read(name) for name in archive.namelist()}
             self.assertIn("xl/worksheets/sheet1.xml", files)
+            instructions = files["xl/worksheets/sheet2.xml"].decode("utf-8")
+            self.assertIn("unverified draft", instructions)
+            self.assertIn("Chinese-to-Vietnamese semantic rules", instructions)
             sheet = files["xl/worksheets/sheet1.xml"].decode("utf-8")
             sheet = sheet.replace("Xuống!", "Khoan đã!")
             sheet = sheet.replace("Tôi sẽ quay lại sau.", "Ta sẽ ở lại chặn hậu.")

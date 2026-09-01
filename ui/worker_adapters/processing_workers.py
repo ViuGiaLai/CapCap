@@ -604,7 +604,11 @@ class TimelineThumbnailWorker(QThread):
 
 
 class PrepareWorkflowWorker(QThread):
-    finished = Signal(str, str)
+    # Do not shadow QThread.finished.  A result signal emitted from inside
+    # run() fires slightly before the native thread has fully stopped; using
+    # the name ``finished`` previously let UI cleanup destroy this object
+    # during that unwind and crash the entire application.
+    result_ready = Signal(str, str)
     step_started = Signal(str)
 
     def __init__(
@@ -691,7 +695,7 @@ class PrepareWorkflowWorker(QThread):
                         timeout=3600,
                         retries=1 if self.force_remote_api else 3,
                     )
-                    self.finished.emit(str(response.get("project_state_path", "")), "")
+                    self.result_ready.emit(str(response.get("project_state_path", "")), "")
                 finally:
                     if old_url is None:
                         os.environ.pop("VIUSTUDIO_REMOTE_API_URL", None)
@@ -725,9 +729,9 @@ class PrepareWorkflowWorker(QThread):
                     timeline_clips=self.timeline_clips,
                 )
                 state_path = os.path.join(project_state.project_root, "project.json")
-                self.finished.emit(state_path, "")
+                self.result_ready.emit(state_path, "")
         except Exception as exc:
-            self.finished.emit("", str(exc))
+            self.result_ready.emit("", str(exc))
 
 
 class VoiceOverWorker(QThread):

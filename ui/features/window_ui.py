@@ -6,6 +6,7 @@ from helpers import (
     extract_subtitle_text_entries,
     format_segments_to_srt,
     format_timestamp,
+    normalize_subtitle_timing,
     parse_srt_to_segments,
     validate_srt_text,
 )
@@ -111,6 +112,9 @@ class WindowUiMixin:
 
     def parse_srt_to_segments(self, srt_text):
         return parse_srt_to_segments(srt_text)
+
+    def normalize_subtitle_timing(self, segments, gap_seconds=0.04):
+        return normalize_subtitle_timing(segments, gap_seconds=gap_seconds)
 
     def validate_srt_text(self, srt_text, expected_len=None):
         return validate_srt_text(srt_text, expected_len=expected_len)

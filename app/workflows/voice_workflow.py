@@ -1165,13 +1165,25 @@ class VoiceWorkflow:
                 end_s = float(seg.get("end", 0.0))
             except (TypeError, ValueError):
                 continue
+            next_start = None
+            if index + 1 < len(segment_list):
+                try:
+                    next_start = float(segment_list[index + 1].get("start", 0.0))
+                except (AttributeError, TypeError, ValueError):
+                    next_start = None
+            visual_ceiling = None
+            if next_start is not None and next_start >= start_s:
+                visual_ceiling = max(start_s, next_start - 0.04)
             audio_end = start_s + actual_d
             seg["_audio_end"] = audio_end
             if audio_end > end_s + 0.01:
                 if "end" in seg and "_original_end" not in seg:
                     seg["_original_end"] = end_s
                 if mode_key == "smart":
-                    seg["end"] = audio_end
+                    synced_end = audio_end
+                    if visual_ceiling is not None:
+                        synced_end = min(synced_end, visual_ceiling)
+                    seg["end"] = max(start_s, synced_end)
                     action = str(seg.get("action_taken") or "accept")
                     if "subtitle_sync" not in action:
                         seg["action_taken"] = f"{action}+subtitle_sync"
@@ -1184,13 +1196,11 @@ class VoiceWorkflow:
             # into the next subtitle.
             if mode_key == "smart" and audio_end < end_s - 0.12:
                 aligned_end = audio_end + 0.10
-                if index + 1 < len(segment_list):
-                    try:
-                        next_start = float(segment_list[index + 1].get("start", aligned_end))
-                        aligned_end = min(aligned_end, next_start - 0.04)
-                    except (AttributeError, TypeError, ValueError):
-                        pass
+                if visual_ceiling is not None:
+                    aligned_end = min(aligned_end, visual_ceiling)
                 aligned_end = max(start_s + 0.25, min(end_s, aligned_end))
+                if visual_ceiling is not None:
+                    aligned_end = max(start_s, min(aligned_end, visual_ceiling))
                 if aligned_end < end_s - 0.02:
                     if "_original_end" not in seg:
                         seg["_original_end"] = end_s

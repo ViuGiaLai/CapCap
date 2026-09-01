@@ -1,4 +1,5 @@
 import re
+from difflib import SequenceMatcher
 
 
 _TIMESTAMP_PATTERN = r"\d{2}:\d{2}:\d{2},\d{3}"
@@ -10,6 +11,85 @@ def parse_srt_to_segments(srt_text):
     if not is_valid:
         return []
     return segments
+
+
+def normalize_subtitle_timing(segments, gap_seconds: float = 0.04):
+    """Return one sorted subtitle lane without duplicate/overlapping cues."""
+    ordered = []
+    for source in list(segments or []):
+        item = dict(source)
+        try:
+            item["start"] = max(0.0, float(item.get("start", 0.0)))
+            item["end"] = max(item["start"], float(item.get("end", item["start"])))
+        except (TypeError, ValueError):
+            continue
+        ordered.append(item)
+    ordered.sort(key=lambda item: (item["start"], item["end"]))
+
+    def canonical_text(item):
+        return "".join(re.findall(r"\w", str(item.get("text", "")).casefold(), flags=re.UNICODE))
+
+    deduplicated = []
+    for item in ordered:
+        item_text = canonical_text(item)
+        duplicate = False
+        for previous in reversed(deduplicated):
+            overlap = min(previous["end"], item["end"]) - max(previous["start"], item["start"])
+            if overlap <= 0:
+                if previous["end"] <= item["start"]:
+                    break
+                continue
+            previous_text = canonical_text(previous)
+            if not item_text or not previous_text:
+                continue
+            shorter_duration = max(
+                0.001,
+                min(previous["end"] - previous["start"], item["end"] - item["start"]),
+            )
+            temporal_match = overlap / shorter_duration >= 0.35
+            text_match = (
+                item_text == previous_text
+                or SequenceMatcher(None, previous_text, item_text).ratio() >= 0.92
+            )
+            if temporal_match and text_match:
+                duplicate = True
+                break
+        if not duplicate:
+            deduplicated.append(item)
+
+    normalized = []
+    safe_gap = max(0.0, float(gap_seconds))
+    for item in deduplicated:
+        if normalized and normalized[-1]["end"] > item["start"]:
+            previous = normalized[-1]
+            previous["end"] = max(previous["start"], item["start"] - safe_gap)
+            # Timing-derived metadata belongs to the old boundary. Keeping it
+            # would make the timeline stack the cleaned cue by its stale TTS
+            # audio end and could leave word highlighting beyond the cue.
+            previous.pop("_audio_end", None)
+            previous.pop("_original_end", None)
+            if "tts_group_end" in previous:
+                previous["tts_group_end"] = previous["end"]
+            if isinstance(previous.get("words"), list):
+                trimmed_words = []
+                for raw_word in previous["words"]:
+                    word = dict(raw_word) if isinstance(raw_word, dict) else raw_word
+                    if not isinstance(word, dict):
+                        continue
+                    try:
+                        word_start = float(word.get("start", previous["start"]))
+                        word_end = float(word.get("end", word_start))
+                    except (TypeError, ValueError):
+                        continue
+                    if word_start >= previous["end"]:
+                        continue
+                    word["end"] = min(word_end, previous["end"])
+                    trimmed_words.append(word)
+                previous["words"] = trimmed_words
+            if previous["end"] <= previous["start"]:
+                normalized.pop()
+        normalized.append(item)
+    return normalized
 
 
 def validate_srt_text(srt_text, expected_len=None):

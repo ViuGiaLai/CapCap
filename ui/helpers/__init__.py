@@ -10,6 +10,7 @@ from .srt_helpers import (
     extract_subtitle_text_entries,
     format_segments_to_srt,
     format_timestamp,
+    normalize_subtitle_timing,
     parse_srt_to_segments,
     validate_srt_text,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "format_timestamp",
     "get_export_button_label",
     "get_output_mode_key",
+    "normalize_subtitle_timing",
     "parse_srt_to_segments",
     "validate_srt_text",
 ]

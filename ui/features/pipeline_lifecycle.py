@@ -4,7 +4,7 @@ import glob
 import hashlib
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QMessageBox)
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QUrl
 
 from utils.launcher_lifecycle import relaunch_launcher
 from utils.display_utils import (
@@ -44,6 +44,9 @@ class PipelineLifecycleMixin:
         result = self.subtitle_controller.apply_edited_translation(show_message=show_message, force_apply=force_apply)
         if result:
             self.refresh_auto_keyword_highlights()
+            self._commit_subtitle_mutation(
+                selected_index=getattr(self, "_selected_segment_index", None),
+            )
             self.sync_segment_editor_rows()
             return result
 
@@ -53,22 +56,33 @@ class PipelineLifecycleMixin:
         Unlike the small inspector editor this does not alter the project on
         every keystroke.  It makes text-only changes explicit via Update.
         """
-        if not self._translation_phase_complete():
-            QMessageBox.information(self, "Subtitle Editor", "Complete the Translation phase before editing translated subtitles.")
-            return
-        segments = list(self.current_translated_segments or [])
-        if not segments:
+        translated_segments = list(self.current_translated_segments or [])
+        source_segments = list(self.current_segments or [])
+        if translated_segments:
+            segments = translated_segments
+        elif source_segments:
+            # Run to Original intentionally stops before translation. Build a
+            # temporary review track with blank Translated text so XLSX export
+            # and import are immediately available without inventing a draft.
+            segments = []
+            for source in source_segments:
+                review = copy.deepcopy(source)
+                review["source_text"] = str(source.get("text", "") or "")
+                review["text"] = ""
+                review["subtitle_vi"] = ""
+                review["tts_text"] = ""
+                segments.append(review)
+        else:
             QMessageBox.information(
                 self,
                 "Subtitle Editor",
-                "Translated subtitles are not available yet. Run Translate or import a translated SRT first.",
+                "No subtitles are available. Run Original Transcript or import an SRT first.",
             )
             return
         editor_segments = copy.deepcopy(segments)
         # Translation artifacts can intentionally omit source_text.  The
         # source transcript remains index/timing aligned, so enrich only the
         # editor copy for display without changing project metadata.
-        source_segments = list(self.current_segments or [])
         source_by_time = {
             (round(float(item.get("start", 0.0) or 0.0), 3), round(float(item.get("end", 0.0) or 0.0), 3)): item
             for item in source_segments
@@ -171,6 +185,8 @@ class PipelineLifecycleMixin:
     def _import_subtitle_translation_xlsx(self, segments):
         from services import SubtitleExchangeService
 
+        service = SubtitleExchangeService()
+        context = self._subtitle_exchange_context(segments)
         state = getattr(self, "current_project_state", None)
         initial_dir = str(getattr(state, "project_root", "") or os.getcwd())
         input_path, _filter = QFileDialog.getOpenFileName(
@@ -182,13 +198,37 @@ class PipelineLifecycleMixin:
         if not input_path:
             return None
         try:
-            translated = SubtitleExchangeService().import_translations(
+            translated = service.import_translations(
                 input_path,
                 segments=list(segments or []),
+            )
+            quality_warnings = service.assess_translation_quality(
+                segments=list(segments or []),
+                translated_texts=translated,
+                target_language=context["target_language"],
             )
         except Exception as exc:
             QMessageBox.critical(self, "Import XLSX Failed", str(exc))
             return None
+        if quality_warnings:
+            preview = "\n".join(f"• {warning}" for warning in quality_warnings[:10])
+            remaining = len(quality_warnings) - 10
+            if remaining > 0:
+                preview += f"\n• …and {remaining} more warning(s)."
+            decision = QMessageBox.warning(
+                self,
+                "Translation Quality Review",
+                "The workbook structure is valid, but semantic QA found items to review:\n\n"
+                f"{preview}\n\nImport these translations anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if decision != QMessageBox.Yes:
+                self.log(
+                    f"[Subtitle Editor] XLSX import paused for semantic review: "
+                    f"{len(quality_warnings)} warning(s)."
+                )
+                return None
         self.log(f"[Subtitle Editor] Validated translation workbook: {input_path}")
         return translated
 
@@ -201,16 +241,32 @@ class PipelineLifecycleMixin:
         still contains deleted or changed cues and must never be exported.
         """
         state = self.ensure_current_project()
+        preview_had_burned_subtitles = bool(
+            getattr(self, "_preview_video_has_burned_subtitles", False)
+        )
         had_dubbed_output = bool(
             getattr(self, "last_voice_vi_path", "")
             or getattr(self, "last_mixed_vi_path", "")
             or self.processed_artifacts.get("voice_vi")
             or self.processed_artifacts.get("mixed_vi")
         )
-        for key in ("voice_vi", "mixed_vi", "voice_segments"):
+        for key in (
+            "voice_vi", "mixed_vi", "voice_segments",
+            "preview_video", "preview_video_5s", "preview_frame",
+        ):
             self.processed_artifacts.pop(key, None)
             if state is not None:
                 state.artifacts.pop(key, None)
+        # Segment dictionaries also retain the measured end of the previous
+        # TTS clip.  Keeping it after a text/timing/structure edit lets the
+        # preview or a later export stretch a new cue using obsolete audio.
+        for segments in (
+            getattr(self, "current_segments", None),
+            getattr(self, "current_translated_segments", None),
+        ):
+            for segment in list(segments or []):
+                if isinstance(segment, dict):
+                    segment.pop("_audio_end", None)
         # The TS1 layer objects may still contain paths to the old assembled
         # voice track.  Clear them too so neither preview nor export can use
         # a deleted/obsolete cue before the next TTS run.
@@ -229,6 +285,12 @@ class PipelineLifecycleMixin:
                     metadata.pop("_audio_end", None)
         self.last_voice_vi_path = ""
         self.last_mixed_vi_path = ""
+        self.last_preview_video_path = ""
+        self.last_styled_preview_path = ""
+        self.last_styled_preview_signature = ""
+        self.last_exact_preview_5s_path = ""
+        self.last_exact_preview_frame_path = ""
+        self._voiceover_force_refresh = True
         if state is not None:
             state.set_step_status("generate_tts", "pending")
             state.set_step_status("mix_audio", "pending")
@@ -237,21 +299,77 @@ class PipelineLifecycleMixin:
         if had_dubbed_output:
             self.log("[Subtitle Editor] Existing dubbed output invalidated; unchanged cues remain in the TTS cache.")
             self.sync_preview_audio_track_to_output(apply_to_player=True, force=True)
+        if preview_had_burned_subtitles:
+            # Rendered preview subtitles are pixels. Restore the original
+            # media before enabling the live track; otherwise an edited or
+            # deleted cue remains visible underneath the new TS1 overlay.
+            source_path = self._resolve_preview_original_video_path()
+            try:
+                position = int(self.media_player.position() or 0)
+                was_playing = bool(self.media_player.is_playing())
+                self.media_player.pause()
+                self.media_player.setSource(
+                    QUrl.fromLocalFile(source_path) if source_path else QUrl()
+                )
+                if source_path and position > 0:
+                    self.media_player.setPosition(position)
+                if source_path and was_playing:
+                    self.media_player.play()
+            except Exception as exc:
+                self.log(f"[Subtitle] Could not restore original preview source: {exc}")
+            self._preview_video_has_burned_subtitles = False
+
+    def _invalidate_translation_after_original_change(self):
+        """Clear every downstream artifact after Original timing/text changes."""
+        self.current_translated_segments = []
+        self.current_translated_segment_models = []
+        self.translated_text.clear()
+        self.last_translated_srt_path = ""
+        self.processed_artifacts.pop("srt_translated", None)
+        self._invalidate_dubbed_output_after_subtitle_edit()
+        state = self.ensure_current_project()
+        if state is None:
+            return
+        state.set_setting("translation_signature", "")
+        for artifact_key in (
+            "subtitle_translated_srt",
+            "srt_translated",
+            "translation_raw",
+            "translation_refined",
+            "translation_final",
+        ):
+            state.artifacts.pop(artifact_key, None)
+        state.set_step_status("translate_raw", "pending")
+        state.set_step_status("refine_translation", "pending")
+        self.project_service.save_project(state)
 
     def _apply_subtitle_editor_changes(self, rows) -> bool:
         """Apply staged content/deletion changes without rewriting cue metadata."""
         source = list(self.current_translated_segments or [])
+        original_source = list(self.current_segments or [])
+        if not source and original_source:
+            source = []
+            for original in original_source:
+                draft = copy.deepcopy(original)
+                draft["source_text"] = str(original.get("text", "") or "")
+                draft["text"] = ""
+                draft["subtitle_vi"] = ""
+                draft["tts_text"] = ""
+                source.append(draft)
         if len(rows or []) != len(source):
             QMessageBox.warning(self, "Subtitle Editor", "The subtitle list changed while the editor was open. Reopen it and try again.")
             return False
 
         updated = []
+        updated_original = []
         changed_count = 0
         deleted_count = 0
-        for row, original in zip(rows, source):
+        for index, (row, original) in enumerate(zip(rows, source)):
             if bool(row.get("deleted")):
                 deleted_count += 1
                 continue
+            if index < len(original_source):
+                updated_original.append(copy.deepcopy(original_source[index]))
             text = str(row.get("text", "") or "").strip()
             if not text:
                 QMessageBox.warning(self, "Subtitle Editor", "Use Delete for an unnecessary segment instead of leaving translated text empty.")
@@ -275,13 +393,24 @@ class PipelineLifecycleMixin:
 
         self.current_translated_segments = updated
         self.current_translated_segment_models = self._dict_segments_to_models(updated, translated=True)
+        if original_source:
+            self.current_segments = updated_original
+            self.current_segment_models = self._dict_segments_to_models(updated_original, translated=False)
+            self._sync_hidden_transcript_text_from_segments()
         self._single_line_split_cache = None
         self._voiceover_force_refresh = bool(changed_count or deleted_count)
         self._sync_hidden_translated_text_from_segments()
         self.refresh_auto_keyword_highlights(force=True)
         self.apply_segments_to_timeline()
         self._invalidate_dubbed_output_after_subtitle_edit()
+        all_subtitles_deleted = not updated and (not original_source or not updated_original)
+        if all_subtitles_deleted:
+            self.last_original_srt_path = ""
+            self.last_translated_srt_path = ""
+            for key in ("srt_original", "srt_translated"):
+                self.processed_artifacts.pop(key, None)
         self.persist_current_timeline_project_data()
+        self._regenerate_original_srt_from_segments()
         # Keep the project-facing translated SRT in sync as well as the
         # JSON/timeline state. Export can then use the edited result without
         # relying on a later preview refresh to rewrite it incidentally.
@@ -291,7 +420,29 @@ class PipelineLifecycleMixin:
             # empty list. Persist an explicit empty translation artifact so
             # a project reopened after "Delete All" cannot resurrect its
             # former subtitles from translation_final.json.
-            self.persist_translation_project_data([], self.last_translated_srt_path)
+            self.persist_translation_project_data([], "" if all_subtitles_deleted else self.last_translated_srt_path)
+        if all_subtitles_deleted:
+            state = self.ensure_current_project()
+            if state is not None:
+                if original_source:
+                    self.current_segment_models = self.project_bridge.persist_transcription(
+                        state,
+                        [],
+                        "",
+                    )
+                for artifact_key in (
+                    "subtitle_original_srt",
+                    "srt_original",
+                    "subtitle_translated_srt",
+                    "srt_translated",
+                ):
+                    state.artifacts.pop(artifact_key, None)
+                state.set_setting("transcription_signature", "")
+                state.set_setting("translation_signature", "")
+                state.set_step_status("transcribe", "pending")
+                state.set_step_status("translate_raw", "pending")
+                state.set_step_status("refine_translation", "pending")
+                self.project_service.save_project(state)
         self.schedule_live_subtitle_preview_refresh()
         self.schedule_auto_frame_preview()
         self.sync_segment_editor_rows()
@@ -672,6 +823,20 @@ class PipelineLifecycleMixin:
             return
         self.processed_artifacts["srt_translated"] = out_path
         self.persist_translation_project_data(self.current_translated_segments, out_path)
+
+    def _regenerate_original_srt_from_segments(self):
+        """Keep the project-facing Original SRT aligned with timeline edits."""
+        out_path = str(getattr(self, "last_original_srt_path", "") or "").strip()
+        if not out_path:
+            return
+        try:
+            from subtitle_builder import generate_srt
+            generate_srt(self.current_segments or [], out_path)
+        except Exception as exc:
+            print(f"[Subtitle] Original SRT regen failed: {exc}")
+            return
+        self.processed_artifacts["srt_original"] = out_path
+        self.persist_transcription_project_data(self.current_segments or [], out_path)
 
     def on_voiceover_finished(self, voice_track, mixed, voice_segments, error):
         pending_background_path = str(

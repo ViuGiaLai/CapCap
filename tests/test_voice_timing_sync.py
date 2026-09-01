@@ -103,6 +103,28 @@ class VoiceTimingSyncTests(unittest.TestCase):
             self.assertEqual(segments[0]["_original_end"], 3.0)
             self.assertIn("subtitle_sync", segments[0]["action_taken"])
 
+    def test_long_speech_never_extends_visual_subtitle_over_next_cue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            first = os.path.join(folder, "first_long.wav")
+            second = os.path.join(folder, "second.wav")
+            _make_silent_wav(first, 3.0)
+            _make_silent_wav(second, 1.0)
+            segments = [
+                {"start": 1.0, "end": 2.0, "text": "First"},
+                {"start": 2.2, "end": 3.2, "text": "Second"},
+            ]
+            workflow = VoiceWorkflow(str(ROOT))
+
+            workflow._extend_segment_ends_to_audio(
+                segments=segments,
+                wavs=[first, second],
+                sync_mode="Smart",
+            )
+
+            self.assertAlmostEqual(segments[0]["_audio_end"], 4.0, delta=0.02)
+            self.assertAlmostEqual(segments[0]["end"], 2.16, delta=0.02)
+            self.assertLess(segments[0]["end"], segments[1]["start"])
+
     def test_requested_voice_speed_is_applied_before_final_smart_sync(self):
         with tempfile.TemporaryDirectory() as folder:
             source = os.path.join(folder, "speech.wav")

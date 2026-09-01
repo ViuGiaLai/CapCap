@@ -101,6 +101,21 @@ class SubtitleExchangeService:
             source_name = _language_name(configured_key)
         target_name = _language_name(target_language)
         style = str(translation_style or "Standard / Natural").strip()
+        source_key = detected if detected != "auto" else configured_key
+        chinese_to_vietnamese = (
+            _language_key(source_key).split("-", 1)[0] == "zh"
+            and _language_key(target_language).split("-", 1)[0] == "vi"
+        )
+        language_specific_rules = ""
+        if chinese_to_vietnamese:
+            language_specific_rules = """
+
+Chinese-to-Vietnamese semantic rules:
+- First determine whether each compact Chinese expression is a proper name, title, organization, place, technique, realm, ordinary noun, or verb-object phrase.
+- Use established Sino-Vietnamese readings only for verified names, titles, organizations, places, techniques, realms, and recurring genre terminology.
+- Do not transliterate ordinary actions, descriptions, or verb-object phrases into stiff Sino-Vietnamese wording as if they were proper names. Translate their contextual meaning into natural Vietnamese.
+- When a phrase could be either a name or ordinary grammar, use the surrounding scene and recurring entities in the full worksheet to decide. Do not capitalize it as a name without contextual evidence.
+- Preserve the genre register, but natural Vietnamese takes priority over mechanically copying Chinese word order or individual characters."""
         return f"""You are a professional subtitle translator working from {source_name} to {target_name}.
 
 Source language: {source_name}
@@ -108,6 +123,12 @@ Target language: {target_name}
 Genre and translation style: {style}
 
 Read the entire \"Subtitles\" worksheet before translating so you understand the scene context, characters, relationships, forms of address, names, and recurring terminology.
+
+Treat every existing value in \"Translated text\" as an unverified draft. Re-evaluate every row from \"Original\" and overwrite any inaccurate, literal, awkward, inconsistent, or contextually wrong draft. Never keep a draft merely because the cell is already filled.
+
+Work in two internal passes:
+1. Context pass: read the full worksheet and infer the scene, speakers, relationships, recurring entities, terminology, and an internal consistency glossary. Do not write this analysis into the workbook.
+2. Translation and review pass: translate each row from its own \"Original\", use nearby rows only to resolve context, then review the complete \"Translated text\" column for meaning, naturalness, consistency, accidental repetition, and readability.
 
 You may edit ONLY the \"Translated text\" column.
 
@@ -119,13 +140,75 @@ Strict requirements:
 - Do not leave text in the source language or an intermediate language.
 - Do not include explanations, notes, alternatives, comments, or Markdown.
 - Translate the meaning of \"Original\", using nearby rows only as context.
+- Never copy content from a nearby row into the current row merely to make the dialogue flow.
 - Preserve names, numbers, negation, speaker intent, relationships, titles, and forms of address.
 - Keep names and terminology consistent throughout the entire file.
 - Use natural, idiomatic subtitle language instead of literal word-for-word translation.
+- Distinguish proper names and established terminology from ordinary grammar before choosing transliteration or a literal reading.
 - Keep each translation concise enough to be read between its \"Start\" and \"End\" timestamps.
-- If the source is ambiguous, use the interpretation best supported by the surrounding context. Do not invent unsupported details.
+- If the source is ambiguous, use the interpretation best supported by the surrounding context and recurring entities. Do not invent unsupported details.{language_specific_rules}
+
+Final self-check before returning the file:
+- Every row was re-evaluated from \"Original\", including cells that already contained a draft.
+- Ordinary actions and dialogue sound natural in {target_name}; names and terminology are used only where context supports them.
+- Adjacent rows do not repeat the same translated idea unless the source genuinely repeats it.
+- No row contains source-language leakage, invented information, missing numbers, inconsistent names, or commentary.
 
 After completing the translation, return the XLSX file with the same structure. Only values in the \"Translated text\" column may be different."""
+
+    @staticmethod
+    def _review_normalized(text: str) -> str:
+        return re.sub(r"[^\w]+", "", str(text or "").casefold(), flags=re.UNICODE)
+
+    def assess_translation_quality(
+        self,
+        *,
+        segments: list[dict],
+        translated_texts: list[str],
+        target_language: str,
+    ) -> list[str]:
+        """Return semantic-review warnings without rewriting imported text."""
+        source_segments = [
+            {
+                "start": segment.get("start", 0.0),
+                "end": segment.get("end", 0.0),
+                "text": self._source_text(segment),
+            }
+            for segment in segments or []
+        ]
+        warnings: list[str] = []
+        try:
+            from translation.quality_guard import apply_translation_quality_guard
+
+            _guarded, objective_warnings = apply_translation_quality_guard(
+                source_segments=source_segments,
+                translated_texts=list(translated_texts or []),
+                target_lang=target_language,
+            )
+            warnings.extend(str(item) for item in objective_warnings)
+        except Exception as exc:
+            # Structure validation has already completed; an optional QA
+            # component must not make XLSX import unavailable.
+            warnings.append(f"Semantic QA could not complete: {exc}")
+
+        limit = min(len(source_segments), len(translated_texts or []))
+        for index in range(1, limit):
+            previous_translation = self._review_normalized(translated_texts[index - 1])
+            current_translation = self._review_normalized(translated_texts[index])
+            if not previous_translation or previous_translation != current_translation:
+                continue
+            previous_source = self._review_normalized(source_segments[index - 1]["text"])
+            current_source = self._review_normalized(source_segments[index]["text"])
+            if previous_source == current_source:
+                continue
+            previous_end = float(source_segments[index - 1].get("end", 0.0) or 0.0)
+            current_start = float(source_segments[index].get("start", 0.0) or 0.0)
+            if current_start - previous_end <= 1.0:
+                warnings.append(
+                    f"Cue {index + 1}: bản dịch trùng hệt cue {index} nhưng "
+                    "Original khác nhau. Hãy kiểm tra ngữ cảnh hoặc lỗi lặp nguồn."
+                )
+        return list(dict.fromkeys(warnings))
 
     @staticmethod
     def _openpyxl():

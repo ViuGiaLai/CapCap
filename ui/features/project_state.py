@@ -177,12 +177,20 @@ class ProjectStateMixin:
             if signature:
                 state.set_setting("translation_signature", signature)
         if self.current_project_state:
+            has_generated_voice = bool(
+                getattr(self, "last_voice_vi_path", "")
+                or getattr(self, "last_mixed_vi_path", "")
+                or self.processed_artifacts.get("voice_vi")
+                or self.processed_artifacts.get("mixed_vi")
+            )
             voice_signature = self.build_current_voice_signature(
                 segments=self._get_voiceover_segments(),
                 background_path=self.resolve_background_audio_path(),
             )
-            if voice_signature:
+            if has_generated_voice and voice_signature:
                 state.set_setting("voice_signature", voice_signature)
+            elif not has_generated_voice:
+                state.settings.pop("voice_signature", None)
 
         # Collect and save all current project settings
         proj_settings = {
@@ -708,13 +716,20 @@ class ProjectStateMixin:
                 self._split_segments_for_single_line()
             self._enable_post_pipeline_preview_assets(refresh=True)
             self.apply_segments_to_timeline()
+            if bool(getattr(self, "_subtitle_timing_was_normalized", False)):
+                # Old project artifacts can contain duplicate/overlapping
+                # cues written by earlier versions. Persist the repaired
+                # sequence immediately and discard its now-invalid dub.
+                self.persist_current_timeline_project_data()
+                self._regenerate_translated_srt_from_segments()
+                self._invalidate_dubbed_output_after_subtitle_edit()
             # Loading/rebuilding a project starts at the playhead, not at the
             # first subtitle. Selecting cue 1 here made the Inspector and the
             # paused overlay show a future cue while timeline time was 00:00.
             self._selected_segment_index = -1
             self.sync_segment_editor_rows()
         # Restore A2 Dub track if TTS was generated
-        voice_path = context.get("artifacts", {}).get("voice_vi", "")
+        voice_path = str(getattr(self, "last_voice_vi_path", "") or "")
         if voice_path and os.path.exists(voice_path) and hasattr(self, "timeline"):
             self.timeline.sync_tts_track(voice_path, segments=self.current_translated_segments or self.current_segments)
             # Enable Audio tab since voice generation was completed

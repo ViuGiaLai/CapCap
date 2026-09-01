@@ -6,7 +6,7 @@ from unittest.mock import patch
 from pathlib import Path
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QTextEdit
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path[:0] = [os.path.join(ROOT, "ui"), os.path.join(ROOT, "app"), ROOT]
@@ -149,6 +149,134 @@ class TestStudioShellIntegration(unittest.TestCase):
 
             self.assertTrue(self.window.add_layer_btn.isEnabled())
             self.assertTrue(self.window.timeline_layers_btn.isEnabled())
+
+    def test_original_transcript_enables_translation_exchange_editor(self):
+        self.window.current_segments = [
+            {"start": 1.0, "end": 2.0, "text": "原文"},
+        ]
+        self.window.current_translated_segments = []
+
+        self.window.refresh_ui_state()
+
+        self.assertTrue(self.window.subtitle_editor_btn.isEnabled())
+
+    @patch("ui.features.pipeline_lifecycle.QMessageBox.information")
+    def test_editor_can_create_translation_from_original_only(self, _message):
+        self.window.current_segments = [
+            {"start": 1.0, "end": 2.0, "text": "原文"},
+        ]
+        self.window.current_translated_segments = []
+
+        applied = self.window._apply_subtitle_editor_changes([
+            {"text": "Bản dịch", "deleted": False},
+        ])
+
+        self.assertTrue(applied)
+        self.assertEqual(self.window.current_segments[0]["text"], "原文")
+        self.assertEqual(self.window.current_translated_segments[0]["text"], "Bản dịch")
+
+    @patch("ui.features.timeline_editing.QMessageBox.question")
+    def test_clear_ts1_removes_original_and_translated_canonical_data(self, question):
+        from PySide6.QtWidgets import QMessageBox
+
+        question.return_value = QMessageBox.Yes
+        self.window.current_segments = [
+            {"start": 1.0, "end": 2.0, "text": "原文"},
+        ]
+        self.window.current_translated_segments = [
+            {"start": 1.0, "end": 2.0, "text": "Bản dịch"},
+        ]
+        self.window.apply_segments_to_timeline()
+
+        self.window.clear_timeline_track("TS1")
+
+        self.assertEqual(self.window.current_segments, [])
+        self.assertEqual(self.window.current_translated_segments, [])
+        subtitle_track = next(track for track in self.window.timeline._timeline.tracks if track.name == "TS1")
+        self.assertEqual(subtitle_track.layers, [])
+
+    @patch("ui.features.pipeline_lifecycle.QMessageBox.information")
+    def test_editor_delete_all_does_not_fall_back_to_original_subtitles(self, _message):
+        self.window.current_segments = [
+            {"start": 1.0, "end": 2.0, "text": "原文"},
+        ]
+        self.window.current_translated_segments = [
+            {"start": 1.0, "end": 2.0, "text": "Bản dịch"},
+        ]
+        self.window.apply_segments_to_timeline()
+
+        applied = self.window._apply_subtitle_editor_changes([
+            {"text": "Bản dịch", "deleted": True},
+        ])
+
+        self.assertTrue(applied)
+        self.assertEqual(self.window.current_segments, [])
+        self.assertEqual(self.window.current_translated_segments, [])
+        self.assertEqual(self.window.get_active_segments(), [])
+
+    def test_timing_edit_commits_both_tracks_and_invalidates_old_voice(self):
+        self.window.current_segments = [
+            {"start": 1.0, "end": 2.0, "text": "原文", "_audio_end": 2.4},
+        ]
+        self.window.current_translated_segments = [
+            {"start": 1.0, "end": 2.0, "text": "Bản dịch", "_audio_end": 2.4},
+        ]
+        with patch.object(self.window, "_invalidate_dubbed_output_after_subtitle_edit") as invalidate, \
+                patch.object(self.window, "persist_current_timeline_project_data"), \
+                patch.object(self.window, "_regenerate_original_srt_from_segments") as original_srt, \
+                patch.object(self.window, "_regenerate_translated_srt_from_segments") as translated_srt:
+            self.window.on_timeline_segment_timing_changed(0, 3.0, 4.0)
+
+        self.assertEqual(
+            (self.window.current_segments[0]["start"], self.window.current_segments[0]["end"]),
+            (3.0, 4.0),
+        )
+        self.assertEqual(
+            (self.window.current_translated_segments[0]["start"], self.window.current_translated_segments[0]["end"]),
+            (3.0, 4.0),
+        )
+        invalidate.assert_called_once()
+        original_srt.assert_called_once()
+        translated_srt.assert_called_once()
+
+    def test_inline_translation_edit_clears_stale_tts_override(self):
+        self.window.current_segments = [
+            {"start": 1.0, "end": 2.0, "text": "原文"},
+        ]
+        self.window.current_translated_segments = [{
+            "start": 1.0,
+            "end": 2.0,
+            "text": "Bản cũ",
+            "tts_text": "Giọng cũ",
+            "dubbing_vi": "Giọng cũ",
+            "voice_edited": True,
+        }]
+        editor = QTextEdit()
+        editor.setPlainText("Bản mới")
+
+        with patch.object(self.window, "_commit_subtitle_mutation") as commit:
+            self.window.on_segment_translation_edited(0, editor)
+
+        segment = self.window.current_translated_segments[0]
+        self.assertEqual(segment["text"], "Bản mới")
+        self.assertEqual(segment["tts_text"], "")
+        self.assertEqual(segment["dubbing_vi"], "")
+        self.assertFalse(segment["voice_edited"])
+        commit.assert_called_once_with(selected_index=0)
+
+    def test_original_srt_is_rewritten_from_current_timeline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out_path = os.path.join(folder, "original.srt")
+            self.window.last_original_srt_path = out_path
+            self.window.current_segments = [
+                {"start": 3.0, "end": 4.0, "text": "住手"},
+            ]
+            with patch.object(self.window, "persist_transcription_project_data"):
+                self.window._regenerate_original_srt_from_segments()
+
+            content = Path(out_path).read_text(encoding="utf-8")
+            self.assertIn("00:00:03,000 --> 00:00:04,000", content)
+            self.assertIn("住手", content)
 
     def test_export_button_does_not_forward_clicked_boolean(self):
         calls = []

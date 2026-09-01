@@ -16,6 +16,58 @@ from worker_adapters import (
 
 
 class TimelineEditingMixin:
+    def _commit_subtitle_mutation(self, *, selected_index=None, persist_empty=True):
+        """Commit one subtitle edit to every runtime and project surface.
+
+        Timeline blocks, hidden SRT editors, JSON artifacts, project-facing
+        SRT files, live preview and generated voice must never be updated by
+        separate best-effort paths.  Every user mutation funnels through this
+        method so reopening/exporting cannot resurrect stale subtitle data.
+        """
+        self._single_line_split_cache = None
+        self.apply_segments_to_timeline()
+
+        # Normalization in apply_segments_to_timeline may replace a list, so
+        # rebuild both model collections and hidden editors afterwards.
+        self.current_segment_models = self._dict_segments_to_models(
+            self.current_segments or [], translated=False,
+        )
+        self.current_translated_segment_models = self._dict_segments_to_models(
+            self.current_translated_segments or [], translated=True,
+        )
+        self._sync_hidden_transcript_text_from_segments()
+        self._sync_hidden_translated_text_from_segments()
+
+        if selected_index is not None:
+            self.set_selected_segment_index(int(selected_index), sync_ui=True)
+            if hasattr(self, "timeline"):
+                self.timeline.set_active_segment_index(int(selected_index))
+
+        self._invalidate_dubbed_output_after_subtitle_edit()
+
+        state = getattr(self, "current_project_state", None)
+        if persist_empty and state is not None:
+            try:
+                self.current_segment_models = self.project_bridge.persist_transcription(
+                    state,
+                    self.current_segments or [],
+                    self.last_original_srt_path,
+                )
+                self.current_translated_segment_models = self.project_bridge.persist_translation(
+                    state,
+                    self.current_segment_models,
+                    self.current_translated_segments or [],
+                    self.last_translated_srt_path,
+                )
+            except Exception as exc:
+                self.log(f"[Subtitle] Could not persist synchronized edit: {exc}")
+
+        self.persist_current_timeline_project_data()
+        self._regenerate_original_srt_from_segments()
+        self._regenerate_translated_srt_from_segments()
+        self.schedule_live_subtitle_preview_refresh()
+        self.refresh_ui_state()
+
     def _sync_hidden_transcript_text_from_segments(self):
         if getattr(self, "_syncing_segment_editor", False):
             return
@@ -167,30 +219,7 @@ class TimelineEditingMixin:
         self.set_selected_segment_index(index, sync_ui=True)
         if hasattr(self, "timeline"):
             self.timeline.set_active_segment_index(index)
-        self.apply_segments_to_timeline()
-        # Write the edited lists even if a deletion leaves one of them
-        # empty.  The generic persistence method deliberately avoids empty
-        # lists during initial project setup, so explicitly replace the
-        # existing segment artifacts here to prevent a deleted segment from
-        # being restored from disk or project cache later in this session.
-        state = getattr(self, "current_project_state", None)
-        if state is not None:
-            try:
-                self.current_segment_models = self.project_bridge.persist_transcription(
-                    state, self.current_segments or [], self.last_original_srt_path
-                )
-                if self.current_translated_segments is not None:
-                    self.current_translated_segment_models = self.project_bridge.persist_translation(
-                        state,
-                        self.current_segment_models,
-                        self.current_translated_segments or [],
-                        self.last_translated_srt_path,
-                    )
-            except Exception as exc:
-                self.log(f"[Subtitle] Could not update deleted segment cache: {exc}")
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        self._commit_subtitle_mutation(selected_index=index)
 
     def _apply_timeline_structure_history_entry(self, entry: dict, *, use_after: bool):
         index = int(entry.get("index", -1))
@@ -219,10 +248,7 @@ class TimelineEditingMixin:
         self.set_selected_segment_index(target_index, sync_ui=True)
         if hasattr(self, "timeline"):
             self.timeline.set_active_segment_index(target_index)
-        self.apply_segments_to_timeline()
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        self._commit_subtitle_mutation(selected_index=target_index)
 
     def split_selected_timeline_segment(self):
         if self._preview_is_playing():
@@ -298,10 +324,7 @@ class TimelineEditingMixin:
         self.set_selected_segment_index(index + 1, sync_ui=True)
         if hasattr(self, "timeline"):
             self.timeline.set_active_segment_index(index + 1)
-        self.apply_segments_to_timeline()
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        self._commit_subtitle_mutation(selected_index=index + 1)
 
     def _sync_preview_framing_to_player(self):
         """Keep native MPV crop framing consistent with the preview canvas."""
@@ -596,10 +619,7 @@ class TimelineEditingMixin:
         self.current_translated_segment_models = self._dict_segments_to_models(self.current_translated_segments, translated=True)
         self._sync_hidden_transcript_text_from_segments()
         self._sync_hidden_translated_text_from_segments()
-        self.apply_segments_to_timeline()
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        self._commit_subtitle_mutation()
         self.log(f"[Range Transcription] Added {len(fresh)} alternate-engine segment(s).")
 
     @staticmethod
@@ -676,10 +696,7 @@ class TimelineEditingMixin:
         self._timeline_timing_undo_stack.append(history)
         self._timeline_timing_redo_stack = []
         self._refresh_timeline_history_buttons()
-        self.apply_segments_to_timeline()
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        self._commit_subtitle_mutation()
         self.log(f"[Timeline] Split subtitle segments at selection {range_start:.3f}s–{range_end:.3f}s.")
         return True
 
@@ -865,13 +882,17 @@ class TimelineEditingMixin:
         
         # If it's a subtitle track, we also need to clear the canonical subtitle segments
         is_subtitle_track = (
-            str(getattr(getattr(target_track, "type", ""), "value", getattr(target_track, "type", ""))).lower() == "dub_subtitle"
+            str(getattr(getattr(target_track, "type", ""), "value", getattr(target_track, "type", ""))).lower()
+            in {"dub_subtitle", "subtitle"}
         )
         if is_subtitle_track:
             if hasattr(self, "current_segments"):
                 self.current_segments = []
             if hasattr(self, "current_translated_segments"):
                 self.current_translated_segments = []
+            self.current_segment_models = []
+            self.current_translated_segment_models = []
+            self._single_line_split_cache = None
             self._selected_segment_index = -1
             if hasattr(self, "subtitle_list_model"):
                 self.subtitle_list_model.layoutChanged.emit()
@@ -879,6 +900,11 @@ class TimelineEditingMixin:
                 self.transcript_text.clear()
             if hasattr(self, "translated_text"):
                 self.translated_text.clear()
+            self._invalidate_dubbed_output_after_subtitle_edit()
+            self.last_original_srt_path = ""
+            self.last_translated_srt_path = ""
+            for key in ("srt_original", "srt_translated"):
+                self.processed_artifacts.pop(key, None)
 
         # Update UI
         self.timeline._selected_layer_id = ""
@@ -893,6 +919,34 @@ class TimelineEditingMixin:
             if hasattr(self, "build_filtergraph_and_play"):
                 self.build_filtergraph_and_play(float(self.video_view.position) if hasattr(self, "video_view") else 0.0)
             
+        if is_subtitle_track:
+            state = self.ensure_current_project()
+            if state is not None:
+                self.current_segment_models = self.project_bridge.persist_transcription(
+                    state,
+                    [],
+                    "",
+                )
+                self.current_translated_segment_models = self.project_bridge.persist_translation(
+                    state,
+                    [],
+                    [],
+                    "",
+                )
+                for artifact_key in (
+                    "subtitle_original_srt",
+                    "srt_original",
+                    "subtitle_translated_srt",
+                    "srt_translated",
+                ):
+                    state.artifacts.pop(artifact_key, None)
+                state.set_setting("transcription_signature", "")
+                state.set_setting("translation_signature", "")
+                state.set_step_status("transcribe", "pending")
+                state.set_step_status("translate_raw", "pending")
+                state.set_step_status("refine_translation", "pending")
+                self.project_service.save_project(state)
+            self.schedule_live_subtitle_preview_refresh()
         self.persist_current_timeline_project_data()
         self.refresh_ui_state()
         self.log(f"[Timeline] Cleared track: {track_name}")
@@ -1167,29 +1221,7 @@ class TimelineEditingMixin:
         self.set_selected_segment_index(target_selection, sync_ui=True)
         if hasattr(self, "timeline"):
             self.timeline.set_active_segment_index(target_selection)
-        self.apply_segments_to_timeline()
-        # `persist_current_timeline_project_data()` intentionally skips empty
-        # lists during project initialization. A user deletion is different:
-        # write the exact post-delete lists, including [] so a removed final
-        # cue can never be restored from the project artifacts.
-        state = getattr(self, "current_project_state", None)
-        if state is not None:
-            try:
-                self.current_segment_models = self.project_bridge.persist_transcription(
-                    state, self.current_segments or [], self.last_original_srt_path,
-                )
-                if self.current_translated_segments is not None:
-                    self.current_translated_segment_models = self.project_bridge.persist_translation(
-                        state,
-                        self.current_segment_models,
-                        self.current_translated_segments or [],
-                        self.last_translated_srt_path,
-                    )
-            except Exception as exc:
-                self.log(f"[Subtitle] Could not update deleted segment cache: {exc}")
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        self._commit_subtitle_mutation(selected_index=target_selection)
 
     def on_timeline_segment_timing_changed(self, index: int, start: float, end: float):
         updated = False
@@ -1209,16 +1241,9 @@ class TimelineEditingMixin:
         # list. Otherwise it can retain deleted cues and overwrite the fresh
         # canonical subtitle state on the next redraw.
         self._single_line_split_cache = None
-        self.apply_segments_to_timeline()
-        # Rebuilding TS1 rehydrates its layers and can briefly select the
-        # first cue while the preview refreshes. Restore the cue that was
-        # actually edited only after the rebuild has completed.
-        self.set_selected_segment_index(index, sync_ui=True)
-        if hasattr(self, "timeline"):
-            self.timeline.set_active_segment_index(index)
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        # Rebuilding TS1 can briefly select the first cue. The shared commit
+        # path restores the edited selection after rebuilding the track.
+        self._commit_subtitle_mutation(selected_index=index)
 
     def _refresh_timeline_history_buttons(self):
         if hasattr(self, "timeline_undo_btn"):
@@ -1336,10 +1361,7 @@ class TimelineEditingMixin:
         self.current_translated_segment_models = self._dict_segments_to_models(self.current_translated_segments, translated=True)
         self._sync_hidden_transcript_text_from_segments()
         self._sync_hidden_translated_text_from_segments()
-        self.apply_segments_to_timeline()
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        self._commit_subtitle_mutation()
 
     def step_selected_segment(self, direction: int):
         rows = self._segment_editor_display_rows()
@@ -1828,14 +1850,23 @@ class TimelineEditingMixin:
                 for idx, base in enumerate(base_segments)
             ]
 
-        self.current_translated_segments[index]["text"] = editor.toPlainText().strip()
-        self.current_translated_segments[index].setdefault("manual_highlights", [])
-        self._reconcile_manual_highlights(self.current_translated_segments[index])
+        segment = self.current_translated_segments[index]
+        new_text = editor.toPlainText().strip()
+        if new_text == str(segment.get("text", "") or ""):
+            return
+        segment["text"] = new_text
+        segment["subtitle_vi"] = new_text
+        # A subtitle text edit must not keep speaking an earlier manual or AI
+        # rewrite. The next TTS run uses the freshly edited subtitle text.
+        segment["tts_text"] = ""
+        segment["dubbing_vi"] = ""
+        segment["voice_edited"] = False
+        segment.setdefault("manual_highlights", [])
+        self._reconcile_manual_highlights(segment)
         self.current_translated_segment_models = self._dict_segments_to_models(self.current_translated_segments, translated=True)
         self._sync_segment_highlight_chip_row(index)
         self._sync_hidden_translated_text_from_segments()
-        self.schedule_live_subtitle_preview_refresh()
-        self.refresh_ui_state()
+        self._commit_subtitle_mutation(selected_index=index)
 
     def on_segment_voice_speed_changed(self, index: int, value: float):
         if getattr(self, "_syncing_segment_editor", False):
@@ -1844,6 +1875,7 @@ class TimelineEditingMixin:
             if segments_list and 0 <= index < len(segments_list):
                 segments_list[index]["voice_speed"] = round(float(value), 1)
                 self._voiceover_force_refresh = True
+        self._invalidate_dubbed_output_after_subtitle_edit()
         self.persist_current_timeline_project_data()
 
     def _set_segment_editor_highlight(self, active_index: int):

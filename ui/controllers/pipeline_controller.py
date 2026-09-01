@@ -513,15 +513,33 @@ class PipelineController:
         )
         
         # Connect signals
-        self.gui.prepare_workflow_thread.step_started.connect(self._on_prepare_step_started)
-        self.gui.prepare_workflow_thread.finished.connect(
+        worker = self.gui.prepare_workflow_thread
+        worker.step_started.connect(self._on_prepare_step_started)
+        worker.result_ready.connect(
             lambda project_state_path, error, run_id=prepare_run_id: self.on_prepare_workflow_finished(
                 project_state_path,
                 error,
                 run_id,
             )
         )
-        self.gui.prepare_workflow_thread.start()
+        # Release the QThread only after Qt confirms run() has returned.  The
+        # custom result signal above is intentionally too early for deletion.
+        worker.finished.connect(
+            lambda worker=worker, run_id=prepare_run_id: self._on_prepare_native_thread_finished(
+                worker,
+                run_id,
+            )
+        )
+        worker.start()
+
+    def _on_prepare_native_thread_finished(self, worker, run_id):
+        current = getattr(self.gui, "prepare_workflow_thread", None)
+        if current is worker:
+            self.gui.prepare_workflow_thread = None
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
 
     def _on_prepare_step_started(self, step_id, message=""):
         if step_id == "translation":
@@ -832,12 +850,9 @@ class PipelineController:
         self.gui._pipeline_step = ""
         self._stop_prepare_status_polling()
         self._stop_local_worker_server()
-        if hasattr(self.gui, "prepare_workflow_thread") and self.gui.prepare_workflow_thread is not None:
-            try:
-                self.gui.prepare_workflow_thread.deleteLater()
-            except Exception:
-                pass
-            self.gui.prepare_workflow_thread = None
+        # PrepareWorkflowWorker is released by its native QThread.finished
+        # handler.  At this point its result signal has fired, but run() may
+        # still be unwinding for a few milliseconds.
         
         if hasattr(self.gui, "run_all_btn"):
             self.gui.run_all_btn.setEnabled(True)

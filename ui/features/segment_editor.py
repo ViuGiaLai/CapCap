@@ -164,6 +164,7 @@ class SegmentEditorMixin:
         segment["voice_edited"] = True
         self._voiceover_force_refresh = True
         self.current_translated_segment_models = self._dict_segments_to_models(self.current_translated_segments, translated=True)
+        self._invalidate_dubbed_output_after_subtitle_edit()
         self.persist_current_timeline_project_data()
         self._update_segment_spoken_status(index)
         self.refresh_ui_state()
@@ -182,11 +183,8 @@ class SegmentEditorMixin:
         self._voiceover_force_refresh = True
         self.current_translated_segment_models = self._dict_segments_to_models(self.current_translated_segments, translated=True)
         self._sync_hidden_translated_text_from_segments()
-        self.apply_segments_to_timeline()
-        self.persist_current_timeline_project_data()
-        self.schedule_live_subtitle_preview_refresh()
+        self._commit_subtitle_mutation(selected_index=index)
         self.sync_segment_editor_rows()
-        self.refresh_ui_state()
 
     def _normalize_manual_highlight(self, text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").replace("\u2029", " ").replace("\n", " ")).strip()
@@ -1684,10 +1682,7 @@ class SegmentEditorMixin:
             self._refresh_timeline_history_buttons()
             self.set_selected_segment_index(index, sync_ui=True)
             self.timeline.set_active_segment_index(index)
-            self.apply_segments_to_timeline()
-            self.persist_current_timeline_project_data()
-            self.schedule_live_subtitle_preview_refresh()
-            self.refresh_ui_state()
+            self._commit_subtitle_mutation(selected_index=index)
             self.show_subtitle_inspector_details()
             self.log(f"[Subtitle] Added manual TS1 segment at {start:.2f}s.")
             return

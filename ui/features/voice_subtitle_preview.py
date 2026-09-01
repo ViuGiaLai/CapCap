@@ -411,19 +411,19 @@ class VoiceSubtitlePreviewMixin:
         if not imported_segments:
             QMessageBox.warning(self, "Import Failed", "The selected file could not be parsed as a valid SRT subtitle.")
             return
+        imported_segments = self.normalize_subtitle_timing(imported_segments)
+        srt_text = self.format_to_srt(imported_segments)
 
         self.current_segments = imported_segments
+        self._invalidate_translation_after_original_change()
         self.transcript_text.setText(srt_text)
         self.last_original_srt_path = file_path
-        self.persist_transcription_project_data(imported_segments, srt_path=file_path)
+        self.processed_artifacts["srt_original"] = file_path
+        self._commit_subtitle_mutation()
         state = self.ensure_current_project()
         if state:
             state.set_setting("transcription_signature", "")
             self.project_service.save_project(state)
-        self._sync_segment_models_from_current_segments()
-        if hasattr(self, "timeline"):
-            self.timeline.set_segments(self.current_segments)
-            self.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)
         self.log(f"[Import] Original subtitle loaded: {file_path} ({len(imported_segments)} segments)")
         QMessageBox.information(self, "Import Success", f"Loaded {len(imported_segments)} segments from original subtitle.")
         self.refresh_ui_state()
@@ -453,6 +453,7 @@ class VoiceSubtitlePreviewMixin:
         if not imported_segments:
             QMessageBox.warning(self, "Import Failed", "The selected file could not be parsed as a valid SRT subtitle.")
             return
+        imported_segments = self.normalize_subtitle_timing(imported_segments)
 
         # An SRT only stores text/timestamps. Keep diarization metadata from
         # the current translated transcript first (manual speaker corrections
@@ -489,29 +490,22 @@ class VoiceSubtitlePreviewMixin:
                     speaker = str(best.get("speaker", "") or "").strip()
                     if speaker:
                         imported["speaker"] = speaker
-        if self.keep_timeline_cb.isChecked() and base_segments and len(base_segments) == len(imported_segments):
-            merged_segments = []
-            for idx, base in enumerate(base_segments):
-                merged = dict(imported_segments[idx])
-                merged["start"] = float(base.get("start", 0.0))
-                merged["end"] = float(base.get("end", 0.0))
-                merged["words"] = list(base.get("words", []))
-                if base.get("speaker"):
-                    merged["speaker"] = str(base.get("speaker", "") or "")
-                if "manual_highlights" in imported_segments[idx]:
-                    merged["manual_highlights"] = imported_segments[idx]["manual_highlights"]
-                elif base.get("manual_highlights"):
-                    merged["manual_highlights"] = list(base.get("manual_highlights", []))
-                merged_segments.append(merged)
-            imported_segments = merged_segments
-            srt_text = self.format_to_srt(imported_segments)
+        # Import is authoritative: replace the previous cue boundaries with
+        # the file's normalized timing.  "Keep timeline" still applies to
+        # text-only editing, but must not resurrect old overlapping timings
+        # during an explicit SRT import.
+        srt_text = self.format_to_srt(imported_segments)
 
         self.translated_text.setText(srt_text)
-        self.apply_edited_translation(show_message=False, force_apply=True)
-        # ``apply_edited_translation`` rebuilds dictionaries from SRT (which
-        # has no speaker field). Re-apply the metadata-bearing imported list
-        # after that conversion so the speaker assignments survive both the
-        # editor update and the timeline rebuild.
+        self.current_translated_segments = [dict(segment) for segment in imported_segments]
+        self.current_translated_segment_models = self._dict_segments_to_models(
+            self.current_translated_segments,
+            translated=True,
+        )
+        self.apply_segments_to_timeline()
+        self._invalidate_dubbed_output_after_subtitle_edit()
+        # Re-apply metadata-bearing imported entries after the timeline
+        # rebuild so speaker assignments survive the SRT replacement.
         if imported_segments and self.current_translated_segments:
             if len(imported_segments) == len(self.current_translated_segments):
                 for idx, imported in enumerate(imported_segments):
@@ -552,7 +546,9 @@ class VoiceSubtitlePreviewMixin:
             self.apply_segments_to_timeline()
         self.last_translated_srt_path = file_path
         self.processed_artifacts["srt_translated"] = file_path
-        self.persist_translation_project_data(self.current_translated_segments, file_path)
+        self._commit_subtitle_mutation(
+            selected_index=getattr(self, "_selected_segment_index", None),
+        )
         # Rebuild speaker UI/colors after replacing the translated cues.  The
         # imported SRT itself cannot contain speaker metadata, so the merge
         # above is the source of truth for these project-only fields.
@@ -610,6 +606,32 @@ class VoiceSubtitlePreviewMixin:
         return base
 
     def apply_segments_to_timeline(self):
+        timing_changed = False
+        if self.current_translated_segments:
+            normalized = self.normalize_subtitle_timing(
+                self.current_translated_segments
+            )
+            if normalized != self.current_translated_segments:
+                timing_changed = True
+                self.current_translated_segments = normalized
+                self.current_translated_segment_models = self._dict_segments_to_models(
+                    normalized,
+                    translated=True,
+                )
+                self._single_line_split_cache = None
+                self._sync_hidden_translated_text_from_segments()
+        elif self.current_segments:
+            normalized = self.normalize_subtitle_timing(self.current_segments)
+            if normalized != self.current_segments:
+                timing_changed = True
+                self.current_segments = normalized
+                self.current_segment_models = self._dict_segments_to_models(
+                    normalized,
+                    translated=False,
+                )
+                self._single_line_split_cache = None
+                self._sync_hidden_transcript_text_from_segments()
+        self._subtitle_timing_was_normalized = timing_changed
         segs = self.get_active_segments()
         if segs:
             predict_speed_ratios(segs)

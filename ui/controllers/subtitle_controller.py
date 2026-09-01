@@ -102,9 +102,14 @@ class SubtitleController:
             return
 
         self.gui.current_segments = segments
-        self.gui.current_translated_segments = []
+        self.gui._invalidate_translation_after_original_change()
         self.gui.progress_bar.setValue(60)
         self.gui.apply_segments_to_timeline()
+
+        # apply_segments_to_timeline also removes recognition duplicates and
+        # resolves overlaps.  Persist that authoritative list, not the stale
+        # worker return value, otherwise the bad cues reappear after reload.
+        segments = self.gui.current_segments
 
         srt_text = self.gui.format_to_srt(segments)
         self.gui.transcript_text.setText(srt_text)
@@ -197,6 +202,8 @@ class SubtitleController:
         self.gui.progress_bar.setValue(100)
         self.gui.translated_text.setText(translated_srt)
         self.gui.apply_edited_translation(show_message=False, force_apply=True)
+        translated_srt = self.gui.format_to_srt(self.gui.current_translated_segments)
+        self.gui.translated_text.setText(translated_srt)
 
         video_path = self.gui.video_path_edit.text()
         if video_path:
@@ -428,10 +435,8 @@ class SubtitleController:
         self.gui._reconcile_manual_highlights(target_segment)
         self.gui.current_translated_segment_models = self.gui._dict_segments_to_models(self.gui.current_translated_segments, translated=True)
         self.gui._sync_hidden_translated_text_from_segments()
-        self.gui.apply_segments_to_timeline()
-        self.gui.persist_current_timeline_project_data()
+        self.gui._commit_subtitle_mutation(selected_index=index)
         self.gui.refresh_auto_keyword_highlights(force=True)
-        self.gui.schedule_live_subtitle_preview_refresh()
         self.gui.schedule_auto_frame_preview()
         self.gui.update_project_step("refine_translation", "done")
         self.gui.sync_segment_editor_rows()
@@ -488,7 +493,9 @@ class SubtitleController:
 
         self.gui.refresh_auto_keyword_highlights(force=True)
         self.gui.translated_text.setText(normalized_srt)
-        self.gui.apply_segments_to_timeline()
+        self.gui._commit_subtitle_mutation(
+            selected_index=segment_index if segment_index >= 0 else None,
+        )
 
         out_path = self.gui.last_translated_srt_path
         if not out_path:
@@ -510,7 +517,6 @@ class SubtitleController:
         dialog = getattr(self.gui, "_rewrite_dialog", None)
         if dialog:
             dialog.accept()
-        self.gui.schedule_live_subtitle_preview_refresh()
         self.gui.schedule_auto_frame_preview()
         self.gui.sync_segment_editor_rows()
         QMessageBox.information(self.gui, "Rewrite Applied", "The rewritten SRT was applied to the subtitle editor.")
@@ -856,6 +862,9 @@ class SubtitleController:
                 )
             return False
 
+        segments = self.gui.normalize_subtitle_timing(segments)
+        srt_text = self.gui.format_to_srt(segments)
+        self.gui.translated_text.setText(srt_text)
         self.gui.current_translated_segments = segments
         self.gui.current_translated_segment_models = self.gui._dict_segments_to_models(segments, translated=True)
         if force_apply:
