@@ -95,14 +95,21 @@ a = Analysis(
         "services.voice_catalog_service",
         "services.resource_download_service",
         "services.engine_runtime",
+        "services.gpu_stage_scheduler",
         "services.workflow_runtime",
         "services.segment_service",
         "services.chunking_service",
         "services.asr_merge_service",
+        # PrepareWorkflow imports this through services.__getattr__. Because
+        # that import is dynamic, PyInstaller cannot discover the concrete
+        # module unless it is listed explicitly. Missing it makes the frozen
+        # /v1/prepare worker fail at runtime with ModuleNotFoundError.
+        "services.asr_ocr_reconciliation_service",
         "services.segment_regroup_service",
         # SpeakerDiarizationService is resolved lazily through services.__getattr__.
         # Include its concrete module so the frozen worker can import it.
         "services.speaker_diarization_service",
+        "services.subtitle_exchange_service",
         # Dynamically loaded adapters (EngineRuntime uses importlib)
         "engines.ffmpeg_adapter",
         "engines.preview_adapter",

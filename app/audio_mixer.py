@@ -153,15 +153,22 @@ def fit_wav_to_duration(
     os.makedirs(os.path.dirname(output_wav_path) or ".", exist_ok=True)
 
     if mode_key == "timeline":
-        # Timeline Priority: always cut the audio to the segment
-        # window. The end of the speech may be skipped if it exceeds
-        # the segment duration — playback continues with the next
-        # segment immediately after. No atempo, no early return.
+        # Timeline Priority used to call FFmpeg with ``-t`` here, which
+        # discarded every word after the cue deadline. Fit only inside the
+        # same natural-sounding band as Smart; an extreme overrun is returned
+        # intact and the voice scheduler queues the following cue instead.
         if abs(fit_ratio - 1.0) < 0.02:
             return input_wav_path
+        source_to_target_ratio = source_duration / target_duration
+        if source_duration > target_duration:
+            if fit_ratio < smart_min_ratio:
+                return input_wav_path
+        elif source_to_target_ratio < smart_min_ratio:
+            return input_wav_path
+        filter_chain = _build_atempo_filter(source_to_target_ratio)
         cmd = [
             ffmpeg, "-y", "-i", input_wav_path,
-            "-t", str(target_duration),
+            "-filter:a", filter_chain,
             "-ar", "16000", "-ac", "1",
             output_wav_path,
         ]
@@ -481,14 +488,28 @@ def build_voice_track_from_srt_segments(
             return s.get(key, default)
         return getattr(s, key, default)
 
+    # Resolve a real playback schedule before allocating the output. Imported
+    # subtitle timings can be much denser than their translated speech. Never
+    # solve that mismatch by truncating a sentence: serialize the next clip.
+    placements: list[float] = []
+    previous_audio_end = 0.0
+    collision_guard_seconds = 0.04
     max_end = 0.0
     for seg, wav_path in zip(segments, tts_wav_paths):
-        start = float(_seg_val(seg, "start", 0.0) or 0.0)
+        requested_start = float(
+            _seg_val(seg, "_audio_start", _seg_val(seg, "start", 0.0)) or 0.0
+        )
+        start = requested_start
+        if previous_audio_end > 0.0:
+            start = max(start, previous_audio_end + collision_guard_seconds)
+        placements.append(start)
         declared_end = float(_seg_val(seg, "end", 0.0) or 0.0)
         actual_end = declared_end
         if wav_path and os.path.exists(wav_path):
             try:
-                actual_end = max(actual_end, start + _probe_wav_duration_seconds(wav_path))
+                measured_end = start + _probe_wav_duration_seconds(wav_path)
+                actual_end = max(actual_end, measured_end)
+                previous_audio_end = measured_end
             except (OSError, wave.Error):
                 pass
         max_end = max(max_end, declared_end, actual_end)
@@ -526,7 +547,7 @@ def build_voice_track_from_srt_segments(
         for idx, (seg, wav_path) in enumerate(zip(segments, tts_wav_paths)):
             if not wav_path or not os.path.exists(wav_path):
                 continue
-            start_ms = int(float(_seg_val(seg, "start", 0.0) or 0.0) * 1000)
+            start_ms = int(placements[idx] * 1000)
             end_ms = int(float(_seg_val(seg, "end", 0.0) or 0.0) * 1000)
             max_len = max(0, end_ms - start_ms)
 
@@ -535,17 +556,6 @@ def build_voice_track_from_srt_segments(
                 clip = clip.set_frame_rate(sr).set_channels(1)
                 if gain_db:
                     clip = clip + gain_db
-
-                # Voice clips must never be summed across cue boundaries. The
-                # workflow normally resolves overruns through concise wording
-                # and natural speed adjustment; this mixer-level cap is the
-                # final defence for stale caches and manually edited timings.
-                if idx + 1 < len(segments):
-                    next_start_ms = int(float(_seg_val(segments[idx + 1], "start", 0.0) or 0.0) * 1000)
-                    collision_limit_ms = max(0, next_start_ms - start_ms)
-                    if collision_limit_ms > 0 and len(clip) > collision_limit_ms:
-                        fade_ms = min(60, max(15, collision_limit_ms // 4))
-                        clip = clip[:collision_limit_ms].fade_out(duration=fade_ms)
 
                 if max_len > 0:
                     clip_len = len(clip)

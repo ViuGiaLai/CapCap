@@ -51,7 +51,7 @@ class VoiceTimingSyncTests(unittest.TestCase):
             self.assertEqual(result, capped)
             self.assertAlmostEqual(ffprobe_wav_duration(capped), 1.0, delta=0.05)
 
-    def test_voice_workflow_caps_audio_before_the_next_cue(self):
+    def test_voice_workflow_queues_next_cue_without_cutting_audio(self):
         with tempfile.TemporaryDirectory() as folder:
             first = os.path.join(folder, "first.wav")
             second = os.path.join(folder, "second.wav")
@@ -69,16 +69,19 @@ class VoiceTimingSyncTests(unittest.TestCase):
                 tmp_dir=folder,
             )
 
-            self.assertLessEqual(ffprobe_wav_duration(wavs[0]), 0.97)
-            self.assertIn("no_overlap_fade", segments[0]["action_taken"])
+            self.assertEqual(wavs[0], first)
+            self.assertAlmostEqual(ffprobe_wav_duration(wavs[0]), 2.0, delta=0.03)
+            self.assertAlmostEqual(segments[0]["_audio_end"], 2.0, delta=0.03)
+            self.assertAlmostEqual(segments[1]["_audio_start"], 2.04, delta=0.03)
+            self.assertIn("voice_queue", segments[1]["action_taken"])
 
-    def test_mixer_never_sums_a_long_voice_over_the_next_cue(self):
+    def test_mixer_serializes_dense_cues_without_losing_first_sentence_tail(self):
         with tempfile.TemporaryDirectory() as folder:
             first = os.path.join(folder, "first.wav")
             second = os.path.join(folder, "second.wav")
             output = os.path.join(folder, "voice.wav")
             _make_tone_wav(first, 2.0)
-            _make_silent_wav(second, 0.5)
+            _make_tone_wav(second, 0.5)
             segments = [
                 {"start": 0.0, "end": 0.8},
                 {"start": 1.0, "end": 1.5},
@@ -91,10 +94,19 @@ class VoiceTimingSyncTests(unittest.TestCase):
             )
 
             with wave.open(output, "rb") as rendered:
-                rendered.setpos(int(1.1 * rendered.getframerate()))
-                samples = rendered.readframes(int(0.2 * rendered.getframerate()))
-            self.assertTrue(samples)
-            self.assertEqual(max(abs(value) for value in struct.unpack(f"<{len(samples) // 2}h", samples)), 0)
+                rate = rendered.getframerate()
+                rendered.setpos(int(1.1 * rate))
+                first_tail = rendered.readframes(int(0.2 * rate))
+                rendered.setpos(int(2.1 * rate))
+                second_body = rendered.readframes(int(0.2 * rate))
+            self.assertGreater(
+                max(abs(value) for value in struct.unpack(f"<{len(first_tail) // 2}h", first_tail)),
+                0,
+            )
+            self.assertGreater(
+                max(abs(value) for value in struct.unpack(f"<{len(second_body) // 2}h", second_body)),
+                0,
+            )
 
     def test_smart_fit_really_slows_short_speech_to_subtitle_duration(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -127,6 +139,22 @@ class VoiceTimingSyncTests(unittest.TestCase):
 
             self.assertEqual(result, fitted)
             self.assertAlmostEqual(ffprobe_wav_duration(fitted), 1.6, delta=0.12)
+
+    def test_timeline_mode_keeps_extreme_overrun_for_safe_queueing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = os.path.join(folder, "long.wav")
+            fitted = os.path.join(folder, "timeline.wav")
+            _make_tone_wav(source, 2.0)
+
+            result = fit_wav_to_duration(
+                input_wav_path=source,
+                output_wav_path=fitted,
+                target_duration_seconds=0.8,
+                mode="timeline",
+            )
+
+            self.assertEqual(result, source)
+            self.assertAlmostEqual(ffprobe_wav_duration(result), 2.0, delta=0.03)
 
     def test_very_short_speech_keeps_source_subtitle_window(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -175,6 +203,11 @@ class VoiceTimingSyncTests(unittest.TestCase):
             ]
             workflow = VoiceWorkflow(str(ROOT))
 
+            workflow._enforce_non_overlapping_voice_windows(
+                segments=segments,
+                wavs=[first, second],
+                tmp_dir=folder,
+            )
             workflow._extend_segment_ends_to_audio(
                 segments=segments,
                 wavs=[first, second],
@@ -182,7 +215,8 @@ class VoiceTimingSyncTests(unittest.TestCase):
             )
 
             self.assertAlmostEqual(segments[0]["_audio_end"], 4.0, delta=0.02)
-            self.assertAlmostEqual(segments[0]["end"], 2.16, delta=0.02)
+            self.assertAlmostEqual(segments[0]["end"], 4.0, delta=0.02)
+            self.assertAlmostEqual(segments[1]["start"], 4.04, delta=0.02)
             self.assertLess(segments[0]["end"], segments[1]["start"])
 
     def test_requested_voice_speed_is_applied_before_final_smart_sync(self):

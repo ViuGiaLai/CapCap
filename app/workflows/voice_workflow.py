@@ -1145,51 +1145,61 @@ class VoiceWorkflow:
         return synced_wavs
 
     def _enforce_non_overlapping_voice_windows(self, *, segments, wavs, tmp_dir: str):
-        """Guarantee that one generated voice cannot play over the next one.
+        """Schedule dense voice cues without overlapping or cutting speech.
 
-        Earlier passes retain the natural wording and use only bounded speed
-        changes. This final pass borrows any silence before the next cue, then
-        fades only the unavoidable tail that still crosses that hard deadline.
+        The old collision guard hard-trimmed a long WAV at the next subtitle's
+        start time.  That made the following cue punctual by literally losing
+        the end of the current sentence.  Earlier timing passes already perform
+        the bounded, natural-sounding speed changes; this final pass therefore
+        serializes any remaining overrun and records the real audio window.
+        ``build_voice_track_from_srt_segments`` consumes ``_audio_start`` as a
+        second line of defence for imported/manual subtitles.
         """
         segment_list = list(segments or [])
         guarded_wavs = list(wavs or [])
-        capped_count = 0
-        for index in range(min(len(segment_list) - 1, len(guarded_wavs))):
+        queued_count = 0
+        previous_audio_end = 0.0
+        for index in range(min(len(segment_list), len(guarded_wavs))):
             seg = segment_list[index]
             wav_path = guarded_wavs[index]
             if not wav_path or not os.path.exists(wav_path):
                 continue
             try:
-                start_s = float(seg.get("start", 0.0) or 0.0)
-                next_start_s = float(segment_list[index + 1].get("start", 0.0) or 0.0)
+                requested_start = float(seg.get("start", 0.0) or 0.0)
             except (AttributeError, TypeError, ValueError):
                 continue
-            available = next_start_s - start_s - self.VOICE_COLLISION_GUARD_SECONDS
-            if available <= 0.05:
-                continue
             actual = self._probe_wav_duration_seconds(wav_path)
-            if actual <= available + 0.01:
+            if actual <= 0.0:
                 continue
 
-            capped_path = os.path.join(tmp_dir, f"seg_{index:04d}_no_overlap.wav")
-            guarded_wavs[index] = self.engine_runtime.cap_wav_to_duration(
-                input_wav_path=wav_path,
-                output_wav_path=capped_path,
-                target_duration_seconds=available,
-                fade_out_seconds=min(0.06, available / 3.0),
-            )
-            capped_count += 1
-            action = str(seg.get("action_taken") or "accept")
-            if "no_overlap_fade" not in action:
-                seg["action_taken"] = f"{action}+no_overlap_fade"
+            scheduled_start = requested_start
+            if previous_audio_end > 0.0:
+                scheduled_start = max(
+                    scheduled_start,
+                    previous_audio_end + self.VOICE_COLLISION_GUARD_SECONDS,
+                )
+            audio_end = scheduled_start + actual
+            seg["_audio_start"] = scheduled_start
+            seg["_audio_end"] = audio_end
             metrics = dict(seg.get("_tts_metrics") or {})
-            metrics["collision_source_duration"] = round(actual, 3)
-            metrics["collision_limit_duration"] = round(available, 3)
-            metrics["action_taken"] = seg["action_taken"]
+            metrics["scheduled_audio_start"] = round(scheduled_start, 3)
+            metrics["scheduled_audio_end"] = round(audio_end, 3)
+            delay = max(0.0, scheduled_start - requested_start)
+            if delay > 0.01:
+                queued_count += 1
+                action = str(seg.get("action_taken") or "accept")
+                if "voice_queue" not in action:
+                    seg["action_taken"] = f"{action}+voice_queue"
+                metrics["voice_queue_delay"] = round(delay, 3)
+                metrics["action_taken"] = seg["action_taken"]
             seg["_tts_metrics"] = metrics
+            previous_audio_end = audio_end
 
-        if capped_count:
-            print(f"[Voice Timing] Prevented {capped_count} overlapping voice cue(s).")
+        if queued_count:
+            print(
+                "[Voice Timing] Serialized "
+                f"{queued_count} dense voice cue(s) without cutting speech."
+            )
         return guarded_wavs
 
     def _extend_segment_ends_to_audio(self, *, segments, wavs, sync_mode: str = "off") -> None:
@@ -1213,28 +1223,43 @@ class VoiceWorkflow:
                 end_s = float(seg.get("end", 0.0))
             except (TypeError, ValueError):
                 continue
+            audio_start = seg.get("_audio_start", start_s)
+            try:
+                audio_start = float(audio_start)
+            except (TypeError, ValueError):
+                audio_start = start_s
             next_start = None
             if index + 1 < len(segment_list):
                 try:
-                    next_start = float(segment_list[index + 1].get("start", 0.0))
+                    next_seg = segment_list[index + 1]
+                    next_start = float(next_seg.get("_audio_start", next_seg.get("start", 0.0)))
                 except (AttributeError, TypeError, ValueError):
                     next_start = None
             visual_ceiling = None
-            if next_start is not None and next_start >= start_s:
-                visual_ceiling = max(start_s, next_start - 0.04)
-            audio_end = start_s + actual_d
+            if next_start is not None and next_start >= audio_start:
+                visual_ceiling = max(audio_start, next_start - self.VOICE_COLLISION_GUARD_SECONDS)
+            try:
+                audio_end = float(seg.get("_audio_end", audio_start + actual_d))
+            except (TypeError, ValueError):
+                audio_end = audio_start + actual_d
+            seg["_audio_start"] = audio_start
             seg["_audio_end"] = audio_end
-            if audio_end > end_s + 0.01:
-                if "end" in seg and "_original_end" not in seg:
+            if mode_key == "smart" and (
+                audio_start > start_s + 0.01 or audio_end > end_s + 0.01
+            ):
+                if "_original_start" not in seg:
+                    seg["_original_start"] = start_s
+                if "_original_end" not in seg:
                     seg["_original_end"] = end_s
-                if mode_key == "smart":
-                    synced_end = audio_end
-                    if visual_ceiling is not None:
-                        synced_end = min(synced_end, visual_ceiling)
-                    seg["end"] = max(start_s, synced_end)
-                    action = str(seg.get("action_taken") or "accept")
-                    if "subtitle_sync" not in action:
-                        seg["action_taken"] = f"{action}+subtitle_sync"
+                original_window = max(0.0, end_s - start_s)
+                synced_end = max(audio_end, audio_start + original_window)
+                if visual_ceiling is not None:
+                    synced_end = min(synced_end, visual_ceiling)
+                seg["start"] = audio_start
+                seg["end"] = max(audio_start, synced_end)
+                action = str(seg.get("action_taken") or "accept")
+                if "subtitle_sync" not in action:
+                    seg["action_taken"] = f"{action}+subtitle_sync"
                 continue
 
             # Do not collapse the visual cue to the shorter TTS file. Doing so
