@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import re
 from math import ceil
+from difflib import SequenceMatcher
 
 
 class SegmentRegroupService:
-    VERSION = "segment-regroup-v2"
+    VERSION = "segment-regroup-v3"
 
     def regroup(self, segments: list[dict], *, max_gap_seconds: float = 0.35, max_duration_seconds: float = 8.0) -> list[dict]:
+        # Step 1: Deduplicate & stitch boundary overlapping segments on the whole cues first
+        deduped = self.deduplicate_and_clamp_timeline(segments)
+
+        # Step 2: Split oversized segments (> 8.0s) on clean, unified sentences
         regrouped: list[dict] = []
-        for segment in segments or []:
+        for segment in deduped or []:
             text = str(segment.get("text", "") or "").strip()
             if not text:
                 continue
@@ -27,6 +32,150 @@ class SegmentRegroupService:
             payload["text"] = self._normalize_sentence_text(payload.get("text", ""))
             normalized.append(payload)
         return normalized
+
+    @classmethod
+    def _is_near_prefix(cls, full_norm: str, prefix_norm: str, min_chars: int = 2) -> bool:
+        """Check if prefix_norm is a prefix or near-prefix of full_norm (allowing minor ASR variation)."""
+        if not full_norm or not prefix_norm or len(prefix_norm) < min_chars:
+            return False
+        if full_norm.startswith(prefix_norm):
+            return True
+        # For short phrases (<= 6 chars), require exact prefix only to prevent false positives
+        if len(prefix_norm) <= 6:
+            return False
+        k = len(prefix_norm)
+        if len(full_norm) >= k:
+            head = full_norm[:k]
+            sim = SequenceMatcher(None, head, prefix_norm).ratio()
+            if sim >= 0.88:
+                return True
+        return False
+
+    @classmethod
+    def _find_suffix_prefix_overlap(cls, left_text: str, right_text: str) -> tuple[int, str]:
+        left = str(left_text or "").strip()
+        right = str(right_text or "").strip()
+        if not left or not right:
+            return 0, ""
+
+        left_norm = re.sub(r"[^\w]", "", left.lower())
+        right_norm = re.sub(r"[^\w]", "", right.lower())
+        if not left_norm or not right_norm:
+            return 0, ""
+
+        max_search = min(len(left_norm), len(right_norm))
+        for k in range(max_search, 1, -1):
+            suffix = left_norm[-k:]
+            prefix = right_norm[:k]
+            if suffix == prefix:
+                return k, suffix
+        return 0, ""
+
+    @classmethod
+    def _stitch_text(cls, left: str, right: str, overlap_norm_len: int) -> str:
+        matched = 0
+        right_cut_idx = len(right)
+        for idx, char in enumerate(right):
+            if re.match(r"\w", char):
+                matched += 1
+                if matched == overlap_norm_len:
+                    right_cut_idx = idx + 1
+                    break
+        continuation = right[right_cut_idx:].strip()
+        if not continuation:
+            return left
+        if left and left[-1] in "，, ":
+            return f"{left}{continuation}".strip()
+        elif re.search(r"[\u3400-\u9fff\uf900-\ufaff]", left):
+            return f"{left}{continuation}".strip()
+        else:
+            return f"{left} {continuation}".strip()
+
+    @classmethod
+    def deduplicate_and_clamp_timeline(
+        cls,
+        segments: list[dict],
+        *,
+        min_gap_seconds: float = 0.02,
+        similarity_threshold: float = 0.85,
+    ) -> list[dict]:
+        """Remove duplicate, near-duplicate, and prefix/suffix overlapping cues,
+
+        and enforce clean non-overlapping timeline boundaries.
+        """
+        if not segments:
+            return []
+
+        cleaned: list[dict] = []
+        for raw in segments:
+            text = str(raw.get("text", "") or "").strip()
+            if not text:
+                continue
+            start = float(raw.get("start", 0.0) or 0.0)
+            end = max(start + 0.1, float(raw.get("end", start) or start))
+            item = dict(raw)
+            item["start"] = start
+            item["end"] = end
+            item["text"] = text
+
+            if not cleaned:
+                cleaned.append(item)
+                continue
+
+            prev = cleaned[-1]
+            prev_text = prev["text"].strip()
+            item_text = item["text"].strip()
+
+            prev_norm = re.sub(r"[^\w]", "", prev_text.lower())
+            item_norm = re.sub(r"[^\w]", "", item_text.lower())
+
+            overlap = max(0.0, min(prev["end"], item["end"]) - max(prev["start"], item["start"]))
+            time_gap = item["start"] - prev["end"]
+
+            # Check for duplication / prefix-containment if they overlap or are very close (gap < 0.5s)
+            if overlap > 0.0 or time_gap < 0.5:
+                # Case 1: Exact or near-exact duplicate (>= similarity_threshold)
+                sim = SequenceMatcher(None, prev_norm, item_norm).ratio() if prev_norm and item_norm else 0.0
+                if sim >= similarity_threshold:
+                    if (item["end"] - item["start"]) > (prev["end"] - prev["start"]):
+                        cleaned[-1] = item
+                    continue
+
+                prev_old_end = float(prev.get("end", 0.0) or 0.0)
+                # Case 2: item is an extension/completion of prev (fuzzy prefix)
+                if cls._is_near_prefix(item_norm, prev_norm):
+                    cleaned[-1] = item
+                    continue
+
+                # Case 3: prev is an extension of item (fuzzy prefix)
+                if cls._is_near_prefix(prev_norm, item_norm):
+                    continue
+
+                # Case 4: Suffix-prefix overlap (end of prev is start of item) -> STITCH, not just clamp!
+                if overlap > 0.15 or (0.0 <= item["start"] - prev["end"] <= 0.3):
+                    overlap_len, _ = cls._find_suffix_prefix_overlap(prev_text, item_text)
+                    if overlap_len >= 2:
+                        stitched_text = cls._stitch_text(prev_text, item_text, overlap_len)
+                        prev["text"] = stitched_text
+                        prev["end"] = max(float(prev["end"]), float(item["end"]))
+                        if item.get("words"):
+                            prev["words"] = list(prev.get("words") or []) + [
+                                w for w in (item.get("words") or [])
+                                if float(w.get("start", 0.0)) >= prev_old_end - 0.05
+                            ]
+                        continue  # Merged into prev, do NOT append item separately
+
+            # Only adjust minor sub-frame rounding jitter (<= 0.15s) without truncating genuine dialogue
+            if 0.0 < overlap <= 0.15:
+                prev["end"] = max(prev["start"] + 0.1, item["start"] - min_gap_seconds)
+                if prev.get("words"):
+                    for w in prev["words"]:
+                        if float(w.get("end", 0.0)) > prev["end"]:
+                            w["end"] = round(prev["end"], 3)
+
+            cleaned.append(item)
+
+        return cleaned
 
     def _split_oversized_segment(
         self,

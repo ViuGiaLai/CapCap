@@ -624,6 +624,20 @@ class PrepareWorkflow:
         if is_remote_profile() or not service.should_scan(raw_segments, source_language):
             return raw_segments, 0
         region = (os.getenv("OCR_SUBTITLE_REGION") or "bottom").strip().lower()
+
+        # Strategic hardsub precheck: verify burned-in subtitles presence across speech cues
+        try:
+            has_hardsubs = self.engine_runtime.detect_hardsubs(
+                video_path,
+                speech_segments=raw_segments,
+                region=region,
+            )
+            if not has_hardsubs:
+                print("[ASR Accuracy] Strategic sampling detected no burned-in subtitles; skipping OCR verification.")
+                return raw_segments, 0
+        except Exception as exc:
+            print(f"[ASR Accuracy] Hardsub precheck warning: {exc}")
+
         try:
             print("[ASR Accuracy] Risky ASR cues detected; verifying burned-in source subtitles via OCR.")
             cue_requests = service.suspicious_cue_requests(
@@ -740,7 +754,20 @@ class PrepareWorkflow:
         if speaker_diarization_num_speakers < 2:
             speaker_diarization_num_speakers = -1
         is_sensevoice = transcription_engine == "sensevoice"
-        if is_sensevoice:
+        src_lang_code = str(source_language or "").strip().lower().split("-")[0]
+        if (
+            not is_sensevoice
+            and transcription_engine == "whisper"
+            and src_lang_code in {"zh", "cmn", "yue"}
+            and os.path.exists(models_path("sensevoice"))
+        ):
+            print(
+                f"[ASR] Chinese source language ({source_language}) with available SenseVoice model; "
+                "using SenseVoice as the default ASR engine."
+            )
+            transcription_engine = "sensevoice"
+            is_sensevoice = True
+        elif is_sensevoice:
             from sensevoice_processor import requires_multilingual_whisper
             if requires_multilingual_whisper(source_language):
                 print(
@@ -1350,6 +1377,7 @@ class PrepareWorkflow:
                     streamed_translation_executor = None
                     streamed_translation_futures = []
                     streamed_translation_enabled = False
+                raw_segments = self.segment_regroup_service.deduplicate_and_clamp_timeline(raw_segments)
                 segment_models = self.segment_service.transcript_dicts_to_models(raw_segments)
                 project_state.set_setting("transcription_signature", transcription_signature)
             if diarization_future is not None:

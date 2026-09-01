@@ -30,6 +30,20 @@ class OcrAdapter:
                 progress_callback=progress_callback,
             )
 
+    def detect_hardsubs(
+        self, video_path: str, speech_segments: list[dict] | None = None,
+        *, region: str = "bottom", min_detections: int = 2, max_samples: int = 12,
+    ) -> bool:
+        from ocr_processor import detect_hardsub_presence
+        with GPUStageScheduler.stage("ocr"):
+            return detect_hardsub_presence(
+                video_path,
+                speech_segments=speech_segments,
+                region=region,
+                min_detections=min_detections,
+                max_samples=max_samples,
+            )
+
     def transcribe_with_model(self, model, video_path: str, *, language: str = "auto", task: str = "transcribe", region: str = "bottom"):
         with GPUStageScheduler.stage("ocr"):
             return transcribe_video_ocr(video_path, region=region, ocr_engine=model)

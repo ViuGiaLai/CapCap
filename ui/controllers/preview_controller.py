@@ -1018,6 +1018,27 @@ class PreviewController:
             if not self._check_audio_freshness(chosen_audio):
                 return
 
+        # 3-Tier QA Gate Validation
+        segments_for_qa = getattr(self.gui, "current_translated_segments", None) or getattr(self.gui, "current_segments", None)
+        if segments_for_qa and mode in ("subtitle", "both", "voice"):
+            from services.subtitle_exchange_service import SubtitleExchangeService
+            qa_res = SubtitleExchangeService.evaluate_3tier_qa(
+                segments_for_qa,
+                source_language=self.gui.get_source_language_code() if hasattr(self.gui, "get_source_language_code") else "auto",
+                target_language=self.gui.get_target_language_code() if hasattr(self.gui, "get_target_language_code") else "vi",
+            )
+            if qa_res.get("status") == "critical":
+                critical_msg = "\n".join(f"• {issue}" for issue in qa_res.get("critical_issues", [])[:5])
+                QMessageBox.critical(
+                    self.gui,
+                    "Export Blocked (Critical QA Errors)",
+                    f"Export cannot proceed due to critical subtitle issues:\n\n{critical_msg}\n\nPlease fix these cues in the editor before exporting.",
+                )
+                return
+            elif qa_res.get("status") == "warning":
+                warning_count = len(qa_res.get("warning_issues", []))
+                self.gui.log(f"[QA Warning] {warning_count} potential issue(s) detected. Continuing export...")
+
         if mode in ("subtitle", "both"):
             translated_srt_path = self._prepare_current_export_srt()
             # Refresh once, then export the exact ASS that MPV is currently

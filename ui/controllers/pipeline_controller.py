@@ -500,7 +500,7 @@ class PipelineController:
             speaker_diarization=self.gui.is_speaker_diarization_enabled(),
             speaker_diarization_num_speakers=self.gui.get_speaker_diarization_num_speakers(),
             skip_translation=skip_translation,
-            repair_asr_with_ocr=self.target_stage != "transcript",
+            repair_asr_with_ocr=True,
             prefetch_voice_name=self.gui.get_active_voice_name() if prefetch_tts else "",
             prefetch_voice_speed=self.gui._parse_voice_speed_value() if prefetch_tts else 1.0,
             remote_api_url=self.local_worker_api_url,

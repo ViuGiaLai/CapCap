@@ -50,7 +50,7 @@ class AsrOcrReconciliationService:
     the spoken transcript.
     """
 
-    VERSION = "multilingual-fast-adaptive-dialogue-segmentation-v7"
+    VERSION = "multilingual-fast-adaptive-dialogue-segmentation-v8"
     MAX_TIME_SLOP_SECONDS = 0.45
     MAX_OCR_LENGTH = 80
     MAX_SCAN_RANGES = 512
@@ -135,18 +135,48 @@ class AsrOcrReconciliationService:
             end = max(start, float(segment.get("end", start) or start))
         except (TypeError, ValueError):
             start = end = 0.0
+        duration = end - start
+        char_count = len(compact)
+        # Low speech density: speaking for 1.5+s with <= 6 characters (likely truncated ASR)
+        low_density = duration >= 1.5 and char_count <= 6
+        # Multi-sentence / merge risk: long duration AND contains an actual
+        # clause-ending punctuation mark (or whitespace for CJK scripts where spaces indicate clause pauses).
+        if family in {"han", "japanese", "korean"}:
+            has_clause_break = bool(re.search(r"[,，。!?！？;；\s]", text.strip()))
+        else:
+            has_clause_break = bool(re.search(r"[,，。!?！？;；]", text.strip()))
+        merge_risk = duration >= cls.MERGE_RISK_DURATION_SECONDS and (has_clause_break or low_density)
+        # Low confidence score if provided by ASR engine
+        low_confidence = False
+        if segment.get("confidence") is not None:
+            try:
+                low_confidence = float(segment["confidence"]) < 0.75
+            except (TypeError, ValueError):
+                pass
         return bool(
-            len(compact) <= cls.AUTHORITATIVE_SHORT_LENGTH[family]
-            or end - start >= cls.MERGE_RISK_DURATION_SECONDS
+            char_count <= cls.AUTHORITATIVE_SHORT_LENGTH[family]
+            or merge_risk
+            or low_density
+            or low_confidence
             or segment.get("split_from_long_asr") is True
         )
 
     @classmethod
     def should_scan(cls, asr_segments: list[dict], source_language: str) -> bool:
+        # NOTE: this deliberately does NOT hard-gate on `_LANGUAGE_FAMILIES`
+        # membership. `_LANGUAGE_FAMILIES` is only a whitelist of language
+        # *codes* we can shortcut without inspecting the text; it is not an
+        # exhaustive list of supported scripts. Every other entry point in
+        # this class (`suspicious_time_ranges`, `suspicious_cue_requests`,
+        # `reconcile`) already falls back to `_detect_family()` per segment
+        # when the language code isn't in the whitelist, so a video tagged
+        # with an unlisted-but-supported code (e.g. "it", "nl", "tr") still
+        # gets reconciled correctly by those methods. Previously this method
+        # short-circuited to False for any such language, silently disabling
+        # OCR reconciliation before it ever got a chance to run, even though
+        # the rest of the pipeline was fully capable of handling it. Keeping
+        # `should_scan` consistent with the other methods avoids that gap.
         explicit_family = cls._language_family(source_language)
-        language = str(source_language or "auto").strip().lower()
-        if not explicit_family and language not in {"", "auto"}:
-            return False
         return any(
             cls._has_speech_evidence(segment) and cls._needs_ocr_verification(
                 segment,
@@ -224,9 +254,6 @@ class AsrOcrReconciliationService:
                 if cue_end - cue_start >= cls.MERGE_RISK_DURATION_SECONDS
                 else "authoritative"
             )
-            # Sequence sampling stays inside the VAD/ASR cue. Padding a long
-            # cue pulled in the preceding/following subtitle and could create
-            # a false split. Short cues retain a small decoder-timestamp slop.
             effective_padding = 0.0 if scan_mode == "sequence" else max(float(padding_seconds), 0.15)
             start = max(0.0, cue_start - effective_padding)
             end = max(start, cue_end + effective_padding)
@@ -265,16 +292,30 @@ class AsrOcrReconciliationService:
     @classmethod
     def _is_safe_text_match(cls, asr_text: str, ocr_text: str, family: str) -> bool:
         if cls._contains_complete_cue(asr_text, ocr_text, family):
-            return len(ocr_text) > len(asr_text)
+            # An OCR line that fully contains the ASR text -- including the
+            # exact-match case where both strings are identical -- is a
+            # safe candidate. Using a strict `>` here previously excluded
+            # exact matches (the single most trustworthy case) from the
+            # candidate pool: when multiple OCR lines exist in the same
+            # window, discarding the exact match could let a noisier,
+            # loosely-matching candidate win the `best` selection below and
+            # overwrite an already-correct ASR cue.
+            return len(ocr_text) >= len(asr_text)
         if family in _WORD_BASED_FAMILIES:
             return False
-        # Permit only a close, equal-length correction for a compact short
-        # cue. This covers ASR homophones such as 助手 -> 住手 without making
-        # OCR authoritative for arbitrary unrelated on-screen text.
-        return bool(
-            2 <= len(asr_text) == len(ocr_text) <= 4
-            and SequenceMatcher(None, asr_text, ocr_text).ratio() >= 0.5
-        )
+        # Permit close, similar-length corrections or multi-part sequence subtitles for CJK/compact-script cues.
+        asr_len = len(asr_text.replace(" ", ""))
+        ocr_len = len(ocr_text.replace(" ", ""))
+        if 2 <= asr_len <= 40 and 2 <= ocr_len <= 40:
+            len_ratio = ocr_len / max(1, asr_len)
+            if 0.25 <= len_ratio <= 2.5:
+                similarity = SequenceMatcher(None, asr_text, ocr_text).ratio()
+                if similarity >= 0.15 or (0.5 <= len_ratio <= 1.5):
+                    return True
+                common = sum(1 for ch in ocr_text if ch in asr_text)
+                if common >= 2:
+                    return True
+        return False
 
     @classmethod
     def reconcile(
@@ -310,11 +351,13 @@ class AsrOcrReconciliationService:
                 ocr_normalized = cls._normalized(ocr_text, family)
                 if not ocr_normalized or len(ocr_normalized.replace(" ", "")) > cls.MAX_OCR_LENGTH:
                     continue
+                stable_source_subtitle = int(ocr.get("ocr_consensus_frames", 0) or 0) >= 2
+                if not stable_source_subtitle:
+                    continue
                 safe_legacy_match = cls._is_safe_text_match(
                     asr_normalized, ocr_normalized, family
                 )
-                stable_source_subtitle = int(ocr.get("ocr_consensus_frames", 0) or 0) >= 2
-                if not safe_legacy_match and not stable_source_subtitle:
+                if not safe_legacy_match:
                     continue
                 overlap, midpoint_distance = cls._interval_match(item, ocr)
                 if overlap <= 0.0 and midpoint_distance > cls.MAX_TIME_SLOP_SECONDS:

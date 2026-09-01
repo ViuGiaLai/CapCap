@@ -473,6 +473,64 @@ class AsrMergeService:
                 self._append_with_dedup(merged_segments, candidate)
         return self.normalize_segment_timeline([entry["segment"] for entry in merged_segments])
 
+    @classmethod
+    def _is_near_prefix(cls, full_norm: str, prefix_norm: str, min_chars: int = 2) -> bool:
+        """Check if prefix_norm is a prefix or near-prefix of full_norm (allowing minor ASR variation)."""
+        if not full_norm or not prefix_norm or len(prefix_norm) < min_chars:
+            return False
+        if full_norm.startswith(prefix_norm):
+            return True
+        # For short phrases (<= 6 chars), require exact prefix only to prevent false positives
+        if len(prefix_norm) <= 6:
+            return False
+        k = len(prefix_norm)
+        if len(full_norm) >= k:
+            head = full_norm[:k]
+            sim = SequenceMatcher(None, head, prefix_norm).ratio()
+            if sim >= 0.88:
+                return True
+        return False
+
+    @classmethod
+    def _find_suffix_prefix_overlap(cls, left_text: str, right_text: str) -> tuple[int, str]:
+        left = str(left_text or "").strip()
+        right = str(right_text or "").strip()
+        if not left or not right:
+            return 0, ""
+
+        left_norm = re.sub(r"[^\w]", "", left.lower())
+        right_norm = re.sub(r"[^\w]", "", right.lower())
+        if not left_norm or not right_norm:
+            return 0, ""
+
+        max_search = min(len(left_norm), len(right_norm))
+        for k in range(max_search, 1, -1):
+            suffix = left_norm[-k:]
+            prefix = right_norm[:k]
+            if suffix == prefix:
+                return k, suffix
+        return 0, ""
+
+    @classmethod
+    def _stitch_text(cls, left: str, right: str, overlap_norm_len: int) -> str:
+        matched = 0
+        right_cut_idx = len(right)
+        for idx, char in enumerate(right):
+            if re.match(r"\w", char):
+                matched += 1
+                if matched == overlap_norm_len:
+                    right_cut_idx = idx + 1
+                    break
+        continuation = right[right_cut_idx:].strip()
+        if not continuation:
+            return left
+        if left and left[-1] in "，, ":
+            return f"{left}{continuation}".strip()
+        elif re.search(r"[\u3400-\u9fff\uf900-\ufaff]", left):
+            return f"{left}{continuation}".strip()
+        else:
+            return f"{left} {continuation}".strip()
+
     def _append_with_dedup(self, merged_entries: list[dict], candidate: dict) -> None:
         if not candidate["segment"]["text"]:
             return
@@ -485,18 +543,59 @@ class AsrMergeService:
         candidate_segment = candidate["segment"]
         overlap = self._time_overlap(previous_segment, candidate_segment)
         similarity = self._similarity(previous_segment.get("text", ""), candidate_segment.get("text", ""))
-        # Repeated dialogue is valid.  Only the overlapping boundary audio
-        # of adjacent chunks can represent the same utterance; using text
-        # similarity alone discarded real consecutive phrases such as
-        # "confirmed?" / "confirmed" in a single chunk.
-        if overlap <= 0.0:
+
+        prev_clean = self._normalize_text(previous_segment.get("text", ""))
+        cand_clean = self._normalize_text(candidate_segment.get("text", ""))
+
+        cand_start = float(candidate_segment.get("start", 0.0) or 0.0)
+        prev_end = float(previous_segment.get("end", 0.0) or 0.0)
+
+        same_chunk = not self._different_chunks(previous, candidate)
+        if same_chunk:
+            # Within the same chunk, do NOT merge or collapse adjacent dialogue
+            # unless it is an exact/near-exact duplicate with substantial temporal overlap (ASR stutter loop)
+            if overlap > 0.0:
+                shorter_dur = min(
+                    float(previous_segment.get("end", 0.0)) - float(previous_segment.get("start", 0.0)),
+                    float(candidate_segment.get("end", 0.0)) - float(candidate_segment.get("start", 0.0)),
+                )
+                if similarity >= 0.95 and overlap >= max(0.20, shorter_dur * 0.80):
+                    if float(candidate_segment.get("end", 0.0)) > float(previous_segment.get("end", 0.0)):
+                        merged_entries[-1] = candidate
+                    return
             merged_entries.append(candidate)
             return
 
-        # Never collapse repeated dialogue emitted inside one ASR chunk. The
-        # overlap deduper exists only to reconcile duplicated audio shared by
-        # two adjacent chunks.
-        if not self._different_chunks(previous, candidate):
+        # DIFFERENT CHUNKS (chunk boundary reconciliation):
+        # 1. Prefix-extension check on overlapping or touching chunks
+        if overlap > 0.0 or (0.0 <= cand_start - prev_end <= 0.4):
+            prev_old_end = float(previous_segment.get("end", 0.0) or 0.0)
+            if self._is_near_prefix(cand_clean, prev_clean):
+                merged_entries[-1] = candidate
+                return
+            if self._is_near_prefix(prev_clean, cand_clean):
+                return
+
+            # 2. Suffix-prefix chain overlap between adjacent chunks (e.g. A+B in Chunk 1, B+C in Chunk 2)
+            overlap_len, _ = self._find_suffix_prefix_overlap(
+                previous_segment.get("text", ""), candidate_segment.get("text", "")
+            )
+            if overlap_len >= 2:
+                prev_raw = str(previous_segment.get("text", "") or "").strip()
+                cand_raw = str(candidate_segment.get("text", "") or "").strip()
+                stitched = self._stitch_text(prev_raw, cand_raw, overlap_len)
+                previous_segment["text"] = stitched
+                previous_segment["end"] = max(float(previous_segment.get("end", 0.0)), float(candidate_segment.get("end", 0.0)))
+                if candidate_segment.get("words"):
+                    prev_words = previous_segment.get("words", []) or []
+                    cand_words = [
+                        w for w in (candidate_segment.get("words") or [])
+                        if float(w.get("start", 0.0)) >= prev_old_end - 0.05
+                    ]
+                    previous_segment["words"] = prev_words + cand_words
+                return
+
+        if overlap <= 0.0:
             merged_entries.append(candidate)
             return
 
@@ -543,6 +642,11 @@ class AsrMergeService:
             merged_entries[-1] = candidate
 
     def normalize_segment_timeline(self, segments: list[dict]) -> list[dict]:
+        """Ensure segments have valid non-negative durations and resolve sub-frame rounding jitter.
+
+        Genuine multi-speaker / overlapping dialogue (> 0.15s) preserves its true
+        detected speech boundaries without accumulating cascading time drift.
+        """
         normalized: list[dict] = []
         previous_end = 0.0
         for segment in segments or []:
@@ -551,20 +655,25 @@ class AsrMergeService:
             end = float(current.get("end", 0.0) or 0.0)
             if end <= start:
                 end = start + 0.12
-            if start < previous_end:
+
+            shift = 0.0
+            # Sub-frame jitter resolution (<= 0.15s, e.g. 1-2 frames rounding jitter)
+            if 0.0 < previous_end - start <= 0.15:
                 shift = previous_end - start
                 start = previous_end
                 if end <= start:
-                    end = start + max(0.12, 0.12 - shift)
+                    end = start + 0.12
+
             current["start"] = round(start, 3)
             current["end"] = round(max(start + 0.12, end), 3)
             if current.get("words"):
                 adjusted_words = []
                 for word in current.get("words") or []:
                     try:
-                        word_start = max(float(word.get("start", start) or start), start)
-                        word_end = max(word_start, float(word.get("end", word_start) or word_start))
-                        word_end = min(word_end, current["end"])
+                        word_start = float(word.get("start", start) or start) + shift
+                        word_end = float(word.get("end", word_start) or word_start) + shift
+                        word_start = max(word_start, current["start"])
+                        word_end = min(max(word_start, word_end), current["end"])
                         adjusted_words.append({
                             "start": round(word_start, 3),
                             "end": round(word_end, 3),
@@ -574,5 +683,5 @@ class AsrMergeService:
                         continue
                 current["words"] = adjusted_words
             normalized.append(current)
-            previous_end = current["end"]
+            previous_end = max(previous_end, current["end"])
         return normalized

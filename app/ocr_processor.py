@@ -297,13 +297,16 @@ def _is_blank_region(image):
 
 
 def _subtitle_lines_from_result(result, image_shape) -> list[str]:
-    """Keep OCR boxes that look like centered horizontal subtitle lines.
+    """Score and rank OCR candidate boxes based on subtitle geometry.
 
-    A bottom crop can still contain vertical episode titles, corner logos, or
-    watermarks.  Joining every RapidOCR string made those labels part of the
-    spoken sentence (for example ``内`` + ``曹兄``).  Use detector geometry to
-    discard off-centre/upper/vertical boxes before returning text.  Engines
-    without box geometry retain the legacy behaviour.
+    A bottom crop can contain vertical title cards, corner channel logos, or
+    watermarks. Score candidates based on:
+    1. Aspect ratio: horizontal text (width >= height) gets strong preference;
+       tall vertical boxes (height > width * 1.2) are rejected.
+    2. Vertical position: lower region of the crop gets higher score.
+    3. Horizontal placement: centered subtitles get bonus score, but valid
+       subtitles shifted slightly left/right are still accepted if horizontal.
+    4. Text structure: complete dialogue lines vs tiny artifacts.
     """
     raw_texts = list(getattr(result, "txts", None) or [])
     boxes = getattr(result, "boxes", None)
@@ -328,24 +331,40 @@ def _subtitle_lines_from_result(result, image_shape) -> list[str]:
         box_height = max(1.0, bottom - top)
         center_x = (left + right) * 0.5
         center_y = (top + bottom) * 0.5
-        # Subtitle lines normally cross the central 64% of the crop.  A
-        # single centred CJK character remains valid; tall multi-character
-        # labels and text confined to a corner do not.
-        crosses_center_band = right >= width * 0.18 and left <= width * 0.82
-        center_is_reasonable = width * 0.18 <= center_x <= width * 0.82
-        is_vertical_label = len(_ocr_consensus_key(cleaned)) > 1 and box_height > box_width * 1.35
-        if (
-            (not crosses_center_band or not center_is_reasonable)
-            or center_y < height * 0.20
-            or is_vertical_label
-        ):
+
+        # Aspect ratio filter: dialogue subtitles are horizontal
+        aspect_ratio = box_width / box_height
+        if aspect_ratio < 0.85:
+            # Explicitly vertical text box (e.g. vertical title card / column)
             continue
-        candidates.append((top, left, index, cleaned))
+
+        # Vertical position filter: discard upper noise outside subtitle zone
+        norm_y = center_y / max(1.0, float(height))
+        if norm_y < 0.15:
+            continue
+
+        # Geometric score calculation
+        score = 0.0
+        # Horizontal aspect ratio bonus
+        score += min(3.0, aspect_ratio) * 1.5
+        # Vertical placement bonus (lower in the subtitle band is better)
+        score += norm_y * 2.0
+        # Centering bonus (subtitles tend to be near center x=0.5, but allow spread)
+        norm_x_offset = abs(center_x / max(1.0, float(width)) - 0.5)
+        score += max(0.0, 1.0 - norm_x_offset * 2.0)
+        # Length bonus (complete dialogue line vs tiny noise)
+        key_len = len(_ocr_consensus_key(cleaned))
+        score += min(5.0, float(key_len)) * 0.5
+
+        candidates.append((score, top, left, index, cleaned))
 
     if not candidates:
         return []
-    candidates.sort(key=lambda value: (value[0], value[1], value[2]))
-    return [value[-1] for value in candidates]
+    valid_candidates = [c for c in candidates if c[0] >= 2.0]
+    if not valid_candidates:
+        valid_candidates = candidates
+    valid_candidates.sort(key=lambda value: (value[1], value[2], value[3]))
+    return [value[-1] for value in valid_candidates]
 
 
 def _locate_bright_subtitle_line(image):
@@ -576,20 +595,88 @@ def _two_frame_ocr_consensus(frame_texts: list[str], expected_frames: int = 2) -
 
 
 def _is_potential_ocr_correction(asr_text: str, ocr_text: str) -> bool:
-    """Return whether frame 1 can possibly extend the suspicious ASR cue."""
-    asr_key = _ocr_consensus_key(asr_text)
+    """Return whether frame 1 is plausible dialogue to confirm with frame 2."""
     ocr_key = _ocr_consensus_key(ocr_text)
-    if not asr_key or not ocr_key:
+    if not ocr_key or len(ocr_key) < 2 or len(ocr_key) > 60:
         return False
-    if asr_key in ocr_key and len(ocr_key) > len(asr_key):
+    asr_key = _ocr_consensus_key(asr_text)
+    if not asr_key:
         return True
-    # Short CJK/compact-script homophones are often one character apart
-    # (e.g. 助手 vs 住手). Run frame 2 only when there is still meaningful
-    # lexical overlap; unrelated labels do not qualify.
-    return bool(
-        2 <= len(asr_key) == len(ocr_key) <= 4
-        and SequenceMatcher(None, asr_key, ocr_key).ratio() >= 0.5
-    )
+    if asr_key in ocr_key or ocr_key in asr_key:
+        return True
+    # Allow multi-character homophone and dialogue verification as long as lengths are comparable
+    ratio = len(ocr_key) / max(1, len(asr_key))
+    if 0.35 <= ratio <= 2.5:
+        return True
+    return SequenceMatcher(None, asr_key, ocr_key).ratio() >= 0.2
+
+
+def detect_hardsub_presence(
+    video_path: str,
+    speech_segments: list[dict] | None = None,
+    *,
+    region: str = "bottom",
+    ocr_engine=None,
+    min_detections: int = 2,
+    max_samples: int = 12,
+) -> bool:
+    """Strategically sample dialogue timestamps to detect burned-in subtitles.
+
+    Instead of blind random frames, samples across active dialogue cues where
+    subtitles are most expected to be visible. Returns True if consistent
+    burned-in text is confirmed in at least `min_detections` distinct cues.
+    """
+    if not video_path or not os.path.isfile(video_path):
+        return False
+    cap = _open_video(video_path)
+    try:
+        engine = ocr_engine or _load_ocr_engine()
+        video_fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        video_duration = total_frames / video_fps if video_fps > 0 else 0.0
+
+        sample_times: list[float] = []
+        if speech_segments and len(speech_segments) > 0:
+            valid_cues = [
+                (float(s.get("start", 0.0) or 0.0), float(s.get("end", 0.0) or 0.0))
+                for s in speech_segments
+                if float(s.get("end", 0.0) or 0.0) > float(s.get("start", 0.0) or 0.0)
+            ]
+            if valid_cues:
+                step = max(1, len(valid_cues) // max_samples)
+                selected = valid_cues[::step][:max_samples]
+                for start, end in selected:
+                    sample_times.append((start + end) * 0.5)
+
+        if not sample_times:
+            if video_duration > 2.0:
+                sample_times = list(np.linspace(video_duration * 0.1, video_duration * 0.9, min(max_samples, 10)))
+            else:
+                sample_times = [video_duration * 0.5] if video_duration > 0 else []
+
+        confirmed_detections = 0
+        for pos in sample_times:
+            frame_idx = max(0, min(total_frames - 1, int(round(pos * video_fps))))
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
+            cropped = crop_subtitle_region(frame, region=region)
+            if cropped.size == 0 or _is_blank_region(cropped):
+                continue
+            lines = ocr_frame(engine, cropped)
+            sanitized = _sanitize_ocr_line(" ".join(lines))
+            key = _ocr_consensus_key(sanitized)
+            if len(key) >= 2:
+                confirmed_detections += 1
+                if confirmed_detections >= min_detections:
+                    return True
+        return confirmed_detections >= min_detections
+    except Exception as exc:
+        print(f"[OCR] Hardsub detection error: {exc}")
+        return False
+    finally:
+        cap.release()
 
 
 def transcribe_video_ocr_ranges(

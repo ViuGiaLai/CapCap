@@ -105,6 +105,18 @@ class EngineRuntime:
             progress_callback=progress_callback,
         )
 
+    def detect_hardsubs(
+        self, video_path: str, speech_segments: list[dict] | None = None,
+        *, region: str = "bottom", min_detections: int = 2, max_samples: int = 12,
+    ) -> bool:
+        return self.ocr.detect_hardsubs(
+            video_path,
+            speech_segments=speech_segments,
+            region=region,
+            min_detections=min_detections,
+            max_samples=max_samples,
+        )
+
     def transcribe_audio_sensevoice(self, audio_path: str, model_path: str, *, language: str = "auto"):
         return self.sensevoice.transcribe(audio_path, model_path, language=language)
 

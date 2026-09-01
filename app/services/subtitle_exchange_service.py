@@ -5,6 +5,7 @@ import posixpath
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from xml.etree import ElementTree as ET
 
 
@@ -404,7 +405,7 @@ After completing the translation, return the XLSX file with the same structure. 
                     style=3 if column == 5 else 2,
                     numeric=column == 1,
                 )
-        ET.SubElement(root, f"{{{ns}}}sheetProtection", {"sheet": "1", "selectLockedCells": "1", "selectUnlockedCells": "0"})
+        ET.SubElement(root, f"{{{ns}}}sheetProtection", {"sheet": "1", "selectLockedCells": "0", "selectUnlockedCells": "1"})
         ET.SubElement(root, f"{{{ns}}}autoFilter", {"ref": f"A1:E{max(1, len(segments) + 1)}"})
         ET.SubElement(root, f"{{{ns}}}pageMargins", {"left": "0.7", "right": "0.7", "top": "0.75", "bottom": "0.75", "header": "0.3", "footer": "0.3"})
         return self._xml_bytes(root)
@@ -696,3 +697,93 @@ After completing the translation, return the XLSX file with the same structure. 
             preview = ", ".join(missing[:8]) + ("…" if len(missing) > 8 else "")
             raise SubtitleExchangeError(f"Missing subtitle cue(s): {preview}.")
         return [imported[number] for number in range(1, len(segments) + 1)]
+
+    @classmethod
+    def evaluate_3tier_qa(
+        cls,
+        segments: list[dict],
+        *,
+        source_language: str = "auto",
+        target_language: str = "vi",
+    ) -> dict[str, Any]:
+        """Evaluate subtitle segments into 3 QA tiers: passed, warning, critical.
+
+        Returns:
+            {
+                "status": "passed" | "warning" | "critical",
+                "critical_issues": list[str],
+                "warning_issues": list[str],
+                "summary": str,
+            }
+        """
+        critical_issues: list[str] = []
+        warning_issues: list[str] = []
+
+        if not segments or not isinstance(segments, list):
+            return {
+                "status": "critical",
+                "critical_issues": ["No subtitle segments found in the project."],
+                "warning_issues": [],
+                "summary": "Critical: Segment list is empty.",
+            }
+
+        prev_end = -1.0
+        prev_orig = ""
+        prev_trans = ""
+
+        src_is_cjk = str(source_language or "").strip().lower().startswith(("zh", "ja", "ko", "cmn", "yue"))
+
+        for idx, seg in enumerate(segments):
+            cue_num = idx + 1
+            start = float(seg.get("start", 0.0) or 0.0)
+            end = float(seg.get("end", 0.0) or 0.0)
+            orig = str(seg.get("text", "") or seg.get("original", "") or "").strip()
+            trans = str(seg.get("dub_text", "") or seg.get("translation", "") or seg.get("translated", "") or "").strip()
+
+            # --- Critical checks (Block Export) ---
+            if end <= start:
+                critical_issues.append(f"Cue #{cue_num}: Invalid duration (Start {start:.2f}s >= End {end:.2f}s).")
+            elif (end - start) > 60.0:
+                critical_issues.append(f"Cue #{cue_num}: Excessive duration ({end - start:.1f}s > 60s).")
+
+            if not orig and not trans:
+                critical_issues.append(f"Cue #{cue_num}: Both original and translated text are empty.")
+
+            # --- Warning checks (Allow Export with Notification) ---
+            duration = max(0.01, end - start)
+            if trans:
+                cps = len(trans) / duration
+                if cps > 28.0:
+                    warning_issues.append(f"Cue #{cue_num}: Fast reading speed ({cps:.1f} chars/sec).")
+
+                if src_is_cjk and str(target_language or "").strip().lower().startswith(("vi", "en")):
+                    cjk_chars = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", trans))
+                    if cjk_chars >= 3 and cjk_chars / max(1, len(trans)) > 0.4:
+                        warning_issues.append(f"Cue #{cue_num}: Possible untranslated source characters in translation ('{trans}').")
+
+                if trans == prev_trans and orig != prev_orig and len(trans) > 4:
+                    if prev_end >= 0.0 and (start - prev_end) <= 1.0:
+                        warning_issues.append(f"Cue #{cue_num}: Adjacent duplicate translation with different source ('{trans}').")
+
+            prev_end = end
+            prev_orig = orig
+            prev_trans = trans
+
+        status = "passed"
+        if critical_issues:
+            status = "critical"
+        elif warning_issues:
+            status = "warning"
+
+        summary = (
+            f"QA Passed ({len(segments)} cues checked)."
+            if status == "passed"
+            else f"QA {status.capitalize()}: {len(critical_issues)} critical, {len(warning_issues)} warning(s)."
+        )
+
+        return {
+            "status": status,
+            "critical_issues": critical_issues,
+            "warning_issues": warning_issues,
+            "summary": summary,
+        }
