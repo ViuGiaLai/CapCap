@@ -100,6 +100,9 @@ def paint_text_layer(painter: QPainter, item: dict, layout: TextLayerLayout, *, 
     origin = origin or QPointF(0.0, 0.0)
     rect = layout.rect.translated(origin)
     painter.setRenderHint(QPainter.TextAntialiasing, True)
+    base_opacity = max(0.0, min(1.0, float(item.get("opacity", 1.0) if item.get("opacity", None) is not None else 1.0)))
+    previous_opacity = painter.opacity()
+    painter.setOpacity(base_opacity)
     background = _color(item.get("background_color", ""), "#000000")
     if str(item.get("background_color", "") or "").strip():
         opacity = max(0.0, min(1.0, float(item.get("background_opacity", 0.5) or 0.0)))
@@ -111,6 +114,7 @@ def paint_text_layer(painter: QPainter, item: dict, layout: TextLayerLayout, *, 
     for line in layout.lines:
         painter.drawText(QPointF(rect.left() + layout.padding_x, baseline), line)
         baseline += layout.metrics.height()
+    painter.setOpacity(previous_opacity)
 
 
 def render_text_layer(item: dict, canvas_width: int, canvas_height: int) -> RenderedTextLayer:

@@ -460,6 +460,7 @@ class SegmentEditorMixin:
                 "font_color": getattr(layer, "font_color", "#FFFFFF"),
                 "background_color": getattr(layer, "background_color", ""),
                 "background_opacity": max(0.0, min(1.0, float(getattr(layer, "background_opacity", 0.5) or 0.0))),
+                "opacity": max(0.0, min(1.0, float(getattr(layer, "opacity", 1.0) if getattr(layer, "opacity", None) is not None else 1.0))),
                 "font_bold": getattr(layer, "font_bold", False),
                 "font_italic": getattr(layer, "font_italic", False),
                 "font_underline": getattr(layer, "font_underline", False),

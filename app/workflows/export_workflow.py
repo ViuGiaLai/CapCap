@@ -203,6 +203,53 @@ class ExportWorkflow:
         if not ok:
             raise RuntimeError("Failed to burn subtitles into the output video.")
 
+    def _has_visible_overlay_layers(self, state) -> bool:
+        """Return True when the saved timeline includes any visible exportable overlays."""
+        try:
+            if not state:
+                return False
+            timeline_data = state.artifacts.get("timeline") if (hasattr(state, "artifacts") and isinstance(state.artifacts, dict)) else None
+            if not timeline_data and hasattr(state, "timeline") and state.timeline:
+                timeline_data = state.timeline
+            if not timeline_data and hasattr(state, "project_root") and state.project_root:
+                tl_file = os.path.join(state.project_root, "timeline", "timeline.json")
+                if os.path.exists(tl_file):
+                    timeline_data = tl_file
+            if timeline_data:
+                import json
+                if isinstance(timeline_data, str) and os.path.exists(timeline_data):
+                    with open(timeline_data, "r", encoding="utf-8") as handle:
+                        timeline_data = json.load(handle)
+                elif isinstance(timeline_data, str) and timeline_data.strip():
+                    try:
+                        timeline_data = json.loads(timeline_data)
+                    except json.JSONDecodeError:
+                        timeline_data = None
+            if isinstance(timeline_data, dict):
+                for track in timeline_data.get("tracks", []):
+                    if not isinstance(track, dict):
+                        continue
+                    if not bool(track.get("visible", True)):
+                        continue
+                    track_type = str(track.get("type", "")).lower()
+                    if track_type not in {"text", "image", "blur", "mask"}:
+                        continue
+                    layers = track.get("layers", [])
+                    for layer in layers:
+                        if not isinstance(layer, dict):
+                            continue
+                        if bool(layer.get("visible", True)):
+                            return True
+            mask_state = getattr(state, "settings", {}).get("mask_state", {})
+            if mask_state and mask_state.get("enabled", False):
+                return True
+            blur_state = getattr(state, "settings", {}).get("blur_state", {})
+            if blur_state and blur_state.get("enabled", False):
+                return True
+        except Exception:
+            return False
+        return False
+
     def _extract_overlay_layers(self, state):
         from app.layers.text import TEXT_LAYER_EXPORT_SCALE
         """Extract timed visual layers from project state for export."""
@@ -347,15 +394,16 @@ class ExportWorkflow:
                                 text_layers.append({
                                     "text": text,
                                     "font_name": str(layer.get("font_name", "Arial") or "Arial"),
-                                # Text preview uses the same Qt-to-libass
-                                # calibration as subtitles (0.85). Persist
-                                # the logical source value in the project,
-                                # then apply the calibration only to the ASS
-                                # export size so both views match visually.
-                                "font_size": max(1, int(round(float(layer.get("font_size", 60) or 60) * TEXT_LAYER_EXPORT_SCALE))),
+                                    # Text preview uses the same Qt-to-libass
+                                    # calibration as subtitles (0.85). Persist
+                                    # the logical source value in the project,
+                                    # then apply the calibration only to the ASS
+                                    # export size so both views match visually.
+                                    "font_size": max(1, int(round(float(layer.get("font_size", 60) or 60) * TEXT_LAYER_EXPORT_SCALE))),
                                     "font_color": str(layer.get("font_color", "#FFFFFF") or "#FFFFFF"),
                                     "background_color": str(layer.get("background_color", "") or ""),
                                     "background_opacity": max(0.0, min(1.0, float(layer.get("background_opacity", 0.5) or 0.0))),
+                                    "opacity": max(0.0, min(1.0, float(layer.get("opacity", 1.0) or 1.0))),
                                     "font_bold": bool(layer.get("font_bold", False)),
                                     "font_italic": bool(layer.get("font_italic", False)),
                                     "font_underline": bool(layer.get("font_underline", False)),
@@ -461,6 +509,22 @@ class ExportWorkflow:
             handle.write(source.rstrip() + "\n" + "\n".join(events) + "\n")
         print(f"[Export] Added {len(text_layers)} TextLayer event(s) to {output_path}")
         return output_path
+
+    def _ensure_visual_overlay_ass(self, ass_path: str, text_layers, temp_dir: str = "", width=None, height=None) -> str:
+        """Create a minimal ASS file for non-subtitle overlay-only exports."""
+        if ass_path and os.path.exists(ass_path):
+            return ass_path
+        if not text_layers:
+            if not ass_path:
+                return ""
+            try:
+                os.makedirs(os.path.dirname(ass_path) or ".", exist_ok=True)
+                with open(ass_path, "w", encoding="utf-8") as handle:
+                    handle.write("[Script Info]\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,10,10,10,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+                return ass_path
+            except Exception:
+                return ""
+        return self._build_text_layer_ass(ass_path or os.path.join(str(temp_dir or self.workspace_root), "visual_overlay.ass"), text_layers, temp_dir=temp_dir or self.workspace_root, width=width, height=height)
 
     def _build_text_layer_images(self, text_layers, temp_dir: str, width: int, height: int) -> list[dict]:
         """Render static Text layers with the editor's Qt renderer for FFmpeg."""
@@ -602,10 +666,13 @@ class ExportWorkflow:
         if state:
             print(f"[Export] Project root: {state.project_root}")
             print(f"[Export] Artifacts: {list(state.artifacts.keys())}")
-        
+
         # Text is rendered by Qt into cropped transparent PNGs, matching the
         # editor's QPainter/QFontMetrics geometry instead of libass metrics.
         mask_regions, logo_layers, text_layers, blur_regions = self._extract_overlay_layers(state)
+        has_visible_overlays = bool(mask_regions or logo_layers or text_layers or blur_regions)
+        if not has_visible_overlays and state is not None and self._has_visible_overlay_layers(state):
+            has_visible_overlays = True
         render_w, render_h = target_w, target_h
         if not render_w or not render_h:
             render_w, render_h = self.engine_runtime.get_video_dimensions(video_path)
@@ -627,6 +694,23 @@ class ExportWorkflow:
                     layer["y"] = (float(layer.get("y", 0.5)) * dh + oy) / float(target_h)
             except (TypeError, ValueError, ZeroDivisionError):
                 pass
+        visual_ass_path = ""
+        if text_layers:
+            visual_ass_path = self._ensure_visual_overlay_ass(
+                ass_path if ass_path and os.path.exists(ass_path) else os.path.join(project_temp_dir or self.workspace_root, "temp", "visual_overlay.ass"),
+                text_layers,
+                temp_dir=project_temp_dir or os.path.join(self.workspace_root, "temp"),
+                width=render_w or 1920,
+                height=render_h or 1080,
+            )
+        elif has_visible_overlays and not ass_path:
+            visual_ass_path = self._ensure_visual_overlay_ass(
+                os.path.join(project_temp_dir or self.workspace_root, "temp", "visual_overlay.ass"),
+                [],
+                temp_dir=project_temp_dir or os.path.join(self.workspace_root, "temp"),
+                width=render_w or 1920,
+                height=render_h or 1080,
+            )
         text_image_layers = self._build_text_layer_images(text_layers, project_temp_dir, render_w or 1920, render_h or 1080)
         print(f"[Export] Extracted {len(mask_regions)} mask(s), {len(logo_layers)} logo(s), {len(text_layers)} text layer(s), {len(blur_regions)} blur(s)")
 
@@ -658,7 +742,7 @@ class ExportWorkflow:
                     output_path,
                     mode=mode,
                     audio_path=audio_path,
-                    ass_path=ass_path,
+                    ass_path=visual_ass_path or ass_path,
                     target_width=target_w,
                     target_height=target_h,
                     output_scale_mode=output_scale_mode,
@@ -681,19 +765,19 @@ class ExportWorkflow:
 
         tmp_mux_path = ""
         try:
-            if mode == "original":
+            if mode == "original" and not has_visible_overlays:
                 self._emit_progress(on_progress, 30, "Copying source video...")
                 if os.path.abspath(video_path) == os.path.abspath(output_path):
                     raise ValueError("Choose a different output filename from the source video.")
                 shutil.copy2(video_path, output_path)
-            elif mode == "subtitle":
+            elif mode == "subtitle" or (mode == "original" and has_visible_overlays):
                 self._emit_progress(on_progress, 20, "Burning subtitles into the video...")
                 if abs(float(original_audio_gain_db or 0.0)) > 0.001:
                     print(f"[Export] Applying A1 Original audio gain: {float(original_audio_gain_db):.2f} dB")
                 self._export_subtitle_video(
                     video_path=video_path,
                     srt_path=srt_path,
-                    ass_path=ass_path,
+                    ass_path=visual_ass_path or ass_path,
                     output_path=output_path,
                     subtitle_style=subtitle_style,
                     target_width=target_w,
@@ -739,7 +823,7 @@ class ExportWorkflow:
                     self._export_subtitle_video(
                         video_path=voice_output,
                         srt_path=srt_path,
-                        ass_path=ass_path,
+                        ass_path=visual_ass_path or ass_path,
                         output_path=output_path,
                         subtitle_style=subtitle_style,
                         target_width=target_w,
@@ -771,7 +855,7 @@ class ExportWorkflow:
                 self._export_subtitle_video(
                     video_path=tmp_mux_path,
                     srt_path=srt_path,
-                    ass_path=ass_path,
+                    ass_path=visual_ass_path or ass_path,
                     output_path=output_path,
                     subtitle_style=subtitle_style,
                     target_width=target_w,
