@@ -816,15 +816,20 @@ class PrepareWorkflow:
         streamed_translation_executor = None
         streamed_translation_futures = []
         streamed_translation_enabled = False
+        timeline_clips = [dict(clip) for clip in (timeline_clips or []) if isinstance(clip, dict)]
+        project_source_path = video_path
+        if timeline_clips:
+            first_timeline_source = str(timeline_clips[0].get("source", "") or "").strip()
+            if first_timeline_source and os.path.isfile(first_timeline_source):
+                project_source_path = first_timeline_source
         project_state = self.project_service.ensure_project(
-            video_path,
+            project_source_path,
             mode=mode,
             translator_ai=translator_ai,
             translator_style=translator_style,
             input_language=source_language,
             target_language=target_language,
         )
-        timeline_clips = [dict(clip) for clip in (timeline_clips or []) if isinstance(clip, dict)]
         # A single V1 clip can still be trimmed. Whenever a Timeline payload
         # exists it is the canonical media range for transcription.
         is_timeline_sequence = bool(timeline_clips)

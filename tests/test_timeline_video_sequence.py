@@ -48,6 +48,20 @@ class TimelineVideoSequenceTests(unittest.TestCase):
         widget.deleteLater()
         app.processEvents()
 
+    def test_refreshing_source_does_not_replace_multi_video_sequence(self):
+        from app.layers.sync_bridge import ensure_v1_a1_tracks
+
+        model = Timeline()
+        append_video(model, "episode_1.mp4", 10.0)
+        append_video(model, "episode_2.mp4", 20.0)
+        ensure_v1_a1_tracks(model, "episode_2.mp4", 10.0)
+
+        self.assertEqual(
+            [os.path.basename(clip.source) for clip in timeline_video_clips(model)],
+            ["episode_1.mp4", "episode_2.mp4"],
+        )
+        self.assertAlmostEqual(model.duration, 30.0)
+
     def test_append_reorder_remove_and_time_mapping(self):
         timeline = Timeline()
         first = append_video(timeline, "episode_1.mp4", 10.0)

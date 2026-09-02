@@ -575,7 +575,13 @@ class PipelineLifecycleMixin:
             segments = self._get_voiceover_segments()
 
         if not segments:
-            QMessageBox.warning(self, "Error", "No subtitles available for voiceover. Please run transcription/translation first (STEP 3).")
+            message = "Voiceover could not start because no subtitle segments were loaded. Run Generate again after transcription/translation completes."
+            self.log(f"[Voiceover] {message}")
+            pipeline_controller = getattr(self, "pipeline_controller", None)
+            if getattr(self, "_pipeline_active", False) and pipeline_controller is not None:
+                pipeline_controller.pipeline_fail(message)
+            else:
+                QMessageBox.warning(self, "Voiceover", message)
             return
 
         out_dir = self.voice_output_folder_edit.text().strip() or os.path.join(self.workspace_root, "output")

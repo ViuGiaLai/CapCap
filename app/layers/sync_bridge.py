@@ -300,25 +300,33 @@ def ensure_v1_a1_tracks(timeline: Timeline, video_path: str, duration: float) ->
 
     v1 = find_or_create_track(timeline, "V1 Video", LayerType.VIDEO, 80)
     v1.visible = True
-    v1.layers.clear()
-    v1.layers.append(VideoLayer(
-        name="V1 Video",
-        source=video_path,
-        start=0.0,
-        end=duration,
-        transform=Transform(x=0, y=0, scale_x=1.0, scale_y=1.0),
-    ))
+    video_layers = [
+        layer for layer in v1.layers
+        if isinstance(layer, VideoLayer) and str(layer.source or "").strip()
+    ]
+    if not video_layers:
+        video_layers = [VideoLayer(
+            name="V1 Video",
+            source=video_path,
+            start=0.0,
+            end=duration,
+            transform=Transform(x=0, y=0, scale_x=1, scale_y=1),
+        )]
+        v1.layers = video_layers
 
     a1 = find_or_create_track(timeline, "A1 Audio", LayerType.AUDIO, 80)
     a1.visible = True
-    a1.layers.clear()
-    a1.layers.append(AudioLayer(
-        name="A1 Audio",
-        source=video_path,
-        start=0.0,
-        end=duration,
-        volume=1.0,
-    ))
+    if not a1.layers:
+        a1.layers = [AudioLayer(
+            name="A1 Audio",
+            source=layer.source,
+            start=layer.start,
+            end=layer.end,
+            source_start=layer.source_start,
+            speed=layer.speed,
+            volume=layer.volume,
+            muted=layer.muted,
+        ) for layer in video_layers]
     if not isinstance(a1.metadata, dict):
         a1.metadata = {}
     a1.metadata.setdefault("_volume", 50.0)
