@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox
@@ -92,6 +94,127 @@ class MultiVideoTimelineMixin:
             if button is not None:
                 button.setEnabled(enabled)
 
+    def _sync_canonical_source_after_change(self) -> None:
+        """Persist the first V1 clip as the project's canonical source."""
+        model = getattr(getattr(self, "timeline", None), "_timeline", None)
+        clips = timeline_video_clips(model)
+        first_source = os.path.abspath(clips[0].source) if clips else ""
+        state = getattr(self, "current_project_state", None)
+        if first_source:
+            self._current_video_path = first_source
+            editor = getattr(self, "video_path_edit", None)
+            if editor is not None:
+                editor.setText(first_source)
+            if state is not None:
+                state.input_video = first_source
+                service = getattr(self, "project_service", None)
+                if service is not None and hasattr(service, "_input_video_identity"):
+                    state.set_setting("input_video_identity", service._input_video_identity(first_source))
+        elif state is not None:
+            state.input_video = ""
+            self._current_video_path = ""
+
+        clip_payload = [clip.to_dict() for clip in clips]
+        if state is not None:
+            state.set_setting("timeline_video_clips", clip_payload)
+            signature_payload = []
+            for clip in clip_payload:
+                source = os.path.abspath(str(clip.get("source", "") or ""))
+                try:
+                    stat = os.stat(source)
+                    identity = [stat.st_size, stat.st_mtime_ns]
+                except OSError:
+                    identity = [0, 0]
+                signature_payload.append({
+                    "source": source,
+                    "identity": identity,
+                    "source_start": round(float(clip.get("source_start", 0.0) or 0.0), 6),
+                    "source_duration": round(float(clip.get("source_duration", 0.0) or 0.0), 6),
+                    "timeline_start": round(float(clip.get("timeline_start", 0.0) or 0.0), 6),
+                    "speed": round(float(clip.get("speed", 1.0) or 1.0), 6),
+                })
+            state.set_setting(
+                "timeline_video_signature",
+                hashlib.sha256(json.dumps(signature_payload, sort_keys=True).encode("utf-8")).hexdigest()
+                if signature_payload else "",
+            )
+            try:
+                self.project_service.save_project(state)
+            except Exception:
+                pass
+        if hasattr(self, "update_project_header"):
+            try:
+                self.update_project_header()
+            except Exception:
+                pass
+
+    def _invalidate_artifacts_after_timeline_change(self) -> None:
+        """Detach source-derived artifacts after V1 order/content changes."""
+        state = getattr(self, "current_project_state", None)
+        artifact_keys = {
+            "extracted_audio", "audio_extracted", "asr_audio_profile", "asr_ocr_reference",
+            "transcript_raw", "transcript_segments", "transcript_chunk_raw", "transcript_merged",
+            "transcript_regrouped", "transcription_chunks", "subtitle_original_srt", "srt_original",
+            "subtitle_translated_srt", "srt_translated", "translation_raw", "translation_refined",
+            "translation_final", "voice_vi", "voice_segments", "mixed_vi", "vocals", "music",
+            "auto_recap_video",
+        }
+        if state is not None:
+            for key in artifact_keys:
+                state.artifacts.pop(key, None)
+            for key in (
+                "extraction_signature", "asr_audio_normalization", "transcription_signature",
+                "translation_signature", "voice_signature", "auto_recap_edl",
+                "input_video_content_changed",
+            ):
+                state.settings.pop(key, None)
+            state.settings["voice_track_partial"] = False
+            if hasattr(state, "steps"):
+                for step in (
+                    "extract_audio", "transcribe", "translate_raw", "refine_translation",
+                    "generate_tts", "build_subtitle", "mix_audio", "export",
+                ):
+                    state.steps[step] = "pending"
+        processed = getattr(self, "processed_artifacts", None)
+        if isinstance(processed, dict):
+            for key in artifact_keys:
+                processed.pop(key, None)
+        for attr in (
+            "last_extracted_audio", "last_vocals_path", "last_music_path", "last_original_srt_path",
+            "last_translated_srt_path", "last_voice_vi_path", "last_mixed_vi_path",
+            "last_preview_video_path", "last_styled_preview_path", "last_recap_video_path",
+            "last_exported_video_path", "live_preview_subtitle_path", "live_preview_ass_path",
+        ):
+            if hasattr(self, attr):
+                setattr(self, attr, "")
+        for attr in ("current_segments", "current_translated_segments", "current_segment_models", "current_translated_segment_models"):
+            if hasattr(self, attr):
+                setattr(self, attr, [])
+        if hasattr(self, "current_auto_recap_edl"):
+            self.current_auto_recap_edl = []
+        self._voice_track_partial = False
+        self._voiceover_force_refresh = True
+        self._timeline_preview_source = ""
+        self._timeline_global_position_ms = 0
+        timeline = getattr(self, "timeline", None)
+        if timeline is not None:
+            try:
+                timeline.set_segments([])
+            except Exception:
+                pass
+        if state is not None:
+            try:
+                self.project_service.save_project(state)
+            except Exception:
+                pass
+        if hasattr(self, "refresh_source_video_list"):
+            self.refresh_source_video_list()
+        if hasattr(self, "refresh_ui_state"):
+            try:
+                self.refresh_ui_state()
+            except Exception:
+                pass
+
     def add_videos_to_timeline(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self,
@@ -146,50 +269,66 @@ class MultiVideoTimelineMixin:
                     "project_state_path": self.project_service.project_file(state.project_root) if state else "",
                     "video_path": first_added_path,
                 })
-            except Exception:
-                pass
+            except Exception as exc:
+                # Recent-project history is auxiliary; importing a clip must
+                # remain successful even when its launcher metadata is
+                # unavailable or malformed.
+                self.log(f"[Timeline] Could not update recent projects: {exc}")
+        self._sync_canonical_source_after_change()
+        if not was_empty:
+            self._invalidate_artifacts_after_timeline_change()
+        if hasattr(self, "persist_current_timeline_project_data"):
+            self.persist_current_timeline_project_data()
         self.refresh_source_video_list()
-        self.persist_current_timeline_project_data()
-        self.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)
-        self.log(f"[Timeline] Added {added} video(s) to V1.")
-
-    def move_selected_source_video(self, offset: int) -> None:
-        layer_id = self._selected_source_video_layer_id()
-        model = getattr(getattr(self, "timeline", None), "_timeline", None)
-        if not layer_id or model is None or not move_video(model, layer_id, offset):
-            return
-        self.timeline.set_duration(int(model.duration * 1000))
-        self.timeline._selected_layer_id = layer_id
-        self.timeline._redraw()
-        self.refresh_source_video_list()
-        self.persist_current_timeline_project_data()
+        if hasattr(self, "schedule_timeline_visual_refresh"):
+            self.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)
+        if hasattr(self, "log"):
+            self.log(f"[Timeline] Added {added} video(s) to V1.")
+        self.timeline.viewport().update()
 
     def remove_selected_source_video(self) -> None:
-        layer_id = self._selected_source_video_layer_id()
+        """Remove the selected V1 source while preserving project identity."""
         model = getattr(getattr(self, "timeline", None), "_timeline", None)
-        if not layer_id or model is None:
+        layers = ordered_video_layers(model)
+        layer_id = self._selected_source_video_layer_id()
+        if not layer_id:
+            QMessageBox.information(self, "Remove Video", "Select a source video first.")
             return
-        if len(ordered_video_layers(model)) <= 1:
+        if len(layers) <= 1:
             QMessageBox.information(self, "Remove Video", "A project must keep at least one video on V1.")
             return
         if not remove_video(model, layer_id):
             return
-        self.timeline.set_duration(int(model.duration * 1000))
+        self.timeline.set_duration(int(round(float(model.duration) * 1000.0)))
         self.timeline._selected_layer_id = ""
         self.timeline._redraw()
-        self.refresh_source_video_list()
+        self._sync_canonical_source_after_change()
+        self._invalidate_artifacts_after_timeline_change()
         self.persist_current_timeline_project_data()
+        if hasattr(self, "schedule_timeline_visual_refresh"):
+            self.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)
+
+    def move_selected_source_video(self, offset: int) -> None:
+        """Move the selected V1 source and invalidate source-timed artifacts."""
+        model = getattr(getattr(self, "timeline", None), "_timeline", None)
+        layer_id = self._selected_source_video_layer_id()
+        if not layer_id or not move_video(model, layer_id, int(offset)):
+            return
+        self.timeline.set_duration(int(round(float(model.duration) * 1000.0)))
+        self.timeline._redraw()
+        self._sync_canonical_source_after_change()
+        self._invalidate_artifacts_after_timeline_change()
+        self.persist_current_timeline_project_data()
+        if hasattr(self, "schedule_timeline_visual_refresh"):
+            self.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)
 
     def select_source_video_in_timeline(self) -> None:
+        """Select a source clip in V1 without changing the playhead."""
         layer_id = self._selected_source_video_layer_id()
         if not layer_id or not hasattr(self, "timeline"):
             return
         self.timeline._selected_layer_id = layer_id
         self.timeline.viewport().update()
-        _track, layer = self.timeline._find_layer_by_id(layer_id)
-        if layer is not None:
-            self.timeline.set_playhead(float(layer.start))
-            self.seek_timeline_video(float(layer.start))
 
     def seek_timeline_video(self, global_seconds: float) -> None:
         model = getattr(getattr(self, "timeline", None), "_timeline", None)
@@ -226,6 +365,8 @@ class MultiVideoTimelineMixin:
             self.refresh_timed_layer_preview(global_ms)
         if hasattr(self, "update_playback_subtitle_highlight"):
             self.update_playback_subtitle_highlight(global_ms)
+        if hasattr(self, "_sync_selected_segment_to_playback_position"):
+            self._sync_selected_segment_to_playback_position(global_ms)
 
     def handle_sequence_position_changed(self, local_position_ms: int) -> bool:
         clips = self.get_timeline_video_clips(existing_only=True)

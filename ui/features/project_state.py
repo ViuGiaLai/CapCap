@@ -5,6 +5,36 @@ from features.voice_catalog import _default_asr_engine
 
 
 class ProjectStateMixin:
+    def resolve_canonical_video_path(self) -> str:
+        """Return the active imported source, excluding rendered previews."""
+        candidates = []
+        state = getattr(self, "current_project_state", None)
+        if state is not None:
+            candidates.append(str(getattr(state, "input_video", "") or "").strip())
+        candidates.append(str(getattr(self, "_current_video_path", "") or "").strip())
+        try:
+            candidates.extend(
+                str(item.get("source", "") or "").strip()
+                for item in self.get_timeline_video_clips(existing_only=True)
+            )
+        except Exception:
+            pass
+        editor = getattr(self, "video_path_edit", None)
+        if editor is not None:
+            candidates.append(str(editor.text() or "").strip())
+        seen = set()
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = os.path.abspath(candidate)
+            key = os.path.normcase(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            if os.path.isfile(path):
+                return path
+        return ""
+
     def ensure_current_project(self):
         existing_state = getattr(self, "current_project_state", None)
         if existing_state is not None and os.path.isdir(str(existing_state.project_root or "")):
@@ -19,8 +49,7 @@ class ProjectStateMixin:
         # currently loaded in the media player.  Using video_path_edit alone
         # allowed a preview path to redirect subsequent subtitle/voice saves
         # into another project's folder.
-        canonical_path = str(getattr(self, "_current_video_path", "") or "").strip()
-        video_path = canonical_path if canonical_path and os.path.exists(canonical_path) else self.video_path_edit.text().strip()
+        video_path = self.resolve_canonical_video_path()
         if video_path:
             video_path = os.path.abspath(video_path)
         state = self.project_bridge.ensure_project(
@@ -177,11 +206,14 @@ class ProjectStateMixin:
             if signature:
                 state.set_setting("translation_signature", signature)
         if self.current_project_state:
-            has_generated_voice = bool(
-                getattr(self, "last_voice_vi_path", "")
-                or getattr(self, "last_mixed_vi_path", "")
-                or self.processed_artifacts.get("voice_vi")
-                or self.processed_artifacts.get("mixed_vi")
+            has_generated_voice = (
+                not bool(getattr(self, "_voice_track_partial", False))
+                and bool(
+                    getattr(self, "last_voice_vi_path", "")
+                    or getattr(self, "last_mixed_vi_path", "")
+                    or self.processed_artifacts.get("voice_vi")
+                    or self.processed_artifacts.get("mixed_vi")
+                )
             )
             voice_signature = self.build_current_voice_signature(
                 segments=self._get_voiceover_segments(),
@@ -227,13 +259,13 @@ class ProjectStateMixin:
 
         # Save timeline data (includes mask and logo layers)
         if hasattr(self, "timeline") and self.timeline._timeline:
-            import json
             timeline_data = self.timeline._timeline.to_dict()
             # Save timeline to a file in the project directory
             timeline_path = os.path.join(state.project_root, "timeline", "timeline.json")
             os.makedirs(os.path.dirname(timeline_path), exist_ok=True)
-            with open(timeline_path, "w", encoding="utf-8") as f:
-                json.dump(timeline_data, f, ensure_ascii=False, indent=2)
+            # Timeline edits are frequent and a process interruption must not
+            # leave a truncated JSON file that prevents the project reopening.
+            self.project_service._atomic_write_json(timeline_path, timeline_data)
             state.set_artifact("timeline", timeline_path)
             # Selection Range is an ephemeral editing aid. Never restore it
             # when reopening a project, where an old range can be confusing.
@@ -339,7 +371,7 @@ class ProjectStateMixin:
             if not loaded.tracks:
                 return False
 
-            from app.services.timeline_video_sequence import timeline_video_clips
+            from app.services.timeline_video_sequence import ordered_video_layers, timeline_video_clips
 
             loaded_clips = timeline_video_clips(loaded)
             loaded_sources = [os.path.normcase(os.path.abspath(clip.source)) for clip in loaded_clips]
@@ -397,6 +429,28 @@ class ProjectStateMixin:
             timeline._overlap_layout_cache.clear()
             timeline._overlap_row_assignments.clear()
             timeline._redraw()
+            # Restore the canonical source from the saved V1 order.  The
+            # editor field may still contain a rendered preview from the
+            # previous session; using it would attach this project's next
+            # artifacts to the wrong video.
+            restored_layers = ordered_video_layers(loaded)
+            if restored_layers:
+                restored_source = os.path.abspath(str(restored_layers[0].source or ""))
+                if restored_source and os.path.isfile(restored_source):
+                    state.input_video = restored_source
+                    self._current_video_path = restored_source
+                    if hasattr(self, "video_path_edit"):
+                        self.video_path_edit.setText(restored_source)
+                    if hasattr(self, "project_service"):
+                        state.set_setting(
+                            "input_video_identity",
+                            self.project_service._input_video_identity(restored_source),
+                        )
+            state.set_setting("timeline_video_clips", [clip.to_dict() for clip in loaded_clips])
+            try:
+                self.project_service.save_project(state)
+            except Exception:
+                pass
             self.log(
                 f"[Timeline] Restored {len(loaded.tracks)} saved track(s) "
                 f"from {timeline_path}"
@@ -408,7 +462,6 @@ class ProjectStateMixin:
 
     def _detach_mismatched_media_artifacts(self, state) -> None:
         """Preserve stale files for recovery but remove them from active UI."""
-        import json
         import time
 
         media_keys = {
@@ -432,8 +485,7 @@ class ProjectStateMixin:
             "timeline_video_clips": list(state.settings.get("timeline_video_clips") or []),
             "artifacts": detached,
         }
-        with open(recovery_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        self.project_service._atomic_write_json(recovery_path, payload)
         for key in detached:
             state.artifacts.pop(key, None)
         state.artifacts["detached_media_recovery"] = recovery_path
@@ -633,6 +685,10 @@ class ProjectStateMixin:
             self.ai_dubbing_rewrite_cb.setChecked(bool(st.get("ai_dubbing_rewrite")))
 
         context = self.project_bridge.load_context(state)
+        repaired_legacy_voice_timing = bool(context.get("repaired_voice_timing"))
+        self._voice_track_partial = bool(
+            getattr(state, "settings", {}).get("voice_track_partial", False)
+        )
         self.processed_artifacts = {}
         # Restore project-scoped visibility. Old projects remain visible by
         # default because they have no saved value yet.
@@ -716,13 +772,20 @@ class ProjectStateMixin:
                 self._split_segments_for_single_line()
             self._enable_post_pipeline_preview_assets(refresh=True)
             self.apply_segments_to_timeline()
+            if repaired_legacy_voice_timing:
+                # The bridge restored the source cue timing from a legacy
+                # artifact.  Treat it like any subtitle timing repair so the
+                # old dub is invalidated and the translated SRT is rewritten.
+                self._subtitle_timing_was_normalized = True
             if bool(getattr(self, "_subtitle_timing_was_normalized", False)):
                 # Old project artifacts can contain duplicate/overlapping
                 # cues written by earlier versions. Persist the repaired
-                # sequence immediately and discard its now-invalid dub.
+                # sequence only after discarding its now-invalid dub. This
+                # order matters: otherwise timeline.json would immediately
+                # save stale audio_path values back into the TS1 layers.
+                self._invalidate_dubbed_output_after_subtitle_edit()
                 self.persist_current_timeline_project_data()
                 self._regenerate_translated_srt_from_segments()
-                self._invalidate_dubbed_output_after_subtitle_edit()
             # Loading/rebuilding a project starts at the playhead, not at the
             # first subtitle. Selecting cue 1 here made the Inspector and the
             # paused overlay show a future cue while timeline time was 00:00.

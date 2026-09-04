@@ -1,5 +1,6 @@
 import os
 import threading
+import importlib.util
 import numpy as np
 import scipy.io.wavfile as wavfile
 
@@ -27,11 +28,7 @@ def is_available() -> bool:
     global _ENABLED
     if _ENABLED:
         return True
-    try:
-        import sherpa_onnx
-        _ENABLED = True
-    except ImportError:
-        _ENABLED = False
+    _ENABLED = importlib.util.find_spec("sherpa_onnx") is not None
     return _ENABLED
 
 

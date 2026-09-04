@@ -51,14 +51,20 @@ class PrepareWorkerLifecycleTests(unittest.TestCase):
         )
         worker.start()
 
+        def is_worker_running():
+            try:
+                return worker.isRunning()
+            except RuntimeError:
+                return False
+
         deadline = time.monotonic() + 3.0
-        while (worker.isRunning() or not observed_running) and time.monotonic() < deadline:
+        while (is_worker_running() or not observed_running) and time.monotonic() < deadline:
             app.processEvents()
             time.sleep(0.01)
         app.processEvents()
 
         self.assertEqual(observed_running, [True])
-        self.assertFalse(worker.isRunning())
+        self.assertFalse(is_worker_running())
         self.assertIsNone(gui.prepare_workflow_thread)
 
 

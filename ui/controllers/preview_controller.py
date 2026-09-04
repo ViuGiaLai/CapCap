@@ -18,6 +18,7 @@ from worker_adapters import (
     PreviewMuxWorker,
     QuickPreviewWorker,
 )
+from utils.thread_lifecycle import release_thread_when_stopped
 
 
 class PreviewController:
@@ -693,11 +694,73 @@ class PreviewController:
         box.exec()
         return box.clickedButton() is start_btn
 
+    def _resolve_export_video_path(self) -> str:
+        """Resolve the imported source, never a rendered preview artifact."""
+        canonical = getattr(self.gui, "resolve_canonical_video_path", None)
+        if callable(canonical):
+            resolved = canonical()
+            if resolved:
+                return resolved
+        candidates = [str(getattr(self.gui, "_current_video_path", "") or "").strip()]
+        state = getattr(self.gui, "current_project_state", None)
+        if state is not None:
+            candidates.append(str(getattr(state, "input_video", "") or "").strip())
+        try:
+            candidates.extend(
+                str(item.get("source", "") or "").strip()
+                for item in self.gui.get_timeline_video_clips(existing_only=True)
+            )
+        except Exception:
+            pass
+        editor = getattr(self.gui, "video_path_edit", None)
+        if editor is not None:
+            candidates.append(str(editor.text() or "").strip())
+        candidates.append(str(getattr(self.gui, "last_video_path", "") or "").strip())
+        seen = set()
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = os.path.abspath(candidate)
+            key = os.path.normcase(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            if os.path.isfile(path):
+                return path
+        return ""
+
     def _check_audio_freshness(self, audio_path: str) -> bool:
-        """Check if the audio file matches current voice settings.
-        
-        Always returns True - no popup, just proceed with export.
-        """
+        """Reject missing or stale generated audio before export."""
+        path = os.path.abspath(str(audio_path or "").strip()) if audio_path else ""
+        if not path or not os.path.isfile(path):
+            return False
+        if bool(getattr(self.gui, "_voice_track_partial", False)):
+            QMessageBox.warning(
+                self.gui,
+                "Voiceover Out of Date",
+                "Subtitle timing or text changed after voice generation. Generate the voiceover again before exporting.",
+            )
+            return False
+        state = getattr(self.gui, "current_project_state", None)
+        expected = str(getattr(state, "settings", {}).get("voice_signature", "") or "") if state else ""
+        if not expected or not hasattr(self.gui, "build_current_voice_signature"):
+            return True
+        try:
+            actual = str(
+                self.gui.build_current_voice_signature(
+                    segments=self.gui._get_voiceover_segments(),
+                    background_path=self.gui.resolve_background_audio_path(),
+                ) or ""
+            )
+        except Exception:
+            actual = ""
+        if actual and actual != expected:
+            QMessageBox.warning(
+                self.gui,
+                "Voiceover Out of Date",
+                "Voice settings or subtitles changed after voice generation. Generate the voiceover again before exporting.",
+            )
+            return False
         return True
     
     def _regenerate_mixed_audio_with_current_volumes(self) -> str:
@@ -721,7 +784,7 @@ class PreviewController:
 
         if not bg_path or not os.path.exists(bg_path):
             # Try to extract audio from the original video on-the-fly
-            video_path = self.gui.video_path_edit.text().strip() if hasattr(self.gui, 'video_path_edit') else ""
+            video_path = self._resolve_export_video_path()
             if video_path and os.path.exists(video_path) and original_volume > 0:
                 try:
                     temp_dir = os.path.join(self.gui.workspace_root, "temp")
@@ -809,7 +872,7 @@ class PreviewController:
 
         out_path = existing_path or str(self.gui.last_translated_srt_path or "").strip()
         if not out_path:
-            video_path = self.gui.video_path_edit.text().strip()
+            video_path = self._resolve_export_video_path()
             video_name = os.path.splitext(os.path.basename(video_path or "subtitle"))[0]
             # Normal video export must not place subtitle sidecars beside the
             # chosen video. Keep this generated SRT in the project export
@@ -911,8 +974,8 @@ class PreviewController:
             return 0.0
 
     def export_final_video(self, *, automatic: bool = False):
-        video_path = self.gui.video_path_edit.text().strip()
-        if not video_path or not os.path.exists(video_path):
+        video_path = self._resolve_export_video_path()
+        if not video_path:
             QMessageBox.warning(self.gui, "Error", "Please choose a video first.")
             return
 
@@ -1166,23 +1229,22 @@ class PreviewController:
     def _on_export_thread_done(self, *args):
         """Clear the export_thread reference after the thread finishes.
 
-        Using deleteLater() caused 'Internal C++ object already deleted' crashes
-        on subsequent Export clicks because the Python attribute still pointed to
-        the dead object.  Instead we just set it to None so the guard in
-        export_final_video() can distinguish 'no thread' from 'running thread'.
+        The result signal is emitted from inside ``run()`` before the native
+        QThread has fully stopped, so release the reference only after the
+        worker is idle.
         """
-        try:
-            thread = getattr(self.gui, 'export_thread', None)
-            if thread is not None:
-                thread.wait(2000)  # positional int milliseconds in PySide6
-        except Exception:
-            pass
-        self.gui.export_thread = None
+        thread = getattr(self.gui, "export_thread", None)
+        release_thread_when_stopped(
+            thread,
+            lambda: setattr(self.gui, "export_thread", None)
+            if getattr(self.gui, "export_thread", None) is thread
+            else None,
+        )
 
     def preview_five_seconds(self):
         if hasattr(self.gui, "ensure_media_backend_ready"):
             self.gui.ensure_media_backend_ready()
-        video_path = self.gui.video_path_edit.text().strip()
+        video_path = self._resolve_export_video_path()
         if not video_path or not os.path.exists(video_path):
             QMessageBox.warning(self.gui, "Error", "Please choose a video first.")
             return
@@ -1253,14 +1315,22 @@ class PreviewController:
             text_image_layers=text_image_layers,
             temp_dir=self.gui.get_project_temp_dir("preview"),
         )
-        self.gui.quick_preview_thread.finished.connect(self.gui.on_quick_preview_ready)
-        self.gui.quick_preview_thread.finished.connect(self.gui.quick_preview_thread.deleteLater)
+        worker = self.gui.quick_preview_thread
+        worker.finished.connect(self.gui.on_quick_preview_ready)
+        worker.finished.connect(
+            lambda *_args, worker=worker: release_thread_when_stopped(
+                worker,
+                lambda: setattr(self.gui, "quick_preview_thread", None)
+                if getattr(self.gui, "quick_preview_thread", None) is worker
+                else None,
+            )
+        )
         self.gui.quick_preview_thread.start()
 
     def start_exact_frame_preview(self, show_dialog: bool = True):
         if hasattr(self.gui, "ensure_media_backend_ready"):
             self.gui.ensure_media_backend_ready()
-        video_path = self.gui.video_path_edit.text().strip()
+        video_path = self._resolve_export_video_path()
         if not video_path or not os.path.exists(video_path):
             if show_dialog:
                 QMessageBox.warning(self.gui, "Error", "Please choose a video first.")
@@ -1318,8 +1388,16 @@ class PreviewController:
             output_fill_focus_y=fill_focus_y,
             video_filter_state=self.gui.get_video_filter_state() if hasattr(self.gui, "get_video_filter_state") else {},
         )
-        self.gui.frame_preview_thread.finished.connect(self.gui.on_exact_frame_ready)
-        self.gui.frame_preview_thread.finished.connect(self.gui.frame_preview_thread.deleteLater)
+        worker = self.gui.frame_preview_thread
+        worker.finished.connect(self.gui.on_exact_frame_ready)
+        worker.finished.connect(
+            lambda *_args, worker=worker: release_thread_when_stopped(
+                worker,
+                lambda: setattr(self.gui, "frame_preview_thread", None)
+                if getattr(self.gui, "frame_preview_thread", None) is worker
+                else None,
+            )
+        )
         self.gui.frame_preview_thread.start()
 
     def on_exact_frame_ready(self, output_path, error):
@@ -1486,7 +1564,7 @@ class PreviewController:
         
         if hasattr(self.gui, "ensure_media_backend_ready"):
             self.gui.ensure_media_backend_ready()
-        video_path = self.gui.video_path_edit.text().strip()
+        video_path = self._resolve_export_video_path()
         mode = self._effective_render_mode_without_tts(self.gui.get_output_mode_key())
         audio_path = ""
         if mode in ("voice", "both"):
@@ -1616,7 +1694,7 @@ class PreviewController:
         self.gui.preview_thread.finished.connect(
             lambda preview_path, error: self.gui.on_preview_ready(preview_path, error, styled_signature)
         )
-        self.gui.log(f"[Preview] Starting preview thread")
+        self.gui.log("[Preview] Starting preview thread")
         self.gui.preview_thread.start()
 
     def on_preview_ready(self, preview_path, error, styled_signature=""):

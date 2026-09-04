@@ -114,7 +114,7 @@ class FilterSubtitleStyleMixin:
         if not self._is_realtime_color_filter_state():
             return False
         try:
-            source_path = self.video_path_edit.text().strip()
+            source_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
             if not source_path or not os.path.exists(source_path):
                 return False
             current_source = str(getattr(self.media_player, "_source_path", "") or "")
@@ -185,7 +185,7 @@ class FilterSubtitleStyleMixin:
         self.preview_controller.preview_video()
 
     def revert_video_filter_preview_to_source(self):
-        video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         if not video_path or not os.path.exists(video_path):
             return
         self._play_video_filter_preview_when_ready = False
@@ -212,7 +212,7 @@ class FilterSubtitleStyleMixin:
         self.refresh_ui_state()
 
     def _can_auto_render_filter_preview(self):
-        video_path = self.video_path_edit.text().strip()
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
         if not video_path or not os.path.exists(video_path):
             return False
         if getattr(self, "_styled_preview_running", False) or getattr(self, "_pipeline_active", False):

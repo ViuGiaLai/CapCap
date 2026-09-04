@@ -263,6 +263,22 @@ class ModelSettingsMixin:
         model_edit.setVisible(not remote_mode)
         layout.addLayout(model_layout)
 
+        polish_model_layout = QVBoxLayout()
+        polish_model_label = QLabel("Quality Model (fix / review sentences):")
+        polish_model_edit = QLineEdit(dialog)
+        polish_model_edit.setPlaceholderText("Blank = use AI Model above (e.g. gemini-2.5-pro)")
+        polish_model_layout.addWidget(polish_model_label)
+        polish_model_layout.addWidget(polish_model_edit)
+        _polish_defaults = {
+            "google_ai_studio": ("GOOGLE_AI_STUDIO_POLISH_MODEL", "gemini-2.5-pro"),
+            "openai": ("OPENAI_POLISH_MODEL", ""),
+        }
+        _polish_env, _polish_default = _polish_defaults.get(current_provider, ("", ""))
+        polish_model_edit.setText(os.getenv(_polish_env, "") or _polish_default)
+        polish_model_label.setVisible(False)
+        polish_model_edit.setVisible(False)
+        layout.addLayout(polish_model_layout)
+
         base_url_layout = QVBoxLayout()
         base_url_label = QLabel("API URL:")
         base_url_edit = QLineEdit(dialog)
@@ -288,7 +304,6 @@ class ModelSettingsMixin:
             is_ai = p != "google"
             is_google_ai_studio = p == "google_ai_studio"
             is_openai = p == "openai"
-            is_ollama = p == "ollama"
             is_google = p == "google"
             _toggle_visible(key_section_widget, is_google_ai_studio or is_openai)
             _toggle_visible(base_url_label, not remote_mode and is_ai)
@@ -297,6 +312,8 @@ class ModelSettingsMixin:
             _toggle_visible(test_status, not remote_mode and is_ai)
             _toggle_visible(model_label, not remote_mode and is_ai)
             _toggle_visible(model_edit, not remote_mode and is_ai)
+            _toggle_visible(polish_model_label, not remote_mode and (is_google_ai_studio or is_openai))
+            _toggle_visible(polish_model_edit, not remote_mode and (is_google_ai_studio or is_openai))
             if is_google:
                 provider_hint.setText("Free Google web translate, no API key needed. Lower quality than AI translation.")
                 key_edit.clear()
@@ -310,6 +327,7 @@ class ModelSettingsMixin:
                 base_url_edit.setText(base_url or "https://generativelanguage.googleapis.com/v1beta/openai/")
                 if not model_edit.text().strip():
                     model_edit.setText("gemini-2.5-flash")
+                polish_model_edit.setText(os.getenv("GOOGLE_AI_STUDIO_POLISH_MODEL", "") or "gemini-2.5-pro")
                 provider_hint.setText("Use a Google AI Studio Gemini API key: https://aistudio.google.com/apikey")
             elif is_openai:
                 model_label.setText("AI Model:")
@@ -319,6 +337,7 @@ class ModelSettingsMixin:
                 base_url_edit.setText(base_url or "https://api.openai.com/v1/")
                 if not model_edit.text().strip():
                     model_edit.setText("gpt-4o-mini")
+                polish_model_edit.setText(os.getenv("OPENAI_POLISH_MODEL", ""))
                 provider_hint.setText("Get an API key at https://platform.openai.com/api-keys")
             elif p == "ollama":
                 model_label.setText("AI Model:")
@@ -475,6 +494,7 @@ class ModelSettingsMixin:
         new_model = model_edit.text().strip()
         new_provider = str(provider_combo.currentData()).strip()
         new_base_url = base_url_edit.text().strip()
+        new_polish_model = polish_model_edit.text().strip()
 
         self.selected_whisper_model_name = new_whisper
 
@@ -510,6 +530,7 @@ class ModelSettingsMixin:
                     "OPENAI_PROVIDER": "google_ai_studio",
                     "GOOGLE_AI_STUDIO_API_KEY": new_key,
                     "GOOGLE_AI_STUDIO_MODEL": new_model or "gemini-2.5-flash",
+                    "GOOGLE_AI_STUDIO_POLISH_MODEL": new_polish_model or "gemini-2.5-pro",
                     "GOOGLE_AI_STUDIO_BASE_URL": new_base_url or "https://generativelanguage.googleapis.com/v1beta/openai/",
                 }
             elif new_provider == "ollama":
@@ -526,6 +547,7 @@ class ModelSettingsMixin:
                     "OPENAI_PROVIDER": "openai",
                     "OPENAI_API_KEY": new_key,
                     "OPENAI_MODEL": new_model or "gpt-4o-mini",
+                    "OPENAI_POLISH_MODEL": new_polish_model,
                     "OPENAI_BASE_URL": new_base_url or "https://api.openai.com/v1/",
                 }
 

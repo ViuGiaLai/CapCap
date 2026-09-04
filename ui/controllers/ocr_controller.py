@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 from worker_adapters import OcrTranslatorCaptureWorker, OcrTranslatorTranslationWorker
+from utils.thread_lifecycle import release_thread_when_stopped
 
 
 class OcrController:
@@ -51,7 +52,7 @@ class OcrController:
         if not self.gui._ocr_translator_active:
             overlay.hide()
             return
-        video_path = self.gui.video_path_edit.text().strip() if hasattr(self.gui, "video_path_edit") else ""
+        video_path = self.gui.resolve_canonical_video_path() if hasattr(self.gui, "resolve_canonical_video_path") else (self.gui.video_path_edit.text().strip() if hasattr(self.gui, "video_path_edit") else "")
         if not video_path or not os.path.isfile(video_path):
             self.gui._ocr_translator_active = False
             button = getattr(self.gui, "ocr_translator_btn", None)
@@ -72,7 +73,7 @@ class OcrController:
     def capture_ocr_translator_region(self):
         if getattr(self.gui, "_ocr_translator_capture_worker", None) is not None:
             return
-        video_path = self.gui.video_path_edit.text().strip() if hasattr(self.gui, "video_path_edit") else ""
+        video_path = self.gui.resolve_canonical_video_path() if hasattr(self.gui, "resolve_canonical_video_path") else (self.gui.video_path_edit.text().strip() if hasattr(self.gui, "video_path_edit") else "")
         overlay = getattr(self.gui, "ocr_translator_overlay", None)
         if not video_path or overlay is None:
             return
@@ -82,12 +83,18 @@ class OcrController:
         worker = OcrTranslatorCaptureWorker(video_path, position_ms / 1000.0, self.gui._ocr_translator_rect)
         self.gui._ocr_translator_capture_worker = worker
         worker.finished.connect(self.on_ocr_translator_capture_finished)
-        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(
+            lambda *_args, worker=worker: release_thread_when_stopped(
+                worker,
+                lambda: setattr(self.gui, "_ocr_translator_capture_worker", None)
+                if getattr(self.gui, "_ocr_translator_capture_worker", None) is worker
+                else None,
+            )
+        )
         worker.start()
         self.gui.log(f"[OCR Translator] Capturing visual text at {position_ms / 1000.0:.2f}s.")
 
     def on_ocr_translator_capture_finished(self, text, error):
-        self.gui._ocr_translator_capture_worker = None
         overlay = getattr(self.gui, "ocr_translator_overlay", None)
         if overlay is not None:
             overlay.set_capturing(False)
@@ -154,7 +161,6 @@ class OcrController:
             self.gui._ocr_translator_translation_worker = worker
 
             def finished(translated, error):
-                self.gui._ocr_translator_translation_worker = None
                 translate_btn.setEnabled(True)
                 translate_btn.setText("Translate")
                 if error:
@@ -164,7 +170,14 @@ class OcrController:
                 self.gui.log("[OCR Translator] Translation complete.")
 
             worker.finished.connect(finished)
-            worker.finished.connect(worker.deleteLater)
+            worker.finished.connect(
+                lambda *_args, worker=worker: release_thread_when_stopped(
+                    worker,
+                    lambda: setattr(self.gui, "_ocr_translator_translation_worker", None)
+                    if getattr(self.gui, "_ocr_translator_translation_worker", None) is worker
+                    else None,
+                )
+            )
             worker.start()
 
         translate_btn.clicked.connect(translate)

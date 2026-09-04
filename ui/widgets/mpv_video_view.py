@@ -4,7 +4,7 @@ import os
 import re
 import math
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBitmap, QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap, QRegion
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
@@ -1540,7 +1540,7 @@ class MpvVideoView(QWidget):
     def set_video_dimensions(self, width: int, height: int):
         self.video_source_width = max(0, int(width or 0))
         self.video_source_height = max(0, int(height or 0))
-        content_rect = self.get_video_content_rect().toRect()
+        self.get_video_content_rect().toRect()
         self.video_surface.setGeometry(self._video_surface_rect())
         self._sync_preview_stack()
         self._update_ratio_badge()

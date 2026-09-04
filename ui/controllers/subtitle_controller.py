@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel
 
 from worker_adapters import RewriteTranslationWorker, TranscriptionWorker, TranslationWorker
 from translation import TranslationOrchestrator, load_prompt_options
+from utils.thread_lifecycle import release_thread_when_stopped
 
 
 class SubtitleController:
@@ -82,8 +83,16 @@ class SubtitleController:
         self.gui.update_project_step("transcribe", "running")
 
         self.gui.transcription_thread = TranscriptionWorker(audio_src, model_path, lang)
-        self.gui.transcription_thread.finished.connect(self.gui.on_transcription_finished)
-        self.gui.transcription_thread.finished.connect(self.gui.transcription_thread.deleteLater)
+        worker = self.gui.transcription_thread
+        worker.finished.connect(self.gui.on_transcription_finished)
+        worker.finished.connect(
+            lambda *_args, worker=worker: release_thread_when_stopped(
+                worker,
+                lambda: setattr(self.gui, "transcription_thread", None)
+                if getattr(self.gui, "transcription_thread", None) is worker
+                else None,
+            )
+        )
         self.gui.transcription_thread.start()
 
     def on_transcription_finished(self, segments, error=""):
@@ -114,7 +123,7 @@ class SubtitleController:
         srt_text = self.gui.format_to_srt(segments)
         self.gui.transcript_text.setText(srt_text)
 
-        video_path = self.gui.video_path_edit.text()
+        video_path = self.gui.resolve_canonical_video_path() if hasattr(self.gui, "resolve_canonical_video_path") else self.gui.video_path_edit.text()
         if video_path:
             file_basename = os.path.splitext(os.path.basename(video_path))[0]
             out_folder = self.gui.get_project_temp_dir("subtitle")
@@ -182,8 +191,16 @@ class SubtitleController:
         self.gui.translation_thread = TranslationWorker(
             srt_source, model_path, src_lang, self.gui.get_target_language_code(), enable_polish
         )
-        self.gui.translation_thread.finished.connect(self.gui.on_translation_finished)
-        self.gui.translation_thread.finished.connect(self.gui.translation_thread.deleteLater)
+        worker = self.gui.translation_thread
+        worker.finished.connect(self.gui.on_translation_finished)
+        worker.finished.connect(
+            lambda *_args, worker=worker: release_thread_when_stopped(
+                worker,
+                lambda: setattr(self.gui, "translation_thread", None)
+                if getattr(self.gui, "translation_thread", None) is worker
+                else None,
+            )
+        )
         self.gui.translation_thread.start()
 
     def on_translation_finished(self, translated_srt, error, fallback_notice=""):
@@ -205,7 +222,7 @@ class SubtitleController:
         translated_srt = self.gui.format_to_srt(self.gui.current_translated_segments)
         self.gui.translated_text.setText(translated_srt)
 
-        video_path = self.gui.video_path_edit.text()
+        video_path = self.gui.resolve_canonical_video_path() if hasattr(self.gui, "resolve_canonical_video_path") else self.gui.video_path_edit.text()
         if video_path:
             file_basename = os.path.splitext(os.path.basename(video_path))[0]
             out_folder = self.gui.get_project_temp_dir("subtitle")
@@ -435,7 +452,7 @@ class SubtitleController:
         self.gui._reconcile_manual_highlights(target_segment)
         self.gui.current_translated_segment_models = self.gui._dict_segments_to_models(self.gui.current_translated_segments, translated=True)
         self.gui._sync_hidden_translated_text_from_segments()
-        self.gui._commit_subtitle_mutation(selected_index=index)
+        self.gui._commit_subtitle_mutation(selected_index=index, changed_indices={int(index)})
         self.gui.refresh_auto_keyword_highlights(force=True)
         self.gui.schedule_auto_frame_preview()
         self.gui.update_project_step("refine_translation", "done")
@@ -493,13 +510,17 @@ class SubtitleController:
 
         self.gui.refresh_auto_keyword_highlights(force=True)
         self.gui.translated_text.setText(normalized_srt)
+        changed_indices = set(selected_indices)
+        if segment_index >= 0:
+            changed_indices.add(segment_index)
         self.gui._commit_subtitle_mutation(
             selected_index=segment_index if segment_index >= 0 else None,
+            changed_indices=changed_indices or None,
         )
 
         out_path = self.gui.last_translated_srt_path
         if not out_path:
-            video_path = self.gui.video_path_edit.text().strip()
+            video_path = self.gui.resolve_canonical_video_path() if hasattr(self.gui, "resolve_canonical_video_path") else self.gui.video_path_edit.text().strip()
             if video_path:
                 file_basename = os.path.splitext(os.path.basename(video_path))[0]
                 out_folder = self.gui.get_project_temp_dir("subtitle")
@@ -775,8 +796,16 @@ class SubtitleController:
                 self.gui.get_source_language_code(),
                 style_instruction=style_instruction,
             )
-            self.gui.rewrite_translation_thread.finished.connect(self.gui.on_rewrite_translation_finished)
-            self.gui.rewrite_translation_thread.finished.connect(self.gui.rewrite_translation_thread.deleteLater)
+            worker = self.gui.rewrite_translation_thread
+            worker.finished.connect(self.gui.on_rewrite_translation_finished)
+            worker.finished.connect(
+                lambda *_args, worker=worker: release_thread_when_stopped(
+                    worker,
+                    lambda: setattr(self.gui, "rewrite_translation_thread", None)
+                    if getattr(self.gui, "rewrite_translation_thread", None) is worker
+                    else None,
+                )
+            )
             self.gui.rewrite_translation_thread.start()
 
         def _cleanup_dialog():

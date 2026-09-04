@@ -422,7 +422,6 @@ def _build_blur_filter_chain(blur_region, video_width, video_height):
         y = max(0, min(video_height - 2, int(round(y_norm * video_height))))
         w = max(2, min(video_width - x, int(round(w_norm * video_width))))
         h = max(2, min(video_height - y, int(round(h_norm * video_height))))
-        min_dimension = min(w, h)
         try:
             strength = float(region.get("blur_strength", 36.0))
         except (TypeError, ValueError):
@@ -630,7 +629,6 @@ def _build_logo_filter_chain(logo_layers, video_width, video_height):
     # For simplicity, we'll use the overlay filter with scale
     filter_parts = []
     for index, (source, x, y, w, h, opacity, rotation) in enumerate(layers):
-        escaped_source = _escape_path_for_filter(source)
         # Scale logo to target size
         scale_filter = f"[{index}:v]scale={w}:{h}[logo{index}]"
         filter_parts.append(scale_filter)

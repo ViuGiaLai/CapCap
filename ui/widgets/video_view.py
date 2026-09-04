@@ -330,7 +330,9 @@ class VideoView(QGraphicsView):
 
     def set_subtitle_track_visible(self, visible: bool):
         if hasattr(self, "subtitle_item") and self.subtitle_item is not None:
-            if not visible:
+            if visible and getattr(self.subtitle_item, "current_text", ""):
+                self.subtitle_item.show()
+            else:
                 self.subtitle_item.hide()
 
     def set_logos(self, logos=None, active_index=0, editable=False):
@@ -412,11 +414,10 @@ class VideoView(QGraphicsView):
     def set_logo_image(self, *args, **kwargs):
         pass
 
-    def set_text_track_visible(self, visible: bool):
-        pass
-
-    def clear_text_layers(self):
-        pass
+    # Keep text-track controls functional after the logo helpers.  These
+    # methods used to be duplicated later in the class as ``pass`` stubs,
+    # silently overriding the real implementations above; toggling a text
+    # layer therefore appeared to do nothing in the preview.
 
     def reposition_logo(self):
         if not hasattr(self, "logo_item") or not self._current_logos or self._raw_logo_pixmap is None or self._raw_logo_pixmap.isNull():

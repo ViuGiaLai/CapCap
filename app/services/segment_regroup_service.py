@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import re
+import math
 from math import ceil
 from difflib import SequenceMatcher
 
 
 class SegmentRegroupService:
-    VERSION = "segment-regroup-v3"
+    VERSION = "segment-regroup-v4"
 
     def regroup(self, segments: list[dict], *, max_gap_seconds: float = 0.35, max_duration_seconds: float = 8.0) -> list[dict]:
         # Step 1: Deduplicate & stitch boundary overlapping segments on the whole cues first
@@ -106,17 +107,37 @@ class SegmentRegroupService:
         if not segments:
             return []
 
-        cleaned: list[dict] = []
+        # Validate and order first; deduplication is neighbour-based and must
+        # never operate on a cache/import list that happens to be unsorted.
+        ordered_raw: list[tuple[float, float, dict]] = []
         for raw in segments:
+            if not isinstance(raw, dict):
+                continue
             text = str(raw.get("text", "") or "").strip()
             if not text:
                 continue
-            start = float(raw.get("start", 0.0) or 0.0)
-            end = max(start + 0.1, float(raw.get("end", start) or start))
+            try:
+                start = float(raw.get("start", 0.0) or 0.0)
+                end = float(raw.get("end", start) or start)
+            except (TypeError, ValueError):
+                continue
+            if not (math.isfinite(start) and math.isfinite(end)):
+                continue
+            start = max(0.0, start)
+            end = max(start + 0.1, end)
+            ordered_raw.append((start, end, raw))
+
+        ordered_raw.sort(key=lambda item: (item[0], item[1]))
+        cleaned: list[dict] = []
+        for _parsed_start, _parsed_end, raw in ordered_raw:
+            # Values were validated above; parse again only to preserve the
+            # existing per-item normalization and metadata copying below.
+            start = _parsed_start
+            end = _parsed_end
             item = dict(raw)
             item["start"] = start
             item["end"] = end
-            item["text"] = text
+            item["text"] = str(raw.get("text", "") or "").strip()
 
             if not cleaned:
                 cleaned.append(item)
@@ -165,17 +186,81 @@ class SegmentRegroupService:
                             ]
                         continue  # Merged into prev, do NOT append item separately
 
-            # Only adjust minor sub-frame rounding jitter (<= 0.15s) without truncating genuine dialogue
-            if 0.0 < overlap <= 0.15:
-                prev["end"] = max(prev["start"] + 0.1, item["start"] - min_gap_seconds)
+                # Case 5: Absorb a tiny trailing fragment into the preceding cue.
+                # A recognizer sometimes emits a sub-second, 1-4 character fragment
+                # (``草重层`` after ``操縱層是你打的``, or ``先盛職`` after ``血胜值``)
+                # at the exact end of a longer cue. This is a re-read / partial
+                # echo of the same utterance or caption, not a second line of
+                # dialogue. Genuine adjacent dialogue lines are longer than 0.4s
+                # or leave a beat between them, so the window below stays narrow.
+                if cls._is_absorbable_tail_fragment(prev, item):
+                    prev_old_end = float(prev["end"])
+                    prev["end"] = max(prev_old_end, float(item["end"]))
+                    if item.get("words"):
+                        prev["words"] = list(prev.get("words") or []) + [
+                            w for w in (item.get("words") or [])
+                            if float(w.get("start", 0.0)) >= prev_old_end - 0.05
+                        ]
+                    continue  # Fragment absorbed; do NOT append item separately
+
+            # Enforce clean non-overlapping timeline boundaries so subtitles never collide on screen
+            if overlap > 0.0:
+                if overlap <= 0.15:
+                    prev["end"] = max(float(prev["start"]) + 0.1, float(item["start"]) - min_gap_seconds)
+                else:
+                    midpoint = (float(prev["end"]) + float(item["start"])) * 0.5
+                    prev["end"] = max(float(prev["start"]) + 0.1, midpoint - min_gap_seconds * 0.5)
+                    item["start"] = min(float(item["end"]) - 0.1, max(float(prev["end"]) + min_gap_seconds, midpoint + min_gap_seconds * 0.5))
                 if prev.get("words"):
                     for w in prev["words"]:
-                        if float(w.get("end", 0.0)) > prev["end"]:
-                            w["end"] = round(prev["end"], 3)
+                        if float(w.get("end", 0.0)) > float(prev["end"]):
+                            w["end"] = round(float(prev["end"]), 3)
+                if item.get("words"):
+                    for w in item["words"]:
+                        if float(w.get("start", 0.0)) < float(item["start"]):
+                            w["start"] = round(float(item["start"]), 3)
 
             cleaned.append(item)
 
-        return cleaned
+        # ASR workers normally emit sorted output, but OCR imports, cached
+        # artifacts, and multi-video timelines do not guarantee that.  All
+        # overlap/dedup decisions must be made in timeline order or an
+        # out-of-order cue can shift/clamp the wrong neighbour.
+        return sorted(cleaned, key=lambda item: (float(item["start"]), float(item["end"])))
+
+    @staticmethod
+    def _is_absorbable_tail_fragment(prev: dict, item: dict) -> bool:
+        """True when ``item`` is a tiny echo of the tail of ``prev``.
+
+        Sub-second recognizer output that starts exactly where the previous
+        cue ends and carries at most 4 characters is a re-read of the same
+        utterance or on-screen caption (``先盛職`` after ``血胜值``), not a
+        second line of dialogue. Genuine adjacent dialogue lines either last
+        longer than 0.4s or leave a beat between cues, so the combined window
+        below is intentionally narrow.
+        """
+        prev_start = float(prev.get("start", 0.0) or 0.0)
+        prev_end = float(prev.get("end", prev_start) or prev_start)
+        item_start = float(item.get("start", 0.0) or 0.0)
+        item_end = float(item.get("end", item_start) or item_start)
+        if item_end <= item_start:
+            return False
+        head_duration = prev_end - prev_start
+        tail_duration = item_end - item_start
+        gap = item_start - prev_end
+        if not (-0.02 <= gap <= 0.05):
+            return False
+        if head_duration < 0.55 or tail_duration > 0.40:
+            return False
+        if item_end - prev_start > 1.25:
+            return False
+        prev_norm = re.sub(r"[^\w]", "", str(prev.get("text", "") or "").lower())
+        item_norm = re.sub(r"[^\w]", "", str(item.get("text", "") or "").lower())
+        if not prev_norm or len(prev_norm) < 2:
+            return False
+        if not item_norm or len(item_norm) > 4 or item_norm == prev_norm:
+            return False
+        return True
 
     def _split_oversized_segment(
         self,

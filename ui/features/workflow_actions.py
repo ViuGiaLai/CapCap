@@ -15,14 +15,12 @@ class WorkflowActionsMixin:
     def refresh_ui_state(self):
         """Basic enable/disable rules to guide user flow."""
         review_mode = self._preview_is_playing()
-        v_ok = bool(self.video_path_edit.text().strip()) and os.path.exists(self.video_path_edit.text().strip())
+        source_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
+        v_ok = bool(source_path and os.path.exists(source_path))
         a_ok = bool(self.audio_source_edit.text().strip()) and os.path.exists(self.audio_source_edit.text().strip())
         has_translated_text = bool(self.translated_text.toPlainText().strip())
         has_any_subtitles = bool(self.current_translated_segments or self.current_segments)
         translation_ready = self._translation_phase_complete()
-        selected_audio_path = self.resolve_selected_audio_path()
-        has_voice_audio = bool(selected_audio_path and os.path.exists(selected_audio_path))
-        has_subtitle_track = bool(self.last_translated_srt_path and os.path.exists(self.last_translated_srt_path))
         mode = self.get_output_mode_key()
         # A persisted project can contain a stale ``running`` step when a
         # previous process was interrupted between TTS and audio mixing.
@@ -116,8 +114,13 @@ class WorkflowActionsMixin:
             scale_mode = self.get_output_scale_mode_key() if hasattr(self, "get_output_scale_mode_key") else "fit"
             focus_x, focus_y = self.get_output_fill_focus() if hasattr(self, "get_output_fill_focus") else (0.5, 0.5)
             framing_dirty = abs(float(focus_x) - 0.5) > 0.001 or abs(float(focus_y) - 0.5) > 0.001
-            self.reset_framing_btn.setVisible(True)
-            self.reset_framing_btn.setEnabled(v_ok and scale_mode == "fill" and framing_dirty)
+            # The action is only meaningful for a filled canvas whose focus
+            # has actually moved.  Keeping a disabled, empty-looking button
+            # in the compact workbench wastes a row and made the Canvas
+            # controls appear clipped in the UI.
+            reset_available = bool(v_ok and scale_mode == "fill")
+            self.reset_framing_btn.setVisible(reset_available)
+            self.reset_framing_btn.setEnabled(reset_available and framing_dirty)
         if hasattr(self, "play_btn"):
             self.play_btn.setEnabled(v_ok and not voice_running and not getattr(self, "_styled_preview_running", False))
         if hasattr(self, "stop_btn"):
@@ -377,7 +380,7 @@ class WorkflowActionsMixin:
         event.ignore()
 
     def run_extraction(self):
-        v_path = self.video_path_edit.text()
+        v_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text()
         if not v_path: return
 
         target_dir = self.audio_folder_edit.text()

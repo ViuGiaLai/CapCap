@@ -1,4 +1,3 @@
-import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -271,6 +270,10 @@ def build_start_group(gui, left_layout):
     workflow_shell_layout.addWidget(stage_box)
 
     tab_bar = QWidget()
+    # The redesigned editor uses the persistent navigation rail. Keep this
+    # legacy tab container available for compatibility, but do not render a
+    # second competing navigation control in the new shell.
+    tab_bar.setObjectName("legacyWorkflowTabBar")
     tab_bar_layout = QGridLayout(tab_bar)
     tab_bar_layout.setContentsMargins(0, 0, 0, 0)
     tab_bar_layout.setHorizontalSpacing(6)
@@ -351,6 +354,8 @@ def build_start_group(gui, left_layout):
     gui.show_progress_btn.setMinimumWidth(0)
     gui.show_progress_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     tab_bar_layout.addWidget(gui.show_progress_btn, 3, 0, 1, 2)
+    gui.workflow_tab_bar = tab_bar
+    tab_bar.setVisible(False)
     workflow_shell_layout.addWidget(tab_bar)
 
     upload_card, upload_layout = _build_collapsible_section("Video")
@@ -374,6 +379,10 @@ def build_start_group(gui, left_layout):
     output_quality_title.setObjectName("sectionTitle")
     output_quality_layout.addWidget(output_quality_title)
     gui.output_quality_combo = QComboBox()
+    # Keep controls readable when the left workbench is vertically compact.
+    # Nested rows otherwise allow Qt to squeeze combo boxes down to a few
+    # pixels while the scroll area is resolving its minimum height.
+    gui.output_quality_combo.setMinimumHeight(32)
     gui.output_quality_combo.addItem("Max (source)", "source")
     gui.output_quality_combo.addItem("720p", "720p")
     gui.output_quality_combo.addItem("1080p (Full HD)", "1080p")
@@ -383,6 +392,7 @@ def build_start_group(gui, left_layout):
     output_fps_row = QVBoxLayout()
     output_fps_row.addWidget(QLabel("Frame rate"))
     gui.output_fps_combo = QComboBox()
+    gui.output_fps_combo.setMinimumHeight(32)
     gui.output_fps_combo.addItem("Source (Recommended)", "source")
     gui.output_fps_combo.addItem("24 FPS", "24")
     gui.output_fps_combo.addItem("30 FPS", "30")
@@ -392,6 +402,7 @@ def build_start_group(gui, left_layout):
     output_ratio_row = QVBoxLayout()
     output_ratio_row.addWidget(QLabel("Ratio"))
     gui.output_ratio_combo = QComboBox()
+    gui.output_ratio_combo.setMinimumHeight(32)
     gui.output_ratio_combo.addItem("Source (Recommended)", "source")
     gui.output_ratio_combo.addItem("16:9", "16:9")
     gui.output_ratio_combo.addItem("9:16", "9:16")
@@ -403,11 +414,13 @@ def build_start_group(gui, left_layout):
     output_scale_row = QVBoxLayout()
     output_scale_row.addWidget(QLabel("Canvas"))
     gui.output_scale_mode_combo = QComboBox()
+    gui.output_scale_mode_combo.setMinimumHeight(32)
     gui.output_scale_mode_combo.addItem("Fit", "fit")
     gui.output_scale_mode_combo.addItem("Fill", "fill")
     gui.output_scale_mode_combo.currentIndexChanged.connect(gui.on_output_scale_mode_changed)
     output_scale_row.addWidget(gui.output_scale_mode_combo)
     gui.reset_framing_btn = QPushButton("Reset Framing")
+    gui.reset_framing_btn.setMinimumHeight(30)
     gui.reset_framing_btn.setToolTip("Reset the fill focus to center")
     gui.reset_framing_btn.hide()
     output_scale_row.addWidget(gui.reset_framing_btn)
@@ -576,6 +589,10 @@ def build_start_group(gui, left_layout):
     gui.translation_model_edit = QLineEdit()
     gui.translation_model_edit.setPlaceholderText("Example: gemini-2.5-flash")
 
+    gui.translation_polish_model_label = QLabel("Quality Model (fix / review sentences):")
+    gui.translation_polish_model_edit = QLineEdit()
+    gui.translation_polish_model_edit.setPlaceholderText("Blank = use AI Model above (e.g. gemini-2.5-pro)")
+
     gui.translation_base_url_label = QLabel("API URL:")
     gui.translation_base_url_edit = QLineEdit()
     gui.translation_base_url_edit.setPlaceholderText("https://...")
@@ -598,6 +615,8 @@ def build_start_group(gui, left_layout):
     trans_config_layout.addWidget(gui.translation_api_key_edit)
     trans_config_layout.addWidget(gui.translation_model_label)
     trans_config_layout.addWidget(gui.translation_model_edit)
+    trans_config_layout.addWidget(gui.translation_polish_model_label)
+    trans_config_layout.addWidget(gui.translation_polish_model_edit)
     trans_config_layout.addWidget(gui.translation_base_url_label)
     trans_config_layout.addWidget(gui.translation_base_url_edit)
     trans_config_layout.addWidget(gui.translation_link_label)
@@ -650,6 +669,13 @@ def build_start_group(gui, left_layout):
     llama_action_layout = QHBoxLayout()
     llama_action_layout.setSpacing(8)
     
+    gui.llama_engine_download_btn = QPushButton("Download llama.cpp Engine")
+    gui.llama_engine_download_btn.setFixedHeight(26)
+    gui.llama_engine_scan_btn = QPushButton("Scan for llama-server.exe")
+    gui.llama_engine_scan_btn.setFixedHeight(26)
+    # Shown automatically while llama-server.exe is missing from the app.
+    gui.llama_engine_download_btn.hide()
+    gui.llama_engine_scan_btn.hide()
     gui.llama_scan_btn = QPushButton("Scan Entire PC")
     gui.llama_scan_btn.setFixedHeight(26)
     gui.llama_download_btn = QPushButton("Download Model")
@@ -658,6 +684,8 @@ def build_start_group(gui, left_layout):
     # buttons above are now the visible download controls.
     gui.llama_download_btn.hide()
     
+    llama_action_layout.addWidget(gui.llama_engine_download_btn)
+    llama_action_layout.addWidget(gui.llama_engine_scan_btn)
     llama_action_layout.addWidget(gui.llama_scan_btn)
     llama_action_layout.addWidget(gui.llama_download_btn)
     llama_layout.addLayout(llama_action_layout)

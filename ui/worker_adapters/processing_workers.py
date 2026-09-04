@@ -182,7 +182,7 @@ class TranslationWorker(QThread):
                 from translation import TranslationOrchestrator
                 orch = TranslationOrchestrator()
                 provider_type, polisher = orch._resolve_ai_provider()
-                print(f"[Translate] Using AI: {orch._describe_ai_provider(provider_type)}")
+                print(f"[Translate] Using AI: {orch._describe_ai_provider(provider_type, polisher)}")
                 result = orch.translate_srt(
                     self.srt_text,
                     src_lang=self.src_lang,
@@ -304,7 +304,7 @@ class RewriteTranslationWorker(QThread):
                 from translation import TranslationOrchestrator
                 orch = TranslationOrchestrator()
                 provider_type, polisher = orch._resolve_ai_provider()
-                print(f"[Rewrite] Using AI: {orch._describe_ai_provider(provider_type)}")
+                print(f"[Rewrite] Using AI: {orch._describe_ai_provider(provider_type, polisher)}")
             except Exception:
                 pass
             rewritten_segments = engine.rewrite_translation_segments(

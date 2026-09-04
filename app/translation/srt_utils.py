@@ -15,13 +15,18 @@ def parse_srt(srt_text: str) -> list[dict]:
         if " --> " not in time_line:
             continue
         start_raw, end_raw = time_line.split(" --> ", 1)
-        segments.append(
-            {
-                "start": _to_seconds(start_raw),
-                "end": _to_seconds(end_raw),
-                "text": "\n".join(lines[2:]).strip(),
-            }
-        )
+        try:
+            start = _to_seconds(start_raw)
+            end = _to_seconds(end_raw)
+        except (TypeError, ValueError):
+            # Ignore malformed blocks instead of manufacturing a 00:00 cue.
+            # A synthetic zero-timestamp subtitle shifts every downstream
+            # translation/TTS decision and is much harder to diagnose.
+            continue
+        text = "\n".join(lines[2:]).strip()
+        if not text or start < 0.0 or end <= start:
+            continue
+        segments.append({"start": start, "end": end, "text": text})
     return segments
 
 
@@ -40,7 +45,7 @@ def to_srt(segments: list[dict], max_gap_ms: float = 100.0) -> str:
                 end_time = next_seg['start']
         
         lines.append(f"{format_timestamp(seg['start'])} --> {format_timestamp(end_time)}")
-        lines.append((seg.get("text") or "").strip())
+        lines.append((seg.get("text") or seg.get("final_text") or seg.get("refined_translation") or seg.get("raw_translation") or seg.get("original_text") or "").strip())
         lines.append("")
     return "\n".join(lines).strip() + "\n"
 
@@ -53,7 +58,7 @@ def clone_with_texts(segments: list[dict], texts: list[str], provider: str, poli
                 "start": seg["start"],
                 "end": seg["end"],
                 "text": (text or "").strip(),
-                "source_text": seg.get("source_text") or seg.get("text", ""),
+                "source_text": seg.get("source_text") or seg.get("original_text") or seg.get("text", ""),
                 "provider": provider,
                 "polished": polished,
             }
@@ -76,9 +81,14 @@ def _to_seconds(raw: str) -> float:
     raw = raw.strip().replace(",", ".")
     parts = raw.split(":")
     if len(parts) != 3:
-        return 0.0
+        raise ValueError(f"Invalid SRT timestamp: {raw!r}")
     hrs, mins, secs = parts
-    return int(hrs) * 3600 + int(mins) * 60 + float(secs)
+    hours = int(hrs)
+    minutes = int(mins)
+    seconds = float(secs)
+    if hours < 0 or minutes < 0 or seconds < 0 or minutes >= 60 or seconds >= 60:
+        raise ValueError(f"Invalid SRT timestamp: {raw!r}")
+    return hours * 3600 + minutes * 60 + seconds
 
 
 def split_text_batches(texts: list[str], batch_size: int) -> list[list[str]]:
@@ -88,7 +98,9 @@ def split_text_batches(texts: list[str], batch_size: int) -> list[list[str]]:
 def validate_texts(texts: list[str], expected_len: int) -> bool:
     if len(texts) != expected_len:
         return False
-    return all(isinstance(text, str) and text.strip() for text in texts)
+    if not all(isinstance(text, str) for text in texts):
+        return False
+    return expected_len == 0 or any(text.strip() for text in texts)
 
 
 def parse_numbered_line_items(raw: str) -> list[tuple[int, str]]:
@@ -113,9 +125,17 @@ def parse_numbered_line_items(raw: str) -> list[tuple[int, str]]:
             stripped = raw_line.strip()
             if not stripped:
                 continue
-            if stripped.startswith(("Assistant:", "Translation:", "Trợ lý:", "Dịch:", "Note:", "Here", "Sure", "OK", "Let", "I'll", "The")):
+            cleaned_line = re.sub(
+                r"^(?:Assistant|Translation|Trợ lý|Dịch|Bản dịch|Tiếng Việt)\s*:\s*",
+                "",
+                stripped,
+                flags=re.IGNORECASE,
+            ).strip()
+            if not cleaned_line:
                 continue
-            body_lines.append(stripped)
+            if cleaned_line.startswith(("Note:", "Here", "Sure", "OK", "Let", "I'll", "The")):
+                continue
+            body_lines.append(cleaned_line)
         normalized = " ".join(body_lines).strip()
         while True:
             nested = re.match(r"^\s*\d+\.\s*(.+?)\s*$", normalized)
@@ -136,11 +156,25 @@ def parse_numbered_line_items(raw: str) -> list[tuple[int, str]]:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith(("Assistant:", "Translation:", "Trợ lý:", "Dịch:", "Note:", "Here", "Sure", "OK", "Let", "I'll", "The")):
+        cleaned_line = re.sub(
+            r"^(?:Assistant|Translation|Trợ lý|Dịch|Bản dịch|Tiếng Việt)\s*:\s*",
+            "",
+            stripped,
+            flags=re.IGNORECASE,
+        ).strip()
+        if not cleaned_line:
             continue
-        match = re.match(r"^\s*\d+\.\s*(.+?)\s*$", line)
+        if cleaned_line.startswith(("Note:", "Here", "Sure", "OK", "Let", "I'll", "The")):
+            continue
+        match = re.match(r"^\s*\d+\.\s*(.+?)\s*$", stripped)
         if match:
             candidate = match.group(1).strip()
+            candidate = re.sub(
+                r"^(?:Assistant|Translation|Trợ lý|Dịch|Bản dịch|Tiếng Việt)\s*:\s*",
+                "",
+                candidate,
+                flags=re.IGNORECASE,
+            ).strip()
             while True:
                 nested = re.match(r"^\s*\d+\.\s*(.+?)\s*$", candidate)
                 if not nested:

@@ -93,7 +93,7 @@ class PreviewConfigurationMixin:
             return
         if getattr(self, "_pipeline_active", False):
             return
-        if not self.video_path_edit.text().strip() or not self.get_active_segments():
+        if not (self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()) or not self.get_active_segments():
             return
         self.frame_preview_status_label.setText("Refreshing exact frame preview...")
         self.auto_frame_preview_timer.start()
@@ -112,7 +112,7 @@ class PreviewConfigurationMixin:
             return
         if self.media_player.is_playing():
             return
-        if not self.video_path_edit.text().strip() or not self.get_active_segments():
+        if not (self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()) or not self.get_active_segments():
             return
         self.frame_preview_status_label.setText("Updating exact frame preview for the selected timeline position...")
         self.seek_frame_preview_timer.start()
@@ -329,7 +329,7 @@ class PreviewConfigurationMixin:
         project_root = str(getattr(state, "project_root", "") or "").strip()
         if project_root:
             return os.path.basename(os.path.normpath(project_root))
-        video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         if video_path:
             video_name = os.path.splitext(os.path.basename(video_path))[0] or "project"
             slug = re.sub(r"[^a-zA-Z0-9]+", "_", video_name).strip("_").lower() or "project"
@@ -719,7 +719,7 @@ class PreviewConfigurationMixin:
             self.hide_filter_thumbnail_preview()
 
     def _workflow_dependency_state(self) -> dict:
-        video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         has_video = bool(video_path and os.path.exists(video_path))
         return {
             "media": {"enabled": True, "reason": ""},
@@ -767,7 +767,7 @@ class PreviewConfigurationMixin:
 
     def update_guidance_panel(self):
         guidance = build_guidance_state(
-            video_path=self.video_path_edit.text(),
+            video_path=self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text(),
             transcript_text=self.transcript_text.toPlainText(),
             translated_text=self.translated_text.toPlainText(),
             translated_srt_path=self.last_translated_srt_path,
@@ -779,7 +779,7 @@ class PreviewConfigurationMixin:
         self.update_preview_context_label(guidance["has_subtitles"], guidance["has_voice_audio"])
 
     def update_project_header(self):
-        video_path = self.video_path_edit.text().strip()
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
         state = getattr(self, "current_project_state", None)
         project_name = str(getattr(state, "display_name", "") or "").strip()
         if project_name:
@@ -891,7 +891,7 @@ class PreviewConfigurationMixin:
         labels = getattr(self, "workflow_stage_labels", {}) or {}
         if not badges:
             return
-        video_path = str(self.video_path_edit.text() if hasattr(self, "video_path_edit") else "").strip()
+        video_path = str(self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else (self.video_path_edit.text() if hasattr(self, "video_path_edit") else "")).strip()
         state = getattr(self, "current_project_state", None)
         artifacts = getattr(state, "artifacts", {}) or {}
         steps = getattr(state, "steps", {}) or {}
@@ -970,7 +970,7 @@ class PreviewConfigurationMixin:
         audio_source = "existing mixed audio" if self.using_existing_audio_source() else "generated Vietnamese voice"
         self.preview_context_label.setText(
             build_preview_context_text(
-                video_ready=bool(self.video_path_edit.text().strip()),
+                video_ready=bool(self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()),
                 has_subtitles=has_subtitles,
                 has_voice_audio=has_voice_audio,
                 subtitle_source=subtitle_source,
@@ -1044,7 +1044,7 @@ class PreviewConfigurationMixin:
         """Return the canvas dimensions the export ASS file is authored for."""
         source_w = max(1, int(getattr(self.video_view, "video_source_width", 0) or 1920))
         source_h = max(1, int(getattr(self.video_view, "video_source_height", 0) or 1080))
-        video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         controller = getattr(self, "preview_controller", None)
         if controller is not None and video_path:
             try:
@@ -1091,7 +1091,7 @@ class PreviewConfigurationMixin:
         if not hasattr(self, "video_view"):
             return
         item = self.video_view.subtitle_item
-        has_video = bool(self.video_path_edit.text().strip())
+        has_video = bool(self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip())
         has_segments = bool(self.get_active_segments())
         if not has_video or not has_segments:
             item.set_text("")

@@ -16,13 +16,15 @@ from worker_adapters import (
 
 
 class TimelineEditingMixin:
-    def _commit_subtitle_mutation(self, *, selected_index=None, persist_empty=True):
+    def _commit_subtitle_mutation(self, *, selected_index=None, persist_empty=True, changed_indices=None):
         """Commit one subtitle edit to every runtime and project surface.
 
         Timeline blocks, hidden SRT editors, JSON artifacts, project-facing
         SRT files, live preview and generated voice must never be updated by
         separate best-effort paths.  Every user mutation funnels through this
         method so reopening/exporting cannot resurrect stale subtitle data.
+        ``changed_indices`` identifies text-only cue edits; their old voice
+        windows can be muted selectively while unchanged cues remain audible.
         """
         self._single_line_split_cache = None
         self.apply_segments_to_timeline()
@@ -38,12 +40,22 @@ class TimelineEditingMixin:
         self._sync_hidden_transcript_text_from_segments()
         self._sync_hidden_translated_text_from_segments()
 
+        # Keep the in-memory preview snapshot aligned at the commit boundary.
+        # The debounce timer still rebuilds ASS/libass assets later, but the
+        # visible overlay and playhead selection must never use the previous
+        # cue list in the meantime (especially after SRT import/replacement).
+        if hasattr(self, "live_preview_segments"):
+            try:
+                self.live_preview_segments = list(self.get_active_segments())
+            except Exception:
+                self.live_preview_segments = []
+
         if selected_index is not None:
             self.set_selected_segment_index(int(selected_index), sync_ui=True)
             if hasattr(self, "timeline"):
                 self.timeline.set_active_segment_index(int(selected_index))
 
-        self._invalidate_dubbed_output_after_subtitle_edit()
+        self._invalidate_dubbed_output_after_subtitle_edit(changed_indices=changed_indices)
 
         state = getattr(self, "current_project_state", None)
         if persist_empty and state is not None:
@@ -364,7 +376,7 @@ class TimelineEditingMixin:
             return
         if getattr(self, "_alternate_range_transcription_worker", None) is not None:
             return
-        video_path = self.video_path_edit.text().strip()
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
         if not video_path or not os.path.isfile(video_path):
             QMessageBox.warning(self, "Transcribe Selected Range", "Please load a video first.")
             return
@@ -868,7 +880,6 @@ class TimelineEditingMixin:
             QMessageBox.information(self, "Track Locked", f"Unlock the track '{track_name}' before clearing it.")
             return
 
-        from PySide6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self, "Confirm",
             f"Are you sure you want to delete all layers in track '{track_name}'?\nThis action cannot be undone.",
@@ -1023,6 +1034,10 @@ class TimelineEditingMixin:
                         self.timeline._selected_layer_id = ""
                         self.timeline.set_duration(int(self.timeline._timeline.duration * 1000))
                         self.timeline._redraw()
+                        if hasattr(self, "_sync_canonical_source_after_change"):
+                            self._sync_canonical_source_after_change()
+                        if hasattr(self, "_invalidate_artifacts_after_timeline_change"):
+                            self._invalidate_artifacts_after_timeline_change()
                         self.refresh_source_video_list()
                         self.persist_current_timeline_project_data()
                         return
@@ -1587,16 +1602,34 @@ class TimelineEditingMixin:
             toggle_btn.setEnabled(not checked)
         self.save_user_settings()
 
-    def _sync_selected_segment_to_playback_position(self):
+    def _sync_selected_segment_to_playback_position(self, position_ms=None):
+        """Select the subtitle cue that contains the current playhead.
+
+        ``media_player.position()`` is asynchronous on some backends.  Seek
+        handlers therefore pass the requested position explicitly so the
+        Inspector cannot lag one signal behind the Preview.  Callers that do
+        not have a requested position keep the historical player-position
+        lookup behaviour.
+        """
         if not hasattr(self, "media_player"):
             return
-        segments = self.live_preview_segments or self.get_active_segments()
+        # Use the committed editor data for selection.  The live preview list
+        # is refreshed on a debounce timer and may intentionally lag during a
+        # subtitle import/edit; using it here would map the playhead to an old
+        # cue and show stale Inspector timing.
+        segments = self.get_active_segments() or self.live_preview_segments
         if not segments:
             return
-        try:
-            position_ms = int(self.media_player.position())
-        except Exception:
-            return
+        if position_ms is None:
+            try:
+                position_ms = int(self.media_player.position())
+            except Exception:
+                return
+        else:
+            try:
+                position_ms = int(position_ms)
+            except (TypeError, ValueError):
+                return
         active_index = self._find_active_segment_index(position_ms, segments)
         if active_index >= 0:
             self.set_selected_segment_index(active_index, sync_ui=False)
@@ -1687,10 +1720,6 @@ class TimelineEditingMixin:
                 selected_speaker = ""
                 if 0 <= idx < len(segment_source):
                     selected_speaker = str(segment_source[idx].get("speaker", "") or "").strip()
-                try:
-                    speaker_position = speaker_ids.index(selected_speaker)
-                except ValueError:
-                    speaker_position = -1
                 speaker_indicator = QLabel()
                 speaker_indicator.setFixedSize(10, 10)
                 speaker_indicator.setStyleSheet(
@@ -1880,7 +1909,7 @@ class TimelineEditingMixin:
         self.current_translated_segment_models = self._dict_segments_to_models(self.current_translated_segments, translated=True)
         self._sync_segment_highlight_chip_row(index)
         self._sync_hidden_translated_text_from_segments()
-        self._commit_subtitle_mutation(selected_index=index)
+        self._commit_subtitle_mutation(selected_index=index, changed_indices={int(index)})
 
     def on_segment_voice_speed_changed(self, index: int, value: float):
         if getattr(self, "_syncing_segment_editor", False):
@@ -1947,7 +1976,8 @@ class TimelineEditingMixin:
         blur_add_btn = getattr(self, "blur_add_btn", None)
         if video_view is None or blur_btn is None:
             return
-        has_video = bool(self.video_path_edit.text().strip()) and os.path.exists(self.video_path_edit.text().strip())
+        source_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
+        has_video = bool(source_path and os.path.exists(source_path))
         blur_enabled = self._blur_effect_enabled()
         is_playing = False
         media_player = getattr(self, "media_player", None)
@@ -1993,7 +2023,8 @@ class TimelineEditingMixin:
     def toggle_blur_effect_enabled(self, checked: bool):
         if not hasattr(self, "video_view") or not hasattr(self, "blur_area_btn"):
             return
-        has_video = bool(self.video_path_edit.text().strip()) and os.path.exists(self.video_path_edit.text().strip())
+        source_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
+        has_video = bool(source_path and os.path.exists(source_path))
         if checked and not has_video:
             self.blur_area_btn.blockSignals(True)
             self.blur_area_btn.setChecked(False)
@@ -2021,7 +2052,8 @@ class TimelineEditingMixin:
     def add_blur_region(self):
         if not hasattr(self, "video_view"):
             return
-        has_video = bool(self.video_path_edit.text().strip()) and os.path.exists(self.video_path_edit.text().strip())
+        source_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
+        has_video = bool(source_path and os.path.exists(source_path))
         if not has_video:
             QMessageBox.warning(self, "Blur Area", "Please load a video before adding a blur area.")
             return
@@ -2418,14 +2450,11 @@ class TimelineEditingMixin:
             selected_id = str(getattr(getattr(self, "timeline", None), "_selected_layer_id", "") or "")
             selected_type = ""
             selected_track_name = ""
-            selected_track = None
-            selected_layer = None
             for track in getattr(getattr(self.timeline, "_timeline", None), "tracks", []) if hasattr(self, "timeline") else []:
                 for layer in getattr(track, "layers", []):
                     if str(getattr(layer, "id", "")) == selected_id:
                         selected_type = str(getattr(getattr(layer, "type", ""), "value", getattr(layer, "type", ""))).lower()
                         selected_track_name = str(getattr(track, "name", ""))
-                        selected_track, selected_layer = track, layer
                         break
                 if selected_type:
                     break

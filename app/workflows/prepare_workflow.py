@@ -21,6 +21,12 @@ from services import (
 from services.resource_download_service import ResourceDownloadService
 
 
+def _ocr_quality_key() -> str:
+    """Key of the active OCR quality profile, for cache invalidation."""
+    from ocr_processor import ocr_quality_signature
+    return ocr_quality_signature()
+
+
 class PrepareWorkflow:
     CHUNKED_ASR_MIN_DURATION_SECONDS = 90.0
     CHUNK_TARGET_DURATION_SECONDS = 12.0
@@ -108,6 +114,7 @@ class PrepareWorkflow:
             "ranges": [[round(start, 3), round(end, 3)] for start, end in time_ranges],
             "expected_texts": [str(value or "") for value in (expected_texts or [])],
             "scan_modes": [str(value or "single") for value in (scan_modes or [])],
+            "ocr_quality": _ocr_quality_key(),
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -461,10 +468,10 @@ class PrepareWorkflow:
         )
 
     def _should_enable_asr_translate_streaming(self, *, translator_ai: bool) -> bool:
-        if not bool(translator_ai):
-            return True
-        provider = str(os.getenv("OPENAI_PROVIDER") or "google").strip().lower()
-        return provider == "openai"
+        # AI providers need the finished regrouped transcript (and speaker
+        # labels) so each cue is translated with scene context. Overlapping
+        # ASR with translation is only safe for isolated Google-web lines.
+        return not bool(translator_ai)
 
     @staticmethod
     def _speaker_diarization_signature(audio_path: str, diarization_key: str = "") -> str:
@@ -1216,7 +1223,8 @@ class PrepareWorkflow:
                     f"{audio_mode_key}|{AsrMergeService.VERSION}|"
                     f"{SegmentRegroupService.VERSION}|"
                     f"{AsrOcrReconciliationService.VERSION}|"
-                    f"ocr-repair={int(bool(repair_asr_with_ocr))}"
+                    f"ocr-repair={int(bool(repair_asr_with_ocr))}|"
+                    f"ocr-quality={_ocr_quality_key()}"
                 ),
             )
             cached_transcription_signature = str(project_state.settings.get("transcription_signature", "") or "").strip()
@@ -1237,7 +1245,7 @@ class PrepareWorkflow:
                 if not raw_segments and segment_models:
                     raw_segments = [segment.to_original_subtitle_dict() for segment in segment_models]
                 if has_imported_transcript:
-                    print(f"[Prepare Workflow] Using imported transcript segments. Skipping transcription.")
+                    print("[Prepare Workflow] Using imported transcript segments. Skipping transcription.")
                 else:
                     print(f"[Prepare Workflow] Reusing cached {engine_name} transcript. Generate did not transcribe again.")
             else:

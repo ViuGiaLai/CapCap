@@ -14,6 +14,11 @@ from app.services.subtitle_exchange_service import (
     SubtitleExchangeService,
 )
 
+try:
+    import openpyxl
+except Exception:
+    openpyxl = None
+
 
 class SubtitleExchangeServiceTests(unittest.TestCase):
     def setUp(self):
@@ -90,9 +95,8 @@ class SubtitleExchangeServiceTests(unittest.TestCase):
 
         self.assertFalse(any("bản dịch trùng hệt" in warning for warning in warnings))
 
+    @unittest.skipUnless(openpyxl is not None, "openpyxl is not installed")
     def test_xlsx_round_trip_changes_only_translated_text(self):
-        import openpyxl
-
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "review.xlsx"
             self.service.export_xlsx(
@@ -120,9 +124,8 @@ class SubtitleExchangeServiceTests(unittest.TestCase):
             translated = self.service.import_translations(str(path), segments=self.segments)
             self.assertEqual(translated, ["Khoan đã!", "Ta sẽ ở lại chặn hậu."])
 
+    @unittest.skipUnless(openpyxl is not None, "openpyxl is not installed")
     def test_import_rejects_changed_original_metadata(self):
-        import openpyxl
-
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "review.xlsx"
             self.service.export_xlsx(
@@ -137,6 +140,28 @@ class SubtitleExchangeServiceTests(unittest.TestCase):
             sheet["D2"] = "被修改"
             workbook.save(path)
             with self.assertRaisesRegex(SubtitleExchangeError, "Original was changed"):
+                self.service.import_translations(str(path), segments=self.segments)
+
+    @unittest.skipUnless(openpyxl is not None, "openpyxl is not installed")
+    def test_import_rejects_reordered_cues(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "reordered.xlsx"
+            self.service.export_xlsx(
+                str(path),
+                segments=self.segments,
+                configured_source="auto",
+                target_language="vi",
+            )
+            workbook = openpyxl.load_workbook(path)
+            sheet = workbook["Subtitles"]
+            first = [sheet.cell(2, column).value for column in range(1, 6)]
+            second = [sheet.cell(3, column).value for column in range(1, 6)]
+            for column, value in enumerate(second, start=1):
+                sheet.cell(2, column).value = value
+            for column, value in enumerate(first, start=1):
+                sheet.cell(3, column).value = value
+            workbook.save(path)
+            with self.assertRaisesRegex(SubtitleExchangeError, "cue order changed"):
                 self.service.import_translations(str(path), segments=self.segments)
 
     def test_portable_xlsx_round_trip_without_openpyxl(self):

@@ -20,17 +20,6 @@ class VisualLayerEditorMixin:
             transform = getattr(layer, "transform", None) or Transform()
         except Exception:
             transform = None
-        # Get position/size from the layer (use transform or defaults)
-        if transform is not None and hasattr(transform, "x"):
-            x = float(getattr(transform, "x", 0.1)) / 100.0
-            y = float(getattr(transform, "y", 0.1)) / 100.0
-            scale_x = float(getattr(transform, "scale_x", 1.0))
-            scale_y = float(getattr(transform, "scale_y", 1.0))
-            w = 0.2 * scale_x
-            h = 0.2 * scale_y
-        else:
-            x, y, w, h = 0.1, 0.1, 0.2, 0.2
-
         # Store the handler lambdas as attributes so we can disconnect
         # them by reference. This avoids the libpyside RuntimeWarning
         # that occurs when calling disconnect() with no args or with
@@ -368,14 +357,13 @@ class VisualLayerEditorMixin:
         timeline = getattr(self, "timeline", None)
         model = getattr(timeline, "_timeline", None) if timeline is not None else None
         video_layer_id = ""
-        video_track = None
         video_layer = None
         for track in getattr(model, "tracks", []) or []:
             track_type = str(getattr(getattr(track, "type", ""), "value", getattr(track, "type", ""))).lower()
             if track_type != "video" and str(getattr(track, "name", "")) != "V1 Video":
                 continue
             if track.layers:
-                video_track, video_layer = track, track.layers[0]
+                video_layer = track.layers[0]
                 video_layer_id = str(getattr(video_layer, "id", "") or "")
                 break
         # If the M1 track was removed with its final layer, clear the
@@ -447,10 +435,6 @@ class VisualLayerEditorMixin:
             )
         # Load current track metadata into the controls
         meta = getattr(track, "metadata", None) or {}
-        try:
-            volume = float(meta.get("_volume", 100.0))
-        except (TypeError, ValueError):
-            volume = 100.0
         try:
             gain = float(meta.get("_gain_db", 0.0))
         except (TypeError, ValueError):
@@ -713,14 +697,6 @@ class VisualLayerEditorMixin:
                         idx = -1
                     break
         if idx < 0 or idx >= len(regions):
-            return
-        rect = regions[idx]
-        try:
-            x = float(rect.x())
-            y = float(rect.y())
-            w = float(rect.width())
-            h = float(rect.height())
-        except Exception:
             return
         # Rebuild the complete B1 payload.  Sending only the selected region
         # used to replace every overlay and then accidentally copy its style

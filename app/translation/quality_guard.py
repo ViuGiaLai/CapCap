@@ -23,6 +23,12 @@ VI_CANONICAL_TERMS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("道友", "đạo hữu", ("đạo hữu", "đạo bạn", "bạn đạo")),
     ("神通", "thần thông", ("thần thông", "phép thần thông", "năng lực thần kỳ", "sức mạnh thần kỳ")),
     ("天王", "Thiên Vương", ("thiên vương",)),
+    ("兄台", "huynh đài", ("huynh đài", "anh bạn", "người anh em")),
+    ("阁下", "các hạ", ("các hạ", "quý ngài")),
+    ("在下", "tại hạ", ("tại hạ", "ở dưới", "bên dưới")),
+    ("老夫", "lão phu", ("lão phu", "ông già", "ông lão")),
+    ("本座", "bổn tọa", ("bổn tọa", "chỗ ngồi này", "ghế này")),
+    ("参见", "bái kiến", ("bái kiến", "tham kiến", "gặp mặt", "gặp")),
 )
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
@@ -43,6 +49,8 @@ _ENGLISH_CONTRACTION_RE = re.compile(
 # are normalized; arbitrary translations are never overwritten.
 VI_CANONICAL_CUES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("住手", "Dừng tay!", ("dừng tay", "dừng lại", "hãy dừng lại", "hãy dừng lại đi")),
+    ("不错", "Đúng vậy", ("không tệ", "không tồi", "chẳng tệ", "đúng vậy", "chính xác", "phải")),
+    ("遵命", "Tuân mệnh!", ("tuân mệnh", "rõ", "nghe lệnh")),
 )
 _ENGLISH_FUNCTION_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "because", "but", "by",
@@ -133,7 +141,7 @@ def apply_translation_quality_guard(
     warnings: list[str] = []
 
     for index, (segment, translated) in enumerate(zip(source_segments, translated_texts)):
-        source = str((segment or {}).get("text") or "")
+        source = str((segment or {}).get("original_text") or (segment or {}).get("source_text") or (segment or {}).get("text") or "")
         text = " ".join(str(translated or "").split()).strip()
 
         if is_vietnamese:

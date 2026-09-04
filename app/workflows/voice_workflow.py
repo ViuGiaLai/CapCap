@@ -1205,12 +1205,11 @@ class VoiceWorkflow:
     def _extend_segment_ends_to_audio(self, *, segments, wavs, sync_mode: str = "off") -> None:
         """Synchronize subtitle windows with measured TTS duration.
 
-        In Smart mode, long speech extends the visual subtitle to its measured
-        end. Short speech never shortens the source subtitle window: burned-in
-        subtitle/OCR timing remains the visual source of truth, while
-        ``_audio_end`` is retained separately for overlap handling.
+        Subtitle timing remains the source/timeline truth.  Voice placement is
+        kept separately in ``_audio_start``/``_audio_end`` so a long TTS clip
+        cannot rewrite the SRT and shift every later cue.  The renderer/mixer
+        can use the audio metadata without corrupting the visual subtitle lane.
         """
-        mode_key = (sync_mode or "off").strip().lower()
         segment_list = list(segments or [])
         for index, (seg, wav_path) in enumerate(zip(segment_list, wavs or [])):
             if not wav_path or not os.path.exists(wav_path):
@@ -1220,7 +1219,6 @@ class VoiceWorkflow:
                 continue
             try:
                 start_s = float(seg.get("start", 0.0))
-                end_s = float(seg.get("end", 0.0))
             except (TypeError, ValueError):
                 continue
             audio_start = seg.get("_audio_start", start_s)
@@ -1228,44 +1226,16 @@ class VoiceWorkflow:
                 audio_start = float(audio_start)
             except (TypeError, ValueError):
                 audio_start = start_s
-            next_start = None
-            if index + 1 < len(segment_list):
-                try:
-                    next_seg = segment_list[index + 1]
-                    next_start = float(next_seg.get("_audio_start", next_seg.get("start", 0.0)))
-                except (AttributeError, TypeError, ValueError):
-                    next_start = None
-            visual_ceiling = None
-            if next_start is not None and next_start >= audio_start:
-                visual_ceiling = max(audio_start, next_start - self.VOICE_COLLISION_GUARD_SECONDS)
             try:
                 audio_end = float(seg.get("_audio_end", audio_start + actual_d))
             except (TypeError, ValueError):
                 audio_end = audio_start + actual_d
             seg["_audio_start"] = audio_start
             seg["_audio_end"] = audio_end
-            if mode_key == "smart" and (
-                audio_start > start_s + 0.01 or audio_end > end_s + 0.01
-            ):
-                if "_original_start" not in seg:
-                    seg["_original_start"] = start_s
-                if "_original_end" not in seg:
-                    seg["_original_end"] = end_s
-                original_window = max(0.0, end_s - start_s)
-                synced_end = max(audio_end, audio_start + original_window)
-                if visual_ceiling is not None:
-                    synced_end = min(synced_end, visual_ceiling)
-                seg["start"] = audio_start
-                seg["end"] = max(audio_start, synced_end)
-                action = str(seg.get("action_taken") or "accept")
-                if "subtitle_sync" not in action:
-                    seg["action_taken"] = f"{action}+subtitle_sync"
-                continue
-
-            # Do not collapse the visual cue to the shorter TTS file. Doing so
-            # moves/removes translated subtitles while the matching source
-            # subtitle is still visible. Audio timing and visual timing are
-            # deliberately stored independently.
+            if audio_start > start_s + 0.01:
+                metrics = dict(seg.get("_tts_metrics") or {})
+                metrics["voice_queue_delay"] = round(audio_start - start_s, 3)
+                seg["_tts_metrics"] = metrics
 
     def _synthesize_segment_wavs(
         self,

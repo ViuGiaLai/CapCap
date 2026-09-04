@@ -145,6 +145,24 @@ class ProjectIsolationTests(unittest.TestCase):
             self.assertNotEqual(ensured_state.project_id, viustudio_state.project_id)
             self.assertEqual(ensured_state.input_video, os.path.abspath(video2))
 
+    def test_artifact_paths_cannot_escape_project_root(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = ProjectService(folder)
+            state = service.create_project()
+            with self.assertRaises(ValueError):
+                service.save_json_artifact(state, "escape", os.path.join("..", "outside.json"), {})
+
+    def test_json_artifact_round_trip_uses_valid_complete_document(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = ProjectService(folder)
+            state = service.create_project()
+            path = service.save_json_artifact(
+                state, "metadata", os.path.join("analysis", "metadata.json"),
+                {"version": 1, "label": "完整"},
+            )
+            self.assertEqual(service.load_json_artifact(state, "metadata"), {"version": 1, "label": "完整"})
+            self.assertTrue(os.path.isfile(path))
+
 
 if __name__ == "__main__":
     unittest.main()

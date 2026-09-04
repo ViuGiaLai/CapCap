@@ -297,8 +297,27 @@ class QtMediaPlayerBackend(QObject):
             if status == _QMP.EndOfMedia:
                 self.pause()
                 self.stateChanged.emit(int(QMediaPlayer.PausedState.value))
+            elif status in (_QMP.LoadedMedia, _QMP.BufferedMedia):
+                # QMediaPlayer often keeps a freshly opened video black until
+                # it receives a seek or play request.  Prime one frame while
+                # remaining paused so the editor always has a truthful visual
+                # starting point and never starts audio unexpectedly.
+                if self._source_path and self._player.position() <= 0:
+                    QTimer.singleShot(0, lambda: self._prime_first_frame())
         except Exception:
             pass
+
+    def _prime_first_frame(self):
+        if not self._source_path:
+            return
+        try:
+            if self._player.playbackState() == QMediaPlayer.PlayingState:
+                return
+            self._player.setPosition(1)
+        except Exception:
+            # Some platform backends do not support seeking until a duration
+            # is reported.  They remain fully playable from the Play button.
+            return
 
     def setSource(self, source):
         self._source_path = source.toLocalFile() if isinstance(source, QUrl) else str(source)

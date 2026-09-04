@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 import cv2
 import numpy as np
 
-from runtime_paths import bin_path, subprocess_hidden_kwargs, subprocess_text_kwargs
+from runtime_paths import bin_path, subprocess_text_kwargs
 
 _OCR_ENGINE = None
 _OCR_ENGINE_LOCK = None
@@ -126,6 +126,117 @@ def _ffmpeg_path():
     return os.path.join(bin_path("ffmpeg"), "ffmpeg.exe")
 
 
+# RapidOCR (pip ``rapidocr``) resolves each component model from the files it
+# finds in ``model_root_dir``, so accuracy is decided by which ONNX files are
+# bundled next to the package. Every entry below is a supported preset in the
+# same installed rapidocr version: dropping the two files into the models
+# directory is enough - no YAML edits and no network download at runtime.
+# ``best`` = PP-OCRv6 medium is the highest tier in the v6 family and reads
+# stylized/faded burned-in subtitles noticeably better than the default small.
+_OCR_MODEL_CATALOG = {
+    # profile: (det file, rec file, ocr_version, model_type, display label)
+    "fast": (
+        "PP-OCRv6_det_tiny.onnx",
+        "PP-OCRv6_rec_tiny.onnx",
+        "PP-OCRv6",
+        "tiny",
+        "PP-OCRv6 tiny",
+    ),
+    "balanced": (
+        "PP-OCRv6_det_small.onnx",
+        "PP-OCRv6_rec_small.onnx",
+        "PP-OCRv6",
+        "small",
+        "PP-OCRv6 small",
+    ),
+    "best": (
+        "PP-OCRv6_det_medium.onnx",
+        "PP-OCRv6_rec_medium.onnx",
+        "PP-OCRv6",
+        "medium",
+        "PP-OCRv6 medium",
+    ),
+    "v4": (
+        "ch_PP-OCRv4_det_mobile.onnx",
+        "ch_PP-OCRv4_rec_mobile.onnx",
+        "PP-OCRv4",
+        "mobile",
+        "PP-OCRv4 mobile",
+    ),
+}
+_OCR_PROFILE_FALLBACKS = {
+    "fast": ("fast", "balanced", "v4"),
+    "balanced": ("balanced", "v4"),
+    "best": ("best", "balanced", "v4"),
+    "v4": ("v4",),
+}
+
+
+def _requested_ocr_quality() -> str:
+    quality = str(os.getenv("VIUSTUDIO_OCR_QUALITY") or "balanced").strip().lower()
+    if quality not in _OCR_PROFILE_FALLBACKS:
+        print(
+            "[OCR] Unknown VIUSTUDIO_OCR_QUALITY "
+            f"{quality!r}; using 'balanced' (PP-OCRv6 small)."
+        )
+        quality = "balanced"
+    return quality
+
+
+def _resolve_ocr_profile(models_dir: str):
+    """Pick the best model set present for the requested quality level.
+
+    Returns ``(requested, selected_profile_key, det_file, rec_file,
+    ocr_version, model_type, label)``. ``selected_profile_key`` is None when
+    no supported pair exists on disk; the caller must then fail with a clear
+    message instead of letting rapidocr attempt a silent network download.
+    """
+    requested = _requested_ocr_quality()
+    if not models_dir or not os.path.isdir(models_dir):
+        return requested, None, None, None, None, None, ""
+    for key in _OCR_PROFILE_FALLBACKS[requested]:
+        det_file, rec_file, ocr_version, model_type, label = _OCR_MODEL_CATALOG[key]
+        if os.path.isfile(os.path.join(models_dir, det_file)) and os.path.isfile(
+            os.path.join(models_dir, rec_file)
+        ):
+            return requested, key, det_file, rec_file, ocr_version, model_type, label
+    return requested, None, None, None, None, None, ""
+
+
+def _find_ocr_models_dir() -> str:
+    """Locate the rapidocr models directory across source and PyInstaller layouts."""
+    try:
+        import rapidocr
+        primary = os.path.join(os.path.dirname(rapidocr.__file__), "models")
+    except Exception:
+        primary = ""
+    # PyInstaller one-dir builds place collected data below _internal,
+    # while source installs keep it beside rapidocr.__file__. Resolve both.
+    import sys
+    candidates = [primary]
+    meipass = getattr(sys, "_MEIPASS", "") or ""
+    if meipass:
+        candidates.append(os.path.join(meipass, "rapidocr", "models"))
+    try:
+        from runtime_paths import bundle_root
+        candidates.append(os.path.join(bundle_root(), "rapidocr", "models"))
+    except Exception:
+        pass
+    return next((path for path in candidates if path and os.path.isdir(path)), "")
+
+
+def ocr_quality_signature() -> str:
+    """Stable key of the active OCR quality profile for cache invalidation.
+
+    Changing ``VIUSTUDIO_OCR_QUALITY`` (or installing/removing model files)
+    changes the returned key, so transcript and OCR-reference caches are
+    invalidated and the new profile is actually used on the next run.
+    """
+    requested = _requested_ocr_quality()
+    _, selected_key, *_rest = _resolve_ocr_profile(_find_ocr_models_dir())
+    return f"{requested}:{selected_key or 'none'}"
+
+
 def _load_ocr_engine():
     global _OCR_ENGINE
     with _get_lock():
@@ -142,48 +253,32 @@ def _load_ocr_engine():
                     pass
             os.environ["PATH"] = cuda_bin + os.pathsep + os.environ.get("PATH", "")
 
-        try:
-            import rapidocr
-            models_dir = os.path.join(os.path.dirname(rapidocr.__file__), "models")
-        except Exception:
-            models_dir = ""
-
-        # PyInstaller one-dir builds place collected data below _internal,
-        # while source installs keep it beside rapidocr.__file__. Resolve both.
-        import sys
-        candidates = [models_dir]
-        meipass = getattr(sys, "_MEIPASS", "") or ""
-        if meipass:
-            candidates.append(os.path.join(meipass, "rapidocr", "models"))
-        try:
-            from runtime_paths import bundle_root
-            candidates.append(os.path.join(bundle_root(), "rapidocr", "models"))
-        except Exception:
-            pass
-        models_dir = next((path for path in candidates if path and os.path.isdir(path)), "")
+        models_dir = _find_ocr_models_dir()
         print(f"[OCR] Model directory: {models_dir or '<not found>'}")
 
-        supported_model_sets = [
-            ("ch_PP-OCRv4_det_mobile.onnx", "ch_PP-OCRv4_rec_mobile.onnx"),
-            ("PP-OCRv6_det_small.onnx", "PP-OCRv6_rec_small.onnx"),
-        ]
-        classifier = "ch_ppocr_mobile_v2.0_cls_mobile.onnx"
-        selected_set = next(
-            (
-                model_set for model_set in supported_model_sets
-                if models_dir and all(os.path.isfile(os.path.join(models_dir, name)) for name in model_set)
-            ),
-            None,
+        requested, selected_key, det_file, rec_file, ocr_version, model_type, label = (
+            _resolve_ocr_profile(models_dir)
         )
+        classifier = "ch_ppocr_mobile_v2.0_cls_mobile.onnx"
         classifier_ready = bool(models_dir and os.path.isfile(os.path.join(models_dir, classifier)))
-        if selected_set is None or not classifier_ready:
-            expected = " or ".join(" + ".join(model_set) for model_set in supported_model_sets)
+        if selected_key is None or not classifier_ready:
+            expected = " or ".join(
+                " + ".join((entry[0], entry[1])) for entry in _OCR_MODEL_CATALOG.values()
+            )
             raise RuntimeError(
                 "OCR models not found inside the rapidocr package. "
                 "Reinstall the rapidocr package or open Settings → Manage Resources for hints.\n\n"
                 f"Expected detector/recognizer: {expected}; classifier: {classifier}\n"
                 f"Looked in: {models_dir or 'rapidocr package directory'}"
             )
+        if selected_key != requested:
+            print(
+                "[OCR] Quality profile '"
+                f"{requested}' requested but its model files are absent; using {label} "
+                f"({', '.join(_OCR_PROFILE_FALLBACKS[requested])})."
+            )
+        else:
+            print(f"[OCR] Quality profile: {requested} -> {label}.")
 
         from rapidocr import RapidOCR
         # Always pass the resolved directory explicitly.  RapidOCR otherwise
@@ -194,21 +289,33 @@ def _load_ocr_engine():
             "Global.log_level": "error",
             "Global.model_root_dir": models_dir,
         }
+        # rapidocr's config.yaml defaults to PP-OCRv6/small, which matches the
+        # ``balanced`` profile. Only override the resolver keys when another
+        # tier (tiny/medium/PP-OCRv4) was actually selected, and always pass
+        # files that were verified present so init never downloads.
+        model_params = dict(base_params)
+        if (ocr_version, model_type) != ("PP-OCRv6", "small"):
+            from rapidocr.utils.typings import ModelType, OCRVersion
+
+            model_params["Det.ocr_version"] = OCRVersion(ocr_version)
+            model_params["Det.model_type"] = ModelType(model_type)
+            model_params["Rec.ocr_version"] = OCRVersion(ocr_version)
+            model_params["Rec.model_type"] = ModelType(model_type)
         cuda_ready, cuda_reason = _onnx_cuda_provider_ready()
         if cuda_ready:
             try:
                 _OCR_ENGINE = RapidOCR(params={
-                    **base_params,
+                    **model_params,
                     "EngineConfig.onnxruntime.use_cuda": True,
                 })
-                print(f"[OCR] RapidOCR engine loaded ({selected_set[0]}, CUDA GPU)")
+                print(f"[OCR] RapidOCR engine loaded ({det_file}, CUDA GPU)")
             except Exception as exc:
                 # This covers a genuine RapidOCR initialization failure after
                 # the provider itself loaded successfully.
-                _OCR_ENGINE = RapidOCR(params=base_params)
+                _OCR_ENGINE = RapidOCR(params=model_params)
                 print(f"[OCR] CUDA initialization failed; using CPU: {exc}")
         else:
-            _OCR_ENGINE = RapidOCR(params=base_params)
+            _OCR_ENGINE = RapidOCR(params=model_params)
             detail = f" ({cuda_reason})" if cuda_reason else ""
             print(f"[OCR] CUDA unavailable; using CPU OCR{detail}")
         _enable_reusable_detector_preprocess(_OCR_ENGINE)

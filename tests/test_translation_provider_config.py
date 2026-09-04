@@ -226,6 +226,8 @@ class TranslationProviderConfigTests(unittest.TestCase):
             src_lang="zh-Hans",
             target_lang="vi",
             max_retries=1,
+            context_before=["开场白"],
+            context_after=["然后离开"],
         )
 
         self.assertEqual(used, "llama_app")
@@ -234,6 +236,12 @@ class TranslationProviderConfigTests(unittest.TestCase):
         self.assertTrue(all("Translate the following segment into Vietnamese" in value for value in prompts))
         self.assertTrue(all("<CUE" not in value for value in prompts))
         self.assertTrue(any("师兄=sư huynh" in value for value in prompts))
+        first = next(value for value in prompts if value.endswith("：原来他一直在骗我"))
+        second = next(value for value in prompts if "：师兄，小心魔族" in value)
+        self.assertIn("Previous source (context only, do not translate): 开场白", first)
+        self.assertIn("Upcoming source (context only, do not translate): 师兄，小心魔族", first)
+        self.assertIn("Previous source (context only, do not translate): 原来他一直在骗我", second)
+        self.assertIn("Upcoming source (context only, do not translate): 然后离开", second)
 
     def test_qwen_local_translation_disables_thinking_for_structured_subtitles(self):
         os.environ["UNIT_QWEN_MODEL"] = "Qwen3-4B-Q4_K_M.gguf"
@@ -296,6 +304,68 @@ class TranslationProviderConfigTests(unittest.TestCase):
             translated,
             ["Đạo hữu vừa liên tiếp giao chiến với hai vị Thiên Vương."],
         )
+
+    def test_local_provider_requests_use_extended_timeout(self):
+        os.environ["UNIT_TO_MODEL"] = "Qwen3-4B-Q4_K_M.gguf"
+        os.environ["UNIT_TO_BASE_URL"] = "http://127.0.0.1:1/v1"
+        local = OpenAICompatiblePolisherProvider(
+            provider_id="llama_app",
+            display_name="Local",
+            env_prefix="UNIT_TO",
+            default_base_url="http://127.0.0.1:1/v1",
+        )
+        cloud = OpenAICompatiblePolisherProvider(
+            provider_id="google_ai_studio",
+            display_name="Cloud",
+            env_prefix="UNIT_TO",
+            default_base_url="http://127.0.0.1:1/v1",
+        )
+        self.assertGreaterEqual(local._effective_timeout("llama_app", 120), 900)
+        self.assertGreaterEqual(local._effective_timeout("ollama", 0), 900)
+        self.assertEqual(cloud._effective_timeout("google_ai_studio", 120), 120)
+
+        captured = {}
+
+        def create(**kwargs):
+            captured.update(kwargs)
+            answer = "1. Sư huynh, cẩn thận Ma tộc!"
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
+
+        local._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        local.polish_batch(
+            source_texts=['<CUE id="1">师兄小心魔族</CUE>'],
+            src_lang="zh-Hans",
+            target_lang="vi",
+            timeout=120,
+            max_retries=1,
+        )
+        self.assertGreaterEqual(captured["timeout"], 900)
+
+    def test_zero_max_retries_still_performs_one_attempt(self):
+        os.environ["UNIT_ZERO_MODEL"] = "Qwen3-4B-Q4_K_M.gguf"
+        os.environ["UNIT_ZERO_BASE_URL"] = "http://127.0.0.1:1/v1"
+        provider = OpenAICompatiblePolisherProvider(
+            provider_id="llama_app",
+            display_name="Local",
+            env_prefix="UNIT_ZERO",
+            default_base_url="http://127.0.0.1:1/v1",
+        )
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+            answer = "1. Sư huynh, cẩn thận Ma tộc!"
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))])
+
+        provider._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        translated, _warnings, _used = provider.polish_batch(
+            source_texts=['<CUE id="1">师兄小心魔族</CUE>'],
+            src_lang="zh-Hans",
+            target_lang="vi",
+            max_retries=0,
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(translated), 1)
 
 
 if __name__ == "__main__":

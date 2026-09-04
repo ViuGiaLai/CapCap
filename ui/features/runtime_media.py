@@ -24,6 +24,7 @@ from services import ResourceDownloadService
 from runtime_profile import is_remote_profile
 from utils.display_utils import clear_log as clear_log_impl, log_message as log_message_impl, show_error as show_error_impl
 from worker_adapters import TimelineThumbnailWorker, TimelineWaveformWorker
+from utils.thread_lifecycle import release_thread_when_stopped
 
 
 class RuntimeMediaMixin:
@@ -606,10 +607,21 @@ class RuntimeMediaMixin:
 
     def _resolve_preview_original_video_path(self) -> str:
         timeline_source = str(getattr(self, "_timeline_preview_source", "") or "")
-        if timeline_source:
+        timeline_sources = set()
+        try:
+            timeline_sources = {
+                os.path.normcase(os.path.abspath(str(item.get("source", "") or "")))
+                for item in self.get_timeline_video_clips(existing_only=True)
+            }
+        except Exception:
+            pass
+        if timeline_source and os.path.normcase(os.path.abspath(timeline_source)) in timeline_sources:
             normalized = self._normalize_local_file_path(timeline_source)
             if normalized and os.path.exists(normalized):
                 return normalized
+        canonical = getattr(self, "resolve_canonical_video_path", None)
+        if callable(canonical):
+            return canonical()
         video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
         normalized = self._normalize_local_file_path(video_path)
         return normalized if normalized and os.path.exists(normalized) else ""
@@ -796,7 +808,9 @@ class RuntimeMediaMixin:
         Fallback: extracted_audio artifact or active source video
         """
         current_preview_source = os.path.abspath(str(getattr(self, "_timeline_preview_source", "") or ""))
-        main_video = os.path.abspath(str(self._normalize_local_file_path(self.video_path_edit.text().strip()) if hasattr(self, "video_path_edit") else "") or "")
+        canonical = getattr(self, "resolve_canonical_video_path", None)
+        main_path = canonical() if callable(canonical) else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
+        main_video = os.path.abspath(str(self._normalize_local_file_path(main_path) or ""))
         
         # When previewing a secondary clip from multi-video timeline, play its own audio directly
         if current_preview_source and current_preview_source != main_video and os.path.exists(current_preview_source):
@@ -833,7 +847,8 @@ class RuntimeMediaMixin:
         self._apply_preview_audio_track_selection()
 
     def _waveform_temp_path(self) -> str:
-        video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+        canonical = getattr(self, "resolve_canonical_video_path", None)
+        video_path = canonical() if callable(canonical) else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         if not video_path:
             return ""
         clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
@@ -844,7 +859,8 @@ class RuntimeMediaMixin:
     def _timeline_waveform_request_signature(self):
         # A1 represents the source video's original audio. It must remain
         # stable as Transcript/Translate/TTS change project artifacts.
-        video_path = self._normalize_local_file_path(self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
+        canonical = getattr(self, "resolve_canonical_video_path", None)
+        video_path = self._normalize_local_file_path(canonical() if callable(canonical) else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""))
         if video_path and os.path.exists(video_path):
             try:
                 stat = os.stat(video_path)
@@ -885,7 +901,8 @@ class RuntimeMediaMixin:
                     for clip in clips
                 ),
             )
-        video_path = self._normalize_local_file_path(self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
+        canonical = getattr(self, "resolve_canonical_video_path", None)
+        video_path = self._normalize_local_file_path(canonical() if callable(canonical) else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""))
         duration_s = max(0.0, float(getattr(self.timeline, "duration", 0) or 0) / 1000.0) if hasattr(self, "timeline") else 0.0
         if not video_path or not os.path.exists(video_path) or duration_s <= 0.0:
             return None
@@ -903,8 +920,9 @@ class RuntimeMediaMixin:
 
     def _load_launcher_timeline_visual_cache(self):
         """Return static V1/A1 data prepared by the launcher, if valid."""
+        canonical = getattr(self, "resolve_canonical_video_path", None)
         video_path = self._normalize_local_file_path(
-            self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+            canonical() if callable(canonical) else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         )
         if not video_path or not os.path.exists(video_path):
             return None
@@ -978,19 +996,27 @@ class RuntimeMediaMixin:
         worker = self._timeline_waveform_worker
         if worker is not None and worker.isRunning():
             return
+        canonical = getattr(self, "resolve_canonical_video_path", None)
         video_path = self._normalize_local_file_path(
-            self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+            canonical() if callable(canonical) else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         )
         clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
         worker = TimelineWaveformWorker(
             request_signature, video_path, "", self._waveform_temp_path(), clips
         )
+        worker.setParent(self)
         worker.finished.connect(self._on_timeline_waveform_ready)
         self._timeline_waveform_worker = worker
         worker.start()
 
     def _on_timeline_waveform_ready(self, request_signature, waveform, duration_s, error):
-        self._timeline_waveform_worker = None
+        worker = self._timeline_waveform_worker
+        release_thread_when_stopped(
+            worker,
+            lambda: setattr(self, "_timeline_waveform_worker", None)
+            if getattr(self, "_timeline_waveform_worker", None) is worker
+            else None,
+        )
         if request_signature != self._desired_timeline_waveform_request:
             self.refresh_timeline_waveform()
             return
@@ -1064,17 +1090,25 @@ class RuntimeMediaMixin:
         worker = self._timeline_thumbnail_worker
         if worker is not None and worker.isRunning():
             return
-        video_path = self._normalize_local_file_path(self.video_path_edit.text().strip())
+        canonical = getattr(self, "resolve_canonical_video_path", None)
+        video_path = self._normalize_local_file_path(canonical() if callable(canonical) else self.video_path_edit.text().strip())
         duration_s = max(0.0, float(self.timeline.duration or 0) / 1000.0)
         thumb_dir = os.path.join(self.get_workspace_temp_root(create=True), "timeline_thumbnails")
         clips = self.get_timeline_video_clips(existing_only=True) if hasattr(self, "get_timeline_video_clips") else []
         worker = TimelineThumbnailWorker(request_signature, video_path, duration_s, thumb_dir, clips)
+        worker.setParent(self)
         worker.finished.connect(self._on_timeline_video_thumbnails_ready)
         self._timeline_thumbnail_worker = worker
         worker.start()
 
     def _on_timeline_video_thumbnails_ready(self, request_signature, thumbnails, error):
-        self._timeline_thumbnail_worker = None
+        worker = self._timeline_thumbnail_worker
+        release_thread_when_stopped(
+            worker,
+            lambda: setattr(self, "_timeline_thumbnail_worker", None)
+            if getattr(self, "_timeline_thumbnail_worker", None) is worker
+            else None,
+        )
         if request_signature != self._desired_timeline_thumbnail_request:
             self.refresh_timeline_video_thumbnails()
             return

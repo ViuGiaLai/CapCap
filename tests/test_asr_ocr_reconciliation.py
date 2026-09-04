@@ -270,6 +270,52 @@ class AsrOcrReconciliationTests(unittest.TestCase):
         self.assertEqual(normalized[0]["text"], "以极度暴力的手段暴虐悬镜使")
         self.assertEqual(normalized[0]["end"], 112.995)
 
+    def test_reconciliation_merges_noisy_re_reads_of_one_caption_across_vad_pause(self):
+        # One burned-in caption stayed on screen ~87.5-92.3s. The sequence scan
+        # re-read it four times and each read garbled different glyphs
+        # (``妙小不理``/``妙小不雅``/``莎小不延``/``沙小不延``). VAD split the
+        # speech into two cues separated by a 0.27s pause, so the old gap <= 0.08
+        # rule missed merging the 88.8 -> 89.07 boundary (text similarity 0.82).
+        normalized, changes = AsrOcrReconciliationService._normalize_reconciled_timeline([
+            {
+                "start": 87.532,
+                "end": 88.8,
+                "text": "就这你的法相妙小不理",
+                "text_source": "ocr_reconciled",
+            },
+            {
+                "start": 89.068,
+                "end": 90.42,
+                "text": "就这你的法相莎小不延",
+                "text_source": "ocr_reconciled",
+            },
+        ])
+
+        self.assertEqual(changes, 1)
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["start"], 87.532)
+        self.assertEqual(normalized[0]["end"], 90.42)
+        self.assertEqual(normalized[0]["text"], "就这你的法相妙小不理")
+
+    def test_reconciliation_keeps_distinct_ocr_captions_that_are_not_re_reads(self):
+        normalized, changes = AsrOcrReconciliationService._normalize_reconciled_timeline([
+            {
+                "start": 100.0,
+                "end": 101.5,
+                "text": "以极度暴力的手段暴虐悬镜使",
+                "text_source": "ocr_reconciled",
+            },
+            {
+                "start": 101.8,
+                "end": 103.2,
+                "text": "他竟敢如此狂妄挑衅悬镜司",
+                "text_source": "ocr_reconciled",
+            },
+        ])
+
+        self.assertEqual(changes, 0)
+        self.assertEqual(len(normalized), 2)
+
     def test_reconciled_timeline_has_no_overlapping_cues(self):
         normalized, changes = AsrOcrReconciliationService._normalize_reconciled_timeline([
             {"start": 154.492, "end": 156.492, "text": "在下赤炼刀宗宗主段赤炎"},
@@ -298,6 +344,28 @@ class AsrOcrReconciliationTests(unittest.TestCase):
         self.assertEqual(repaired[0]["text"], "韩念川是吧")
         self.assertAlmostEqual(repaired[0]["start"], 201.987)
         self.assertAlmostEqual(repaired[0]["end"], 202.414)
+
+    def test_sequence_ocr_does_not_shift_timing_when_text_differs(self):
+        repaired, count = AsrOcrReconciliationService.reconcile(
+            [{
+                "start": 10.0,
+                "end": 14.0,
+                "text": "今天的天气真是不错啊",
+                "speech_detected": True,
+            }],
+            [{
+                "start": 10.5,
+                "end": 11.5,
+                "text": "客栈酒家",
+                "ocr_consensus_frames": 2,
+                "ocr_scan_mode": "sequence",
+            }],
+            source_language="zh",
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(repaired[0]["text"], "今天的天气真是不错啊")
+        self.assertEqual(repaired[0]["start"], 10.0)
+        self.assertEqual(repaired[0]["end"], 14.0)
 
     def test_repairs_short_add_drop_and_homophone_examples(self):
         asr = [

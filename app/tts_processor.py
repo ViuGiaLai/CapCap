@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import os
 import re
 import subprocess
@@ -128,10 +129,12 @@ def _voice_provider_and_id(voice: str) -> tuple[str, str]:
 
 def _speed_to_float(speed) -> float:
     if isinstance(speed, (int, float)):
-        return float(speed)
+        value = float(speed)
+        return value if math.isfinite(value) else 1.0
     text = str(speed or "").strip().lower().replace("x", "")
     try:
-        return float(text or "1.0")
+        value = float(text or "1.0")
+        return value if math.isfinite(value) else 1.0
     except ValueError:
         return 1.0
 
@@ -246,6 +249,10 @@ def piper_tts_to_wav_16k_mono(
     os.makedirs(os.path.dirname(wav_path) or ".", exist_ok=True)
     os.makedirs(tmp_dir, exist_ok=True)
 
+    safe_speed = _speed_to_float(speed)
+    if safe_speed <= 0.0:
+        raise ValueError("TTS speed must be greater than zero.")
+
     # Normalize text
     normalized_text = normalize_text_for_tts(text, provider="piper", language=language)
 
@@ -254,7 +261,7 @@ def piper_tts_to_wav_16k_mono(
 
     # Configure synthesis
     from piper.config import SynthesisConfig
-    syn_config = SynthesisConfig(length_scale=1.0 / speed)
+    syn_config = SynthesisConfig(length_scale=1.0 / safe_speed)
 
     # Synthesize to WAV
     with wave.open(wav_path, "wb") as wav_file:
@@ -343,7 +350,7 @@ def edge_tts_to_wav_16k_mono(
         "1",
         wav_path,
     ]
-    proc = subprocess.run(cmd, capture_output=True, **subprocess_text_kwargs())
+    proc = subprocess.run(cmd, capture_output=True, timeout=120, **subprocess_text_kwargs())
     if proc.returncode != 0:
         raise RuntimeError(f"FFmpeg conversion failed:\n{proc.stderr or proc.stdout}")
     return wav_path

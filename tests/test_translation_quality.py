@@ -1,4 +1,3 @@
-import os
 import sys
 import unittest
 from pathlib import Path
@@ -11,23 +10,32 @@ sys.path[:0] = [str(ROOT), str(ROOT / "app")]
 from app.translation.orchestrator import TranslationOrchestrator
 from app.translation.prompt_builder import build_translation_messages
 from app.translation.quality_guard import apply_translation_quality_guard
+from app.translation.srt_utils import parse_numbered_line_items
 
 
 class _CapturingPolisher:
     def __init__(self):
         self.styles = []
+        self.context_before = []
+        self.context_after = []
 
-    def polish_batch(self, *, source_texts, style_instruction, **_kwargs):
+    def polish_batch(self, *, source_texts, style_instruction, context_before=None, context_after=None, **_kwargs):
         self.styles.append(style_instruction)
+        self.context_before.append(list(context_before or []))
+        self.context_after.append(list(context_after or []))
         return [f"dịch {index + 1}" for index in range(len(source_texts))], [], "fake"
 
 
 class _RepairPolisher:
     def __init__(self):
         self.style = ""
+        self.context_before = []
+        self.context_after = []
 
-    def polish_batch(self, *, style_instruction, **_kwargs):
+    def polish_batch(self, *, style_instruction, context_before=None, context_after=None, **_kwargs):
         self.style = style_instruction
+        self.context_before = list(context_before or [])
+        self.context_after = list(context_after or [])
         return ["Hắn có 100 linh thạch"], [], "fake"
 
 
@@ -77,11 +85,12 @@ class TranslationQualityTests(unittest.TestCase):
         self.assertIn("provider quota exhausted", str(raised.exception))
     def test_ai_source_contains_timing_metadata_but_keeps_one_line(self):
         value = TranslationOrchestrator._build_timed_ai_source(
-            {"start": 2.5, "end": 4.75, "text": "原来他\n一直在骗我"},
+            {"start": 2.5, "end": 4.75, "text": "原来他\n一直在骗我", "speaker": "SPEAKER_01"},
             3,
         )
         self.assertIn('id="4"', value)
         self.assertIn('duration="2.250"', value)
+        self.assertIn('speaker="SPEAKER_01"', value)
         self.assertNotIn("\n", value)
         self.assertIn("原来他 一直在骗我", value)
 
@@ -125,9 +134,10 @@ class TranslationQualityTests(unittest.TestCase):
         self.assertEqual(result, ["dịch 1", "dịch 1"])
         self.assertEqual(providers, ["fake"])
         self.assertEqual(warnings, [])
-        self.assertIn("Upcoming source context", polisher.styles[0])
-        self.assertIn("preceding cues", polisher.styles[1])
-        self.assertIn("câu một => dịch 1", polisher.styles[1])
+        self.assertIn("câu hai", " ".join(polisher.context_after[0]))
+        self.assertIn("câu một => dịch 1", " ".join(polisher.context_before[1]))
+        self.assertNotIn("Upcoming source context", polisher.styles[0])
+        self.assertEqual(polisher.styles[0], "recap")
 
     def test_script_and_readability_checks_follow_target_language(self):
         segments = [{"start": 0.0, "end": 2.0, "text": "原文"}]
@@ -199,11 +209,29 @@ class TranslationQualityTests(unittest.TestCase):
             style_instruction="recap",
         )
         self.assertIn("Meaning is the first quality gate", system)
-        self.assertIn("2–5 neighbouring cues", system)
         self.assertIn("OCR/ASR safety", system)
         self.assertIn("师兄=sư huynh", system)
         self.assertIn("duration", system)
+        self.assertIn("`speaker` names the person producing that cue", system)
         self.assertNotIn('id="', _user)
+
+    def test_translation_user_payload_keeps_scene_context_out_of_style(self):
+        _system, user = build_translation_messages(
+            source_texts=['<CUE id="2" duration="2.0" speaker="SPEAKER_01">他来了</CUE>'],
+            translated_texts=None,
+            src_lang="zh-Hans",
+            target_lang="vi",
+            style_instruction="recap",
+            context_before=['<CUE duration="1.0">师兄小心</CUE>'],
+            context_after=['<CUE duration="1.0">然后离开</CUE>'],
+        )
+        self.assertIn("<CONTEXT_BEFORE>", user)
+        self.assertIn("<CONTEXT_AFTER>", user)
+        self.assertIn("<PREV>师兄小心</PREV>", user)
+        self.assertIn("<NEXT>然后离开</NEXT>", user)
+        self.assertIn('speaker="SPEAKER_01"', user)
+        self.assertNotIn('id="2"', user)
+        self.assertIn("<TRANSLATE>", user)
 
     def test_guard_localizes_wuti_toudi_without_literal_or_mixed_language(self):
         texts, warnings = apply_translation_quality_guard(
@@ -264,8 +292,9 @@ class TranslationQualityTests(unittest.TestCase):
 
         self.assertEqual(repaired[1], "Hắn có 100 linh thạch")
         self.assertEqual(warnings, [])
-        self.assertIn("他来了", polisher.style)
-        self.assertIn("然后离开", polisher.style)
+        self.assertIn("他来了", " ".join(polisher.context_before))
+        self.assertIn("然后离开", " ".join(polisher.context_after))
+        self.assertNotIn("Nearby source context", polisher.style)
         self.assertIn("never output nearby cues", polisher.style)
 
     def test_unresolved_wrong_language_cue_uses_final_fallback(self):
@@ -327,6 +356,159 @@ class TranslationQualityTests(unittest.TestCase):
         # Voice remains one complete grouped utterance; only the visible cue is split.
         self.assertTrue(all(item["tts_text"] == full_text for item in split))
         self.assertFalse(any(item["text"] == full_text for item in split))
+
+
+    def test_cloud_provider_uses_scene_sized_ordered_batches(self):
+        class _SizePolisher:
+            def __init__(self):
+                self.sizes = []
+                self.context_before = []
+
+            def polish_batch(self, *, source_texts, context_before=None, **_kwargs):
+                self.sizes.append(len(source_texts))
+                self.context_before.append(list(context_before or []))
+                return [f"dịch {index + 1}" for index in range(len(source_texts))], [], "fake"
+
+        polisher = _SizePolisher()
+        sources = [f"câu {index}" for index in range(30)]
+        result, _providers, _warnings = TranslationOrchestrator()._run_ai_batches(
+            polisher=polisher,
+            provider_type="google_ai_studio",
+            source_texts=sources,
+            translated_texts=None,
+            src_lang="zh-Hans",
+            target_lang="vi",
+            style_instruction="",
+            polish_batch_size=80,
+        )
+        self.assertEqual(len(result), 30)
+        self.assertGreater(len(polisher.sizes), 1)
+        self.assertTrue(all(size <= 24 for size in polisher.sizes))
+        self.assertTrue(any(polisher.context_before))
+
+    def test_local_provider_ordered_batches_are_small_by_default(self):
+        sources = [f"câu {index}" for index in range(30)]
+        batches, full_context = TranslationOrchestrator._build_ai_batches(
+            source_texts=sources,
+            translated_texts=None,
+            requested_max_segments=12,
+            force_ordered=True,
+            max_chars_limit=6000,
+            response_token_limit=1800,
+        )
+        self.assertFalse(full_context)
+        self.assertGreater(len(batches), 1)
+        self.assertTrue(all(len(source) <= 12 for source, _draft, _tokens in batches))
+        self.assertEqual(sum(len(source) for source, _draft, _tokens in batches), 30)
+
+    def test_local_batch_failure_retries_once_with_half_size_batches(self):
+        class _ShrinkPolisher:
+            def __init__(self):
+                self.sizes = []
+
+            def polish_batch(self, *, source_texts, translated_texts=None, style_instruction="", **_kwargs):
+                self.sizes.append(len(source_texts))
+                if len(self.sizes) == 1:
+                    raise RuntimeError("request timed out")
+                answers = []
+                for index, _source in enumerate(source_texts, 1):
+                    answers.append(f"bản dịch {index}")
+                return answers, [], "llama_app"
+
+        polisher = _ShrinkPolisher()
+        orchestrator = TranslationOrchestrator()
+        sources = [f"câu {index}" for index in range(24)]
+        result, _providers, _warnings = orchestrator._run_ai_batches(
+            polisher=polisher,
+            provider_type="llama_app",
+            source_texts=sources,
+            translated_texts=None,
+            src_lang="zh-Hans",
+            target_lang="vi",
+            style_instruction="",
+            polish_batch_size=80,
+        )
+        self.assertEqual(len(result), 24)
+        # First pass raised, then the whole request set was retried at <= 6 cues.
+        self.assertGreaterEqual(len(polisher.sizes), 2)
+        self.assertTrue(all(size <= 6 for size in polisher.sizes[1:]))
+
+    def test_cloud_batch_failure_is_not_swallowed(self):
+        class _CloudFailPolisher:
+            def polish_batch(self, **_kwargs):
+                raise RuntimeError("provider quota exhausted")
+
+        with self.assertRaisesRegex(Exception, "quota exhausted"):
+            TranslationOrchestrator()._run_ai_batches(
+                polisher=_CloudFailPolisher(),
+                provider_type="google_ai_studio",
+                source_texts=["câu một"],
+                translated_texts=None,
+                src_lang="zh-Hans",
+                target_lang="vi",
+                style_instruction="",
+                polish_batch_size=80,
+            )
+
+    def test_parse_numbered_line_items_strips_translation_prefixes(self):
+        raw = """
+        1. Dịch: Sư huynh, cẩn thận!
+        2. Bản dịch: Đừng lo cho ta.
+        3. Translation: Mau đi đi.
+        """
+        items = parse_numbered_line_items(raw)
+        self.assertEqual(len(items), 3)
+        self.assertEqual(items[0], (1, "Sư huynh, cẩn thận!"))
+        self.assertEqual(items[1], (2, "Đừng lo cho ta."))
+        self.assertEqual(items[2], (3, "Mau đi đi."))
+
+    def test_prompt_builder_preserves_speaker_turn_in_context(self):
+        _system, user = build_translation_messages(
+            source_texts=['<CUE id="2" duration="2.0" speaker="Speaker 2">Ta là sư huynh của ngươi.</CUE>'],
+            translated_texts=None,
+            src_lang="zh-Hans",
+            target_lang="vi",
+            context_before=['<CUE duration="1.0" speaker="Speaker 1">Ngươi là ai?</CUE>'],
+            context_after=['<CUE duration="1.0" speaker="Speaker 1">Thật vậy sao?</CUE>'],
+        )
+    def test_quality_guard_supports_original_text_and_canonical_cues(self):
+        source_segments = [
+            {"id": 1, "start": 0.0, "end": 1.0, "original_text": "不错"},
+            {"id": 2, "start": 1.0, "end": 2.0, "original_text": "在下韩念川"},
+            {"id": 3, "start": 2.0, "end": 3.0, "original_text": "参见韩大人"},
+        ]
+        translated = ["Không tệ", "Ở dưới Hàn Niệm Xuyên", "Gặp Hàn đại nhân"]
+        guarded, _ = apply_translation_quality_guard(
+            source_segments=source_segments,
+            translated_texts=translated,
+            target_lang="vi",
+        )
+        self.assertEqual(guarded[0], "Đúng vậy")
+        self.assertIn("tại hạ", guarded[1].lower())
+        self.assertIn("bái kiến", guarded[2].lower())
+
+    def test_orchestrator_source_text_extractors(self):
+        orchestrator = TranslationOrchestrator()
+        seg1 = {"original_text": "曹兄", "start": 1.0, "end": 2.0}
+        seg2 = {"source_text": "韩兄", "start": 2.0, "end": 3.0}
+        seg3 = {"text": "贺兄", "start": 3.0, "end": 4.0}
+        self.assertEqual(orchestrator._segment_source_text(seg1), "曹兄")
+        self.assertEqual(orchestrator._segment_source_text(seg2), "韩兄")
+        self.assertEqual(orchestrator._segment_source_text(seg3), "贺兄")
+
+        timed = orchestrator._build_timed_ai_source(seg1, 0)
+        self.assertIn("曹兄", timed)
+        self.assertIn('start="1.000"', timed)
+
+    def test_validate_texts_and_clone_with_texts_behavior(self):
+        from app.translation.srt_utils import clone_with_texts, validate_texts
+        self.assertTrue(validate_texts(["Xin chào", ""], 2))
+        self.assertFalse(validate_texts(["", ""], 2))
+        self.assertFalse(validate_texts(["Xin chào"], 2))
+
+        cloned = clone_with_texts([{"start": 1.0, "end": 2.0, "original_text": "曹兄"}], ["Tào huynh"], "test_prov")
+        self.assertEqual(cloned[0]["source_text"], "曹兄")
+        self.assertEqual(cloned[0]["text"], "Tào huynh")
 
 
 if __name__ == "__main__":

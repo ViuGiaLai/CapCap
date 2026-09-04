@@ -5,8 +5,9 @@ import json
 import time
 import shutil
 import re
+import tempfile
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QMetaObject, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -37,16 +38,35 @@ def _load_recent_projects(settings=None):
     try:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
+                payload = json.load(f)
+                return payload if isinstance(payload, list) else []
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return []
     return []
 
 
 def _save_recent_projects(settings, projects):
     path = _recent_projects_path()
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(projects, f, ensure_ascii=False, indent=2)
+    parent = os.path.dirname(os.path.abspath(path)) or os.getcwd()
+    os.makedirs(parent, exist_ok=True)
+    temporary_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".tmp", prefix=".recent_",
+            dir=parent, delete=False,
+        ) as handle:
+            temporary_path = handle.name
+            json.dump(list(projects or []), handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = ""
+    finally:
+        if temporary_path:
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
 
 
 def _project_pipeline_status(video_path: str = "", state_path: str = "") -> tuple[str, str]:
@@ -394,6 +414,31 @@ class LauncherWindow(QDialog):
             QScrollBar::handle:vertical:hover {
                 background: #2a4e7a;
             }
+            QFrame#launcherAside {
+                background: #1d1824;
+                border: 1px solid #3a2d45;
+                border-radius: 18px;
+            }
+            QLabel#launcherEyebrow {
+                color: #f0b35c; font-size: 10px; font-weight: 800;
+                letter-spacing: 1.4px;
+            }
+            QLabel#launcherHero {
+                color: #fff4e6; font-size: 27px; font-weight: 900;
+            }
+            QLabel#launcherAsideBody { color: #bcaec6; font-size: 12px; line-height: 1.4em; }
+            QLabel#launcherStep {
+                color: #d9cadd; font-size: 12px; font-weight: 700;
+                background: #2a2031; border: 1px solid #493653;
+                border-radius: 10px; padding: 10px;
+            }
+            QLabel#launcherInstallState {
+                color: #9edbc9; font-size: 11px; font-weight: 700;
+                background: #162a29; border: 1px solid #2f6658;
+                border-radius: 10px; padding: 10px;
+            }
+            QFrame#launcherMainColumn { background: #111217; border: none; }
+            QLabel#launcherSectionLabel { color: #f0b35c; font-size: 12px; font-weight: 800; letter-spacing: 1px; }
         """)
 
         self._build_ui()
@@ -401,9 +446,44 @@ class LauncherWindow(QDialog):
         QTimer.singleShot(0, self._validate_resources_for_device)
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(18)
+        root.setSpacing(16)
+
+        aside = QFrame()
+        aside.setObjectName("launcherAside")
+        aside.setFixedWidth(238)
+        aside_layout = QVBoxLayout(aside)
+        aside_layout.setContentsMargins(18, 22, 18, 18)
+        aside_layout.setSpacing(12)
+        eyebrow = QLabel("VIU STUDIO / 01")
+        eyebrow.setObjectName("launcherEyebrow")
+        aside_layout.addWidget(eyebrow)
+        hero = QLabel("Make every\nframe speak.")
+        hero.setObjectName("launcherHero")
+        hero.setWordWrap(True)
+        aside_layout.addWidget(hero)
+        body = QLabel("A focused workspace for transcription, translation, voiceover and final delivery.")
+        body.setObjectName("launcherAsideBody")
+        body.setWordWrap(True)
+        aside_layout.addWidget(body)
+        aside_layout.addSpacing(8)
+        for step in ("01  Bring in a video", "02  Shape the subtitle", "03  Export with confidence"):
+            step_label = QLabel(step)
+            step_label.setObjectName("launcherStep")
+            aside_layout.addWidget(step_label)
+        aside_layout.addStretch(1)
+        install_state = QLabel("Checking tools…")
+        install_state.setObjectName("launcherInstallState")
+        install_state.setWordWrap(True)
+        aside_layout.addWidget(install_state)
+        self.install_state_label = install_state
+        root.addWidget(aside)
+
+        main_column = QVBoxLayout()
+        main_column.setContentsMargins(0, 0, 0, 0)
+        main_column.setSpacing(16)
+        root.addLayout(main_column, 1)
 
         header_frame = QFrame()
         header_frame.setObjectName("headerCard")
@@ -622,11 +702,12 @@ class LauncherWindow(QDialog):
         action_rows.addLayout(action_row_one)
         action_rows.addLayout(action_row_two)
         header.addLayout(action_rows)
-        root.addWidget(header_frame)
+        main_column.addWidget(header_frame)
 
         self.section_label = QLabel("Recent Projects")
         self.section_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #4da6e8; letter-spacing: 0.5px; text-transform: uppercase;")
-        root.addWidget(self.section_label)
+        self.section_label.setObjectName("launcherSectionLabel")
+        main_column.addWidget(self.section_label)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -640,19 +721,19 @@ class LauncherWindow(QDialog):
         self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
         scroll.setWidget(self.grid_widget)
-        root.addWidget(scroll, 1)
+        main_column.addWidget(scroll, 1)
 
         self.empty_label = QLabel("No recent projects. Click \"+ New Project\" to start.")
         self.empty_label.setAlignment(Qt.AlignCenter)
         self.empty_label.setStyleSheet("color: #556677; font-size: 13px;")
         self.empty_label.hide()
-        root.addWidget(self.empty_label)
+        main_column.addWidget(self.empty_label)
 
         self.loading_label = QLabel("Preparing video...")
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setStyleSheet("color: #4ecdc4; font-size: 16px; font-weight: 700; padding: 20px;")
         self.loading_label.hide()
-        root.addWidget(self.loading_label)
+        main_column.addWidget(self.loading_label)
 
     def accept(self):
         if getattr(self, "_is_accepting", False):
@@ -687,8 +768,6 @@ class LauncherWindow(QDialog):
         except Exception as exc:
             print(f"[Launcher] Resource validation failed: {exc}")
 
-        duration = _get_video_duration(self.selected_video)
-        MAX_DURATION = float('inf')
         self._is_accepting = True
         self._set_selected_device(self.selected_device)
         self.loading_label.show()
@@ -806,6 +885,19 @@ class LauncherWindow(QDialog):
             return
         device = self.selected_device
         is_ok, missing = service.validate_device(device)
+        ffmpeg_ready = os.path.isfile(_ffmpeg_path()) and os.path.isfile(
+            _ffmpeg_path().replace("ffmpeg.exe", "ffprobe.exe")
+        )
+        if not ffmpeg_ready:
+            missing = list(missing or [])
+            missing.append(("ffmpeg", "FFmpeg/FFprobe tools"))
+            is_ok = False
+        install_state = getattr(self, "install_state_label", None)
+        if install_state is not None:
+            install_state.setText(
+                "Ready to create a project" if is_ok else
+                "Setup needed — use Manage Resources or check the bundled tools"
+            )
         self.new_btn.setEnabled(is_ok)
         if device == "cuda":
             has_gpu = True
@@ -1200,7 +1292,6 @@ class LauncherWindow(QDialog):
 
     def _on_split_video(self):
         from PySide6.QtWidgets import QMessageBox, QProgressDialog, QInputDialog
-        from PySide6.QtCore import QThread, Signal
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Long Video to Split", "",
             "Video Files (*.mp4 *.mkv *.avi *.mov *.webm);;All Files (*)"
@@ -1245,25 +1336,38 @@ class LauncherWindow(QDialog):
         progress.setModal(True)
         progress.setCancelButton(None)
         progress.show()
+        split_result = {"ok": False, "error": ""}
 
         import subprocess
         import threading
 
         def _do_split():
             try:
-                subprocess.run(
+                result = subprocess.run(
                     [_ffmpeg_path(), "-y", "-i", path, "-c", "copy",
                      "-f", "segment", "-segment_time", str(seg_seconds),
                      "-reset_timestamps", "1", out_pattern],
                     capture_output=True, timeout=3600, **subprocess_hidden_kwargs(),
                 )
+                split_result["ok"] = result.returncode == 0
+                if not split_result["ok"]:
+                    split_result["error"] = (result.stderr or result.stdout or "").strip()
                 QMetaObject.invokeMethod(progress, "accept", Qt.QueuedConnection)
             except Exception as e:
+                split_result["error"] = str(e)
                 QMetaObject.invokeMethod(progress, "accept", Qt.QueuedConnection)
                 print(f"[Split] Error: {e}")
 
         threading.Thread(target=_do_split, daemon=True).start()
         progress.exec()
+
+        if not split_result["ok"]:
+            mb = QMessageBox(QMessageBox.Critical, "Split Failed",
+                "Could not split the video.\n\n" + (split_result["error"] or "FFmpeg returned an error."),
+                QMessageBox.Ok, self)
+            mb.setStyleSheet(MSG_STYLE)
+            mb.exec()
+            return
 
         mb = QMessageBox(QMessageBox.Information, "Done",
             f"Video split into {seg_minutes}-minute segments.\nSaved alongside the original file.",

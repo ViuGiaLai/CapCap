@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -206,7 +207,6 @@ class OcrRegionOverlay(QWidget):
         if not self._is_requested_visible():
             self.hide()
             return
-        cpu_mode = os.getenv("VIUSTUDIO_DEVICE", "cuda").strip().lower() == "cpu"
         engine = os.getenv("TRANSCRIPTION_ENGINE", "sensevoice").strip().lower()
         alternate_ocr_active = bool(getattr(self._main_window, "_alternate_ocr_range_pending", None))
         if engine != "ocr" and not alternate_ocr_active:
@@ -840,6 +840,17 @@ def build_preview_panel(gui):
     preview_card_layout = QVBoxLayout(preview_card)
     preview_card_layout.setContentsMargins(12, 12, 12, 10)
     preview_card_layout.setSpacing(8)
+    preview_header = QHBoxLayout()
+    preview_header.setContentsMargins(2, 0, 2, 0)
+    preview_header.setSpacing(8)
+    preview_title = QLabel("LIVE PREVIEW")
+    preview_title.setObjectName("previewSectionTitle")
+    preview_header.addWidget(preview_title)
+    preview_header.addStretch(1)
+    preview_state = QLabel("SOURCE MONITOR")
+    preview_state.setObjectName("previewStatePill")
+    preview_header.addWidget(preview_state)
+    preview_card_layout.addLayout(preview_header)
     preview_card_layout.addWidget(gui.preview_context_label)
     preview_card_layout.addWidget(gui.frame_preview_status_label)
     preview_card_layout.addWidget(gui.frame_preview_image_label, 1)
@@ -960,19 +971,35 @@ def build_preview_panel(gui):
     speed_group.addWidget(speed_label)
     speed_group.addWidget(gui.preview_speed_combo)
 
+    # Keep transport controls in two deliberate rows.  A single long row
+    # looked acceptable on a wide monitor but squeezed the tool buttons into
+    # each other as soon as the inspector was opened or the window was moved
+    # to a laptop.  The player row always keeps play/reset/render and time
+    # together; the edit row gets its own horizontal breathing room.
     transport_bar = QFrame()
     transport_bar.setObjectName("previewTransportBar")
     gui.preview_transport_bar = transport_bar
-    transport_row = QHBoxLayout(transport_bar)
-    transport_row.setContentsMargins(4, 4, 4, 4)
-    transport_row.setSpacing(4)
-    transport_row.addLayout(play_group)
-    transport_row.addWidget(_make_sep())
-    transport_row.addLayout(blur_group)
-    transport_row.addStretch(1)
-    transport_row.addWidget(_make_sep())
-    transport_row.addLayout(speed_group)
-    transport_row.addWidget(gui.time_label)
+    transport_layout = QVBoxLayout(transport_bar)
+    transport_layout.setContentsMargins(8, 6, 8, 6)
+    transport_layout.setSpacing(5)
+
+    playback_row = QHBoxLayout()
+    playback_row.setContentsMargins(0, 0, 0, 0)
+    playback_row.setSpacing(5)
+    playback_row.addLayout(play_group)
+    playback_row.addStretch(1)
+    playback_row.addWidget(gui.time_label)
+    transport_layout.addLayout(playback_row)
+
+    edit_row = QHBoxLayout()
+    edit_row.setContentsMargins(0, 0, 0, 0)
+    edit_row.setSpacing(5)
+    edit_row.addWidget(QLabel("Tools"), 0)
+    edit_row.addWidget(_make_sep())
+    edit_row.addLayout(blur_group)
+    edit_row.addStretch(1)
+    edit_row.addLayout(speed_group)
+    transport_layout.addLayout(edit_row)
     preview_card_layout.addWidget(transport_bar)
     gui.frame_preview_badge_label.setParent(preview_card)
     gui.frame_preview_badge_label.raise_()
@@ -1364,8 +1391,9 @@ def build_preview_panel(gui):
     # Keep this row usable at the inspector's 400 px minimum width.  The
     # previous long labels inherited the application's generous button
     # padding, so Qt squeezed them until their leading characters vanished.
-    inspector_actions_row = QHBoxLayout()
-    inspector_actions_row.setSpacing(6)
+    inspector_actions_row = QGridLayout()
+    inspector_actions_row.setHorizontalSpacing(6)
+    inspector_actions_row.setVerticalSpacing(6)
     inspector_actions_row.setContentsMargins(0, 0, 0, 0)
     gui.rewrite_translation_btn = QPushButton("Rewrite")
     gui.subtitle_editor_btn = QPushButton("Edit")
@@ -1388,8 +1416,11 @@ def build_preview_panel(gui):
     for button, preferred_width, tooltip in action_buttons:
         button.setObjectName("subtitleInspectorAction")
         button.setFixedHeight(32)
-        button.setMinimumWidth(preferred_width)
+        # Let the grid distribute the available inspector width.  Fixed
+        # widths made the five actions overflow and clip on compact screens.
+        button.setMinimumWidth(0)
         button.setMaximumWidth(preferred_width)
+        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         button.setIconSize(QSize(15, 15))
         button.setCursor(Qt.PointingHandCursor)
         button.setToolTip(tooltip)
@@ -1407,12 +1438,16 @@ def build_preview_panel(gui):
     gui.inspector_delete_segment_btn.setEnabled(False)
     gui.subtitle_editor_btn.clicked.connect(gui.open_subtitle_editor)
     gui.inspector_delete_segment_btn.clicked.connect(gui.delete_selected_timeline_segment)
-    inspector_actions_row.addWidget(gui.rewrite_translation_btn, 0)
-    inspector_actions_row.addWidget(gui.subtitle_editor_btn, 0)
-    inspector_actions_row.addWidget(gui.import_translation_btn, 0)
-    inspector_actions_row.addWidget(gui.audio_inspector_regenerate_voice_btn, 0)
-    inspector_actions_row.addWidget(gui.inspector_delete_segment_btn, 0)
-    inspector_actions_row.addStretch(1)
+    for action_index, button in enumerate((
+        gui.rewrite_translation_btn,
+        gui.subtitle_editor_btn,
+        gui.import_translation_btn,
+        gui.audio_inspector_regenerate_voice_btn,
+        gui.inspector_delete_segment_btn,
+    )):
+        inspector_actions_row.addWidget(button, action_index // 3, action_index % 3)
+    for column in range(3):
+        inspector_actions_row.setColumnStretch(column, 1)
     inspector_layout.addLayout(inspector_actions_row)
 
     # The original transcript is shown immediately above the editable
@@ -1963,11 +1998,15 @@ def build_preview_panel(gui):
     default_layout = QVBoxLayout(default_inspector_card)
     default_layout.setContentsMargins(14, 14, 14, 14)
     default_layout.setSpacing(10)
-    default_title = QLabel("Track Inspector")
+    default_title = QLabel("Workspace Inspector")
     default_title.setObjectName("statusHeadline")
     default_layout.addWidget(default_title)
+    default_hint = QLabel("READY TO EDIT")
+    default_hint.setObjectName("inspectorStatusPill")
+    default_layout.addWidget(default_hint, 0, Qt.AlignLeft)
     gui.default_inspector_summary_label = QLabel(
-        "Click a layer on a track to view its settings."
+        "Select a subtitle cue, audio track, or visual layer on the timeline "
+        "to open its controls here."
     )
     gui.default_inspector_summary_label.setObjectName("helperLabel")
     gui.default_inspector_summary_label.setWordWrap(True)

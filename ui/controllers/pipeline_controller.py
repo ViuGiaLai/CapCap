@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QMessageBox
 from worker_adapters import AutoRecapWorker, PrepareWorkflowWorker
 from runtime_paths import subprocess_hidden_kwargs
+from utils.thread_lifecycle import release_thread_when_stopped
 
 # Robust import for the progress widget
 try:
@@ -342,10 +343,48 @@ class PipelineController:
                 self.progress_dialog.add_step("preview", "Preparing Video Preview")
         self.progress_dialog.show()
 
+    def _resolve_pipeline_video_path(self, explicit_path=None) -> str:
+        """Resolve the real imported source used by prepare/recap workers."""
+        canonical = getattr(self.gui, "resolve_canonical_video_path", None)
+        if not explicit_path and callable(canonical):
+            resolved = canonical()
+            if resolved:
+                return resolved
+        candidates = []
+        if explicit_path:
+            candidates.append(str(explicit_path).strip())
+        candidates.append(str(getattr(self.gui, "_current_video_path", "") or "").strip())
+        state = getattr(self.gui, "current_project_state", None)
+        if state is not None:
+            candidates.append(str(getattr(state, "input_video", "") or "").strip())
+        try:
+            candidates.extend(
+                str(item.get("source", "") or "").strip()
+                for item in self.gui.get_timeline_video_clips(existing_only=True)
+            )
+        except Exception:
+            pass
+        editor = getattr(self.gui, "video_path_edit", None)
+        if editor is not None:
+            candidates.append(str(editor.text() or "").strip())
+        candidates.append(str(getattr(self.gui, "last_video_path", "") or "").strip())
+        seen = set()
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = os.path.abspath(candidate)
+            key = os.path.normcase(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            if os.path.isfile(path):
+                return path
+        return ""
+
     def run_auto_recap_pipeline(self, video_path=None):
         """Run Auto Edit Recap without entering the AI Production pipeline."""
-        video_path = str(video_path or self.gui.video_path_edit.text() or "").strip()
-        if not video_path or not os.path.exists(video_path):
+        video_path = self._resolve_pipeline_video_path(video_path)
+        if not video_path:
             QMessageBox.warning(self.gui, "Auto Edit Recap", "Please select a video file first.")
             return
         if getattr(self.gui, "_pipeline_active", False):
@@ -390,8 +429,12 @@ class PipelineController:
     def _on_auto_recap_finished(self, decisions, output_path, error):
         worker = getattr(self.gui, "auto_recap_worker", None)
         if worker is not None:
-            worker.deleteLater()
-            self.gui.auto_recap_worker = None
+            release_thread_when_stopped(
+                worker,
+                lambda: setattr(self.gui, "auto_recap_worker", None)
+                if getattr(self.gui, "auto_recap_worker", None) is worker
+                else None,
+            )
         if error or not output_path:
             self.pipeline_fail(f"Auto Edit Recap failed: {error or 'unknown error'}")
             return
@@ -408,15 +451,8 @@ class PipelineController:
 
     def run_all_pipeline(self, video_path=None, requires_separation=None, target_stage="full"):
         """Entry point for the full generation process."""
-        if video_path is None:
-            # Fallback to the UI field if not provided
-            video_path = getattr(self.gui, "video_path_edit", None)
-            if video_path:
-                video_path = video_path.text().strip()
-            else:
-                video_path = getattr(self.gui, "last_video_path", "")
-
-        if not video_path or not os.path.exists(video_path):
+        video_path = self._resolve_pipeline_video_path(video_path)
+        if not video_path:
             QMessageBox.warning(self.gui, "Error", "Please select a video file first.")
             return
 
@@ -666,7 +702,7 @@ class PipelineController:
                     self.progress_dialog.start_step("rendering")
                     self.progress_dialog.footer.setText("Stage 5/5: Rendering Recap (FFmpeg 1-Pass)")
 
-                video_path = self.gui.video_path_edit.text().strip()
+                video_path = self._resolve_pipeline_video_path()
                 if video_path and os.path.exists(video_path) and decisions:
                     output_dir = os.path.join(self.gui.workspace_root, "output")
                     os.makedirs(output_dir, exist_ok=True)

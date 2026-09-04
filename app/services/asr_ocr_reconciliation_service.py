@@ -22,7 +22,7 @@ _LANGUAGE_FAMILIES = {
     "ru": "cyrillic", "ar": "arabic", "th": "thai",
 }
 _SUSPICIOUS_LENGTH = {
-    "han": 2, "japanese": 2, "korean": 3, "latin": 4,
+    "han": 4, "japanese": 4, "korean": 4, "latin": 4,
     "cyrillic": 4, "arabic": 4, "thai": 4,
 }
 # Latin substrings are especially collision-prone (``he`` inside ``the``),
@@ -50,7 +50,7 @@ class AsrOcrReconciliationService:
     the spoken transcript.
     """
 
-    VERSION = "multilingual-fast-adaptive-dialogue-segmentation-v13"
+    VERSION = "multilingual-fast-adaptive-dialogue-segmentation-v14"
     MAX_TIME_SLOP_SECONDS = 0.45
     MAX_OCR_LENGTH = 80
     MAX_SCAN_RANGES = 512
@@ -319,10 +319,10 @@ class AsrOcrReconciliationService:
             len_ratio = ocr_len / max(1, asr_len)
             if 0.25 <= len_ratio <= 2.5:
                 similarity = SequenceMatcher(None, asr_text, ocr_text).ratio()
-                if similarity >= 0.15 or (0.5 <= len_ratio <= 1.5):
+                if (0.5 <= len_ratio <= 1.5 and similarity >= 0.20) or similarity >= 0.35:
                     return True
                 common = sum(1 for ch in ocr_text if ch in asr_text)
-                if common >= 2:
+                if common >= 2 and (similarity >= 0.15 or 0.5 <= len_ratio <= 1.5):
                     return True
         return False
 
@@ -363,9 +363,25 @@ class AsrOcrReconciliationService:
                     str(previous.get("text_source", "")).startswith("ocr_")
                     and str(item.get("text_source", "")).startswith("ocr_")
                 )
+                # A static burned-in caption stays on screen for seconds while
+                # the sequence scan re-reads it every ~0.6s, and each read can
+                # garble one or two glyphs differently (``妙小不理`` vs
+                # ``莎小不延``). When a brief VAD pause (< 0.6s) separates two
+                # OCR-only cues of the same caption, the gap rules above miss
+                # the merge because the noisy re-reads share only ~70-85% of
+                # their characters. Requiring a substantial cue on both sides
+                # keeps short, genuinely distinct captions separate.
+                ocr_read_repeat = (
+                    both_ocr_states
+                    and gap <= 0.6
+                    and text_similarity >= 0.70
+                    and len(item_key.replace(" ", "")) >= 6
+                    and len(previous_key.replace(" ", "")) >= 6
+                )
                 flicker_duplicate = (
                     item_key == previous_key
                     or (both_ocr_states and gap <= 0.08 and text_similarity >= 0.55)
+                    or ocr_read_repeat
                     or (gap <= 1.75 and text_similarity >= 0.86)
                 )
 
@@ -394,7 +410,7 @@ class AsrOcrReconciliationService:
                 # following complete cue is a transition sample, not another
                 # line of dialogue (for example ``二人不成`` immediately before
                 # the full sentence ending in those same characters).
-                duration = item_end - item_start
+                item_end - item_start
                 previous_duration = float(previous["end"]) - float(previous["start"])
                 if (
                     previous_duration < 0.22
@@ -609,9 +625,18 @@ class AsrOcrReconciliationService:
                 # hard subtitle. Align only exact text matches, so a fuzzy OCR
                 # correction cannot unexpectedly move dialogue.
                 timing_aligned = False
+                matcher = SequenceMatcher(None, asr_normalized, ocr_normalized)
+                text_similarity = matcher.ratio()
+                is_substring = (
+                    (ocr_normalized in asr_normalized or asr_normalized in ocr_normalized)
+                    if ocr_normalized and asr_normalized else False
+                )
                 timing_is_authoritative = (
                     ocr_normalized == asr_normalized
-                    or best.get("ocr_scan_mode") == "sequence"
+                    or (
+                        best.get("ocr_scan_mode") == "sequence"
+                        and (text_similarity >= 0.50 or is_substring)
+                    )
                 )
                 if timing_is_authoritative:
                     try:
@@ -647,12 +672,21 @@ class AsrOcrReconciliationService:
                         timing_aligned = True
 
                 if ocr_normalized != asr_normalized:
-                    item["asr_text_original"] = asr_text
-                    item["ocr_text"] = ocr_text
-                    item["text_source"] = "ocr_reconciled"
-                    item["text"] = ocr_text
-                    if not timing_aligned:
-                        replacement_count += 1
+                    is_safe_replacement = (
+                        text_similarity >= 0.25
+                        or is_substring
+                        or (
+                            int(best.get("ocr_consensus_frames", 0) or 0) >= 2
+                            and cls._is_suspicious(asr_text, family)
+                        )
+                    )
+                    if is_safe_replacement:
+                        item["asr_text_original"] = asr_text
+                        item["ocr_text"] = ocr_text
+                        item["text_source"] = "ocr_reconciled"
+                        item["text"] = ocr_text
+                        if not timing_aligned:
+                            replacement_count += 1
             repaired.append(item)
 
         repaired, timeline_changes = cls._normalize_reconciled_timeline(repaired)

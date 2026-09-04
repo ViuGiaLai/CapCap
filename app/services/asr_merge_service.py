@@ -568,7 +568,13 @@ class AsrMergeService:
 
         # DIFFERENT CHUNKS (chunk boundary reconciliation):
         # 1. Prefix-extension check on overlapping or touching chunks
-        if overlap > 0.0 or (0.0 <= cand_start - prev_end <= 0.4):
+        candidate_chunk = candidate.get("chunk")
+        cand_overlap_left = float(getattr(candidate_chunk, "overlap_left_seconds", 0.0) or 0.0)
+        cand_chunk_start = float(getattr(candidate_chunk, "start_seconds", 0.0) or 0.0)
+        cand_local_start = cand_start - cand_chunk_start
+        near_chunk_edge = (cand_overlap_left <= 0.0) or (-0.05 <= cand_local_start <= max(0.25, cand_overlap_left + 0.15))
+
+        if (overlap > 0.0 or (0.0 <= cand_start - prev_end <= 0.4)) and near_chunk_edge:
             prev_old_end = float(previous_segment.get("end", 0.0) or 0.0)
             if self._is_near_prefix(cand_clean, prev_clean):
                 merged_entries[-1] = candidate

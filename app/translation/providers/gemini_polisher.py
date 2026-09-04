@@ -6,24 +6,42 @@ from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAI
 
 from ..errors import TranslationConfigError, TranslationProviderError, TranslationValidationError
-from ..prompt_builder import build_translation_messages
+from ..prompt_builder import build_translation_messages, plain_cue_text
 from ..srt_utils import parse_numbered_line_items, validate_texts
+
+
+LOCAL_PROVIDER_IDS = frozenset({"ollama", "llama_app"})
+
+# llama.cpp/Ollama serve small quantised models on CPU. Generation speed is
+# typically one to two orders of magnitude slower than a cloud API, so the
+# generic 120s HTTP timeout used by cloud providers aborts realistic
+# subtitle batches mid-generation and then every retry repeats the same
+# oversized request. Local requests therefore get a much longer budget;
+# cloud providers keep the caller-supplied timeout unchanged.
+LOCAL_REQUEST_TIMEOUT_SECONDS = int(os.getenv("VIUSTUDIO_LOCAL_TRANSLATION_TIMEOUT", "900") or "900")
 
 
 class OpenAICompatiblePolisherProvider:
     """Reusable numbered-subtitle provider for OpenAI-compatible services."""
 
     def __init__(self, *, provider_id: str, display_name: str, env_prefix: str,
-                 default_base_url: str, default_model: str = ""):
+                 default_base_url: str, default_model: str = "", model_env: str | None = None):
         self.provider_id = provider_id
         self.display_name = display_name
         self.api_key = os.getenv(f"{env_prefix}_API_KEY", "").strip()
-        self.model_name = os.getenv(f"{env_prefix}_MODEL", default_model).strip()
+        # A second role model (e.g. a quality/fix model) can override the main
+        # model through its own env var; otherwise the main model env applies.
+        model_env = model_env or f"{env_prefix}_MODEL"
+        self.model_name = os.getenv(model_env, default_model).strip()
         self.base_url = os.getenv(f"{env_prefix}_BASE_URL", default_base_url).strip()
         self._client = None
+        # Set by the orchestrator when a local engine cannot be started. The
+        # provider is then treated as unconfigured so callers can fall back
+        # to Google Translate instead of crashing with a raw error.
+        self.config_error = ""
 
     def is_configured(self) -> bool:
-        if self.provider_id in ("ollama", "llama_app"):
+        if self.provider_id in LOCAL_PROVIDER_IDS:
             return bool(self.model_name and self.base_url)
         return bool(self.api_key and self.model_name and self.base_url)
 
@@ -31,6 +49,17 @@ class OpenAICompatiblePolisherProvider:
         if self._client is None:
             self._client = OpenAI(api_key=self.api_key or "dummy-local-key", base_url=self.base_url)
         return self._client
+
+    @staticmethod
+    def _effective_timeout(provider_id: str, timeout: int) -> int:
+        """Give local providers a sane generation budget on slow CPUs."""
+        try:
+            timeout = max(1, int(timeout))
+        except (TypeError, ValueError):
+            timeout = 120
+        if provider_id in LOCAL_PROVIDER_IDS:
+            return max(timeout, LOCAL_REQUEST_TIMEOUT_SECONDS)
+        return timeout
 
     def polish_batch(
         self,
@@ -43,9 +72,18 @@ class OpenAICompatiblePolisherProvider:
         timeout: int = 120,
         max_retries: int = 2,
         max_tokens: int = 4096,
+        context_before: list[str] | None = None,
+        context_after: list[str] | None = None,
     ) -> tuple[list[str], list[str], str]:
         if not self.is_configured():
             raise TranslationConfigError(f"{self.display_name} is not configured. Set its API key and model in Settings.")
+
+        # Local models can legitimately need several minutes per batch on CPU;
+        # cloud providers keep the caller-supplied (default 120s) timeout.
+        timeout = self._effective_timeout(self.provider_id, timeout)
+        # ``max_retries`` is treated as the total number of attempts so that
+        # 0 never produces an immediate empty failure before any request.
+        attempts = max(1, int(max_retries or 1))
 
         # HY-MT is a dedicated machine-translation model, not a general
         # instruction-following chat model. Its official prompt is one
@@ -56,7 +94,9 @@ class OpenAICompatiblePolisherProvider:
                 source_texts=source_texts,
                 target_lang=target_lang,
                 timeout=timeout,
-                max_retries=max_retries,
+                max_retries=attempts,
+                context_before=context_before,
+                context_after=context_after,
             )
 
         system_msg, user_msg = self._build_messages(
@@ -65,11 +105,13 @@ class OpenAICompatiblePolisherProvider:
             src_lang=src_lang,
             target_lang=target_lang,
             style_instruction=style_instruction,
+            context_before=context_before,
+            context_after=context_after,
         )
 
         client = self._get_client()
         last_error = ""
-        for attempt in range(1, max_retries + 1):
+        for attempt in range(1, attempts + 1):
             try:
                 request_kwargs = dict(
                     model=self.model_name,
@@ -116,6 +158,17 @@ class OpenAICompatiblePolisherProvider:
                 raise
             except Exception as e:
                 last_error = str(e)
+                if self._is_quota_error(e):
+                    # A rate/quota limit (e.g. the Gemini free tier's 20
+                    # requests/day) will not clear within a retry window, so
+                    # stop immediately with an actionable message instead of
+                    # retrying and flooding the log with the raw API error.
+                    raise TranslationProviderError(
+                        f"{self.display_name} quota/rate limit exceeded: the provider is "
+                        "refusing requests for now (free tier caps out quickly, e.g. "
+                        f"20 requests/day for {self.model_name}). Wait for the limit to "
+                        "reset or add billing at aistudio.google.com, then retry."
+                    ) from e
                 if attempt < max_retries:
                     time.sleep(attempt)
                     continue
@@ -123,23 +176,53 @@ class OpenAICompatiblePolisherProvider:
         raise TranslationProviderError(f"{self.display_name} failed: {last_error}")
 
     @staticmethod
+    def _is_quota_error(exc: Exception) -> bool:
+        """Detect HTTP 429 / rate-limit / quota-exhausted provider errors."""
+        status = getattr(exc, "status_code", None)
+        if status == 429:
+            return True
+        text = str(exc or "").lower()
+        return any(
+            marker in text
+            for marker in ("quota", "resource_exhausted", "rate limit", "ratelimit", "429")
+        )
+
+    @staticmethod
     def _plain_source_text(value: str) -> str:
-        text = str(value or "").strip()
-        match = re.fullmatch(r"<CUE\b[^>]*>(.*)</CUE>", text, flags=re.IGNORECASE | re.DOTALL)
-        return str(match.group(1) if match else text).strip()
+        return plain_cue_text(value)
 
     @staticmethod
     def _clean_translation_line(value: str) -> str:
         """Remove source/draft scaffolding echoed by small local models."""
         text = str(value or "").strip()
+        text = re.sub(r"<PREV\b[^>]*>.*?</PREV>", "", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"<NEXT\b[^>]*>.*?</NEXT>", "", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"</?(?:PREV|NEXT)\b[^>]*>", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"</?(?:TRANSLATE|CONTEXT_BEFORE|CONTEXT_AFTER)\b[^>]*>", "", text, flags=re.IGNORECASE)
+        text = " ".join(text.split()).strip()
         if "|||" in text:
             text = text.rsplit("|||", 1)[-1].strip()
         cue = re.fullmatch(r"<CUE\b[^>]*>(.*)</CUE>", text, flags=re.IGNORECASE | re.DOTALL)
         if cue:
             text = str(cue.group(1) or "").strip()
+        text = re.sub(
+            r"^(?:(?:\[|\()?(?:Speaker|Người nói)\s*[\w\d]+(?:\]|\))?[:\s-]*|(?:Dịch|Bản dịch|Tiếng Việt|Translation|Target)\s*:\s*)",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        ).strip()
         return text
 
-    def _translate_hy_mt_batch(self, *, source_texts, target_lang: str, timeout: int, max_retries: int):
+    def _translate_hy_mt_batch(
+        self,
+        *,
+        source_texts,
+        target_lang: str,
+        timeout: int,
+        max_retries: int,
+        context_before: list[str] | None = None,
+        context_after: list[str] | None = None,
+    ):
         language_names = {
             "vi": "Vietnamese", "en": "English", "ja": "Japanese", "ko": "Korean",
             "th": "Thai", "id": "Indonesian", "es": "Spanish", "fr": "French",
@@ -148,9 +231,16 @@ class OpenAICompatiblePolisherProvider:
         }
         target_name = language_names.get(str(target_lang or "").strip().lower(), str(target_lang or "Vietnamese"))
         sources = [self._plain_source_text(value) for value in source_texts]
+        before = [self._plain_source_text(value) for value in (context_before or [])]
+        after = [self._plain_source_text(value) for value in (context_after or [])]
+        window = before + sources + after
+        offset = len(before)
         client = self._get_client()
 
-        def translate_one(source: str) -> str:
+        def translate_one(index: int) -> str:
+            source = sources[index]
+            previous = window[offset + index - 1] if offset + index > 0 else ""
+            following = window[offset + index + 1] if offset + index + 1 < len(window) else ""
             glossary = ""
             if target_name == "Vietnamese":
                 terms = [
@@ -162,7 +252,14 @@ class OpenAICompatiblePolisherProvider:
                 present = [f"{src}={dst}" for src, dst in terms if src in source]
                 if present:
                     glossary = " Use these required terms: " + ", ".join(present) + "."
+            context_bits = []
+            if previous:
+                context_bits.append(f"Previous source (context only, do not translate): {previous}")
+            if following:
+                context_bits.append(f"Upcoming source (context only, do not translate): {following}")
+            context_prefix = (" ".join(context_bits) + " ") if context_bits else ""
             prompt = (
+                f"{context_prefix}"
                 f"Translate the following segment into {target_name}, without additional explanation."
                 f"{glossary}：{source}"
             )
@@ -188,7 +285,7 @@ class OpenAICompatiblePolisherProvider:
 
         workers = max(1, min(4, len(sources)))
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hy-mt") as executor:
-            translated = list(executor.map(translate_one, sources))
+            translated = list(executor.map(translate_one, range(len(sources))))
         if not validate_texts(translated, len(sources)):
             raise TranslationValidationError(
                 f"HY-MT returned {len(translated)} translations for {len(sources)} cues."
@@ -196,7 +293,14 @@ class OpenAICompatiblePolisherProvider:
         return translated, [], self.provider_id
 
     def _build_messages(
-        self, source_texts, translated_texts, src_lang, target_lang, style_instruction
+        self,
+        source_texts,
+        translated_texts,
+        src_lang,
+        target_lang,
+        style_instruction,
+        context_before=None,
+        context_after=None,
     ) -> tuple[str, str]:
         return build_translation_messages(
             source_texts=source_texts,
@@ -204,4 +308,6 @@ class OpenAICompatiblePolisherProvider:
             src_lang=src_lang,
             target_lang=target_lang,
             style_instruction=style_instruction,
+            context_before=context_before,
+            context_after=context_after,
         )

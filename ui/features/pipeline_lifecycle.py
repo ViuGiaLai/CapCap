@@ -36,6 +36,7 @@ from runtime_paths import asset_path
 from worker_adapters import (
     VoiceOverWorker,
 )
+from utils.thread_lifecycle import release_thread_when_stopped
 
 
 
@@ -151,6 +152,27 @@ class PipelineLifecycleMixin:
         from services import SubtitleExchangeService
 
         context = self._subtitle_exchange_context(segments)
+        missing_source = [
+            index + 1
+            for index, segment in enumerate(context["segments"])
+            if not str(
+                segment.get("source_text")
+                or segment.get("original_text")
+                or segment.get("original")
+                or ""
+            ).strip()
+        ]
+        if missing_source:
+            preview = ", ".join(str(number) for number in missing_source[:8])
+            if len(missing_source) > 8:
+                preview += "…"
+            QMessageBox.warning(
+                self,
+                "Export Translation Workbook",
+                "The original-language text is missing for cue(s): "
+                f"{preview}. Run the original transcript or import the source SRT first.",
+            )
+            return False
         safe_name = "".join(
             char if char.isalnum() or char in {"-", "_"} else "_"
             for char in context["project_name"]
@@ -232,15 +254,61 @@ class PipelineLifecycleMixin:
         self.log(f"[Subtitle Editor] Validated translation workbook: {input_path}")
         return translated
 
-    def _invalidate_dubbed_output_after_subtitle_edit(self):
+    def _build_partial_voice_track_after_subtitle_edit(self, *, changed_indices, state, voice_path):
+        """Keep unchanged cue audio while muting only edited cue windows."""
+        if not state or not voice_path or not os.path.exists(voice_path):
+            return ""
+        voice_segments_path = str(
+            state.artifacts.get("voice_segments", "")
+            or self.processed_artifacts.get("voice_segments", "")
+        ).strip()
+        if not voice_segments_path or not os.path.exists(voice_segments_path):
+            return ""
+        voice_segments = self.project_service.load_json_artifact(
+            state, "voice_segments", default=[]
+        ) or []
+        if not voice_segments:
+            return ""
+        try:
+            from audio_mixer import mute_voice_windows
+            cache_dir = self.get_project_temp_dir("tts")
+            os.makedirs(cache_dir, exist_ok=True)
+            digest = hashlib.sha1(
+                (str(voice_path) + ":" + ",".join(sorted(str(i) for i in changed_indices))).encode("utf-8")
+            ).hexdigest()[:12]
+            output_path = os.path.join(cache_dir, f"voice_vi_partial_{digest}.wav")
+            return mute_voice_windows(
+                input_wav_path=voice_path,
+                segments=voice_segments,
+                changed_indices=changed_indices,
+                output_wav_path=output_path,
+            )
+        except Exception as exc:
+            self.log(f"[Subtitle Editor] Could not preserve unchanged voice cues: {exc}")
+            return ""
+
+    def _invalidate_dubbed_output_after_subtitle_edit(self, changed_indices=None):
         """Stop old TTS/mix output from being used after subtitle edits.
 
         Per-cue cache files deliberately remain: VoiceWorkflow keys those
         files by text, voice and speed, so unchanged cues are cache hits on
-        the next TTS run.  The old assembled voice/mix is invalid because it
-        still contains deleted or changed cues and must never be exported.
+        the next TTS run.  For a known subtitle edit, the current track is
+        replaced by a temporary copy with only edited cue windows muted;
+        unknown/global edits still invalidate the assembled track entirely.
         """
         state = self.ensure_current_project()
+        changed_indices = set(changed_indices or [])
+        previous_voice_path = str(
+            getattr(self, "last_voice_vi_path", "")
+            or self.processed_artifacts.get("voice_vi", "")
+            or (state.artifacts.get("voice_vi", "") if state is not None else "")
+        ).strip()
+        partial_voice_path = self._build_partial_voice_track_after_subtitle_edit(
+            changed_indices=changed_indices,
+            state=state,
+            voice_path=previous_voice_path,
+        ) if changed_indices else ""
+        preserve_unchanged_voice = bool(partial_voice_path)
         preview_had_burned_subtitles = bool(
             getattr(self, "_preview_video_has_burned_subtitles", False)
         )
@@ -250,10 +318,15 @@ class PipelineLifecycleMixin:
             or self.processed_artifacts.get("voice_vi")
             or self.processed_artifacts.get("mixed_vi")
         )
-        for key in (
-            "voice_vi", "mixed_vi", "voice_segments",
-            "preview_video", "preview_video_5s", "preview_frame",
-        ):
+        invalidated_artifacts = (
+            "mixed_vi", "preview_video", "preview_video_5s", "preview_frame",
+        )
+        if not preserve_unchanged_voice:
+            invalidated_artifacts = (
+                "voice_vi", "mixed_vi", "voice_segments",
+                "preview_video", "preview_video_5s", "preview_frame",
+            )
+        for key in invalidated_artifacts:
             self.processed_artifacts.pop(key, None)
             if state is not None:
                 state.artifacts.pop(key, None)
@@ -266,7 +339,10 @@ class PipelineLifecycleMixin:
         ):
             for segment in list(segments or []):
                 if isinstance(segment, dict):
+                    segment.pop("_audio_start", None)
                     segment.pop("_audio_end", None)
+                    segment.pop("_original_start", None)
+                    segment.pop("_original_end", None)
         # The TS1 layer objects may still contain paths to the old assembled
         # voice track.  Clear them too so neither preview nor export can use
         # a deleted/obsolete cue before the next TTS run.
@@ -282,9 +358,19 @@ class PipelineLifecycleMixin:
                     layer.tts_settings = {}
                 metadata = getattr(layer, "metadata", None)
                 if isinstance(metadata, dict):
+                    metadata.pop("_audio_start", None)
                     metadata.pop("_audio_end", None)
-        self.last_voice_vi_path = ""
+                    metadata.pop("_original_start", None)
+                    metadata.pop("_original_end", None)
+                if preserve_unchanged_voice and hasattr(layer, "audio_path"):
+                    layer.audio_path = partial_voice_path
+        self.last_voice_vi_path = partial_voice_path if preserve_unchanged_voice else ""
         self.last_mixed_vi_path = ""
+        # Keep the in-memory flag in sync with the project setting.  The
+        # subtitle editor persists immediately after this method; without
+        # this assignment that save would mistake the temporary muted track
+        # for a complete voice render and write a fresh voice signature.
+        self._voice_track_partial = preserve_unchanged_voice
         self.last_preview_video_path = ""
         self.last_styled_preview_path = ""
         self.last_styled_preview_signature = ""
@@ -295,6 +381,10 @@ class PipelineLifecycleMixin:
             state.set_step_status("generate_tts", "pending")
             state.set_step_status("mix_audio", "pending")
             state.settings.pop("voice_signature", None)
+            state.set_setting("voice_track_partial", preserve_unchanged_voice)
+            if preserve_unchanged_voice:
+                state.artifacts["voice_vi"] = partial_voice_path
+                self.processed_artifacts["voice_vi"] = partial_voice_path
             self.project_service.save_project(state)
         if had_dubbed_output:
             self.log("[Subtitle Editor] Existing dubbed output invalidated; unchanged cues remain in the TTS cache.")
@@ -364,9 +454,11 @@ class PipelineLifecycleMixin:
         updated_original = []
         changed_count = 0
         deleted_count = 0
+        changed_indices = set()
         for index, (row, original) in enumerate(zip(rows, source)):
             if bool(row.get("deleted")):
                 deleted_count += 1
+                changed_indices.add(index)
                 continue
             if index < len(original_source):
                 updated_original.append(copy.deepcopy(original_source[index]))
@@ -378,6 +470,7 @@ class PipelineLifecycleMixin:
             old_text = str(segment.get("text", "") or "").strip()
             if text != old_text:
                 changed_count += 1
+                changed_indices.add(index)
                 segment["text"] = text
                 segment["subtitle_vi"] = text
                 # A changed subtitle must speak the changed text.  Do not
@@ -402,8 +495,13 @@ class PipelineLifecycleMixin:
         self._sync_hidden_translated_text_from_segments()
         self.refresh_auto_keyword_highlights(force=True)
         self.apply_segments_to_timeline()
-        self._invalidate_dubbed_output_after_subtitle_edit()
         all_subtitles_deleted = not updated and (not original_source or not updated_original)
+        # A completely deleted subtitle track has no unchanged cue to keep.
+        # Force the normal full invalidation so the old voice file cannot be
+        # resurrected as a project artifact after "Delete All".
+        self._invalidate_dubbed_output_after_subtitle_edit(
+            changed_indices=(None if all_subtitles_deleted else changed_indices)
+        )
         if all_subtitles_deleted:
             self.last_original_srt_path = ""
             self.last_translated_srt_path = ""
@@ -713,10 +811,16 @@ class PipelineLifecycleMixin:
             self.get_source_language_code(),
         )
         self.voice_thread.progress.connect(self.log)
-        self.voice_thread.finished.connect(self.on_voiceover_finished)
-        # Clear the reference after the thread finishes so the next Generate
-        # run doesn't try to stop an already-finished thread (or a zombie).
-        self.voice_thread.finished.connect(lambda *_: setattr(self, "voice_thread", None))
+        worker = self.voice_thread
+        worker.finished.connect(self.on_voiceover_finished)
+        worker.finished.connect(
+            lambda *_args, worker=worker: release_thread_when_stopped(
+                worker,
+                lambda: setattr(self, "voice_thread", None)
+                if getattr(self, "voice_thread", None) is worker
+                else None,
+            )
+        )
         self.voice_thread.start()
 
     def _apply_generated_tts_texts(self, voice_segments):
@@ -742,13 +846,13 @@ class PipelineLifecycleMixin:
             except (TypeError, ValueError):
                 new_start = new_end = None
             try:
-                new_original_end = float((seg or {}).get("_original_end")) if (seg or {}).get("_original_end") is not None else None
-            except (TypeError, ValueError):
-                new_original_end = None
-            try:
                 new_audio_end = float((seg or {}).get("_audio_end")) if (seg or {}).get("_audio_end") is not None else None
             except (TypeError, ValueError):
                 new_audio_end = None
+            try:
+                new_audio_start = float((seg or {}).get("_audio_start")) if (seg or {}).get("_audio_start") is not None else None
+            except (TypeError, ValueError):
+                new_audio_start = None
             payload = {
                 "tts_text": tts_text,
                 "subtitle_vi": subtitle_vi,
@@ -758,7 +862,7 @@ class PipelineLifecycleMixin:
                 "attempt_count": int((seg or {}).get("attempt_count") or 1),
                 "start": new_start,
                 "end": new_end,
-                "_original_end": new_original_end,
+                "_audio_start": new_audio_start,
                 "_audio_end": new_audio_end,
             }
             if group_id:
@@ -787,37 +891,31 @@ class PipelineLifecycleMixin:
             seg["action_taken"] = next_payload["action_taken"]
             seg["ratio"] = next_payload["ratio"]
             seg["attempt_count"] = next_payload["attempt_count"]
-            # Sync start/end from the voice workflow so the SRT reflects the
-            # actual TTS audio duration (see _extend_segment_ends_to_audio).
-            new_start = next_payload.get("start")
-            new_end = next_payload.get("end")
-            if new_start is not None and new_end is not None and new_end > new_start:
-                try:
-                    old_start = float(seg.get("start", 0.0))
-                    old_end = float(seg.get("end", 0.0))
-                except (TypeError, ValueError):
-                    old_start = old_end = None
-                if old_start is not None and old_end is not None:
-                    if abs(new_start - old_start) > 0.01 or abs(new_end - old_end) > 0.01:
-                        seg["start"] = new_start
-                        seg["end"] = new_end
-                        updated = True
-            new_original_end = next_payload.get("_original_end")
-            if new_original_end is not None:
-                seg["_original_end"] = new_original_end
+            # Keep source/timeline start/end immutable.  TTS can be queued
+            # after a dense cue, but that scheduling belongs in audio metadata
+            # and must never move the burned-in subtitle or all later cues.
+            new_audio_start = next_payload.get("_audio_start")
+            if new_audio_start is not None:
+                if seg.get("_audio_start") != new_audio_start:
+                    updated = True
+                seg["_audio_start"] = new_audio_start
+            else:
+                if "_audio_start" in seg:
+                    updated = True
+                seg.pop("_audio_start", None)
             new_audio_end = next_payload.get("_audio_end")
             if new_audio_end is not None:
+                if seg.get("_audio_end") != new_audio_end:
+                    updated = True
                 seg["_audio_end"] = new_audio_end
             else:
+                if "_audio_end" in seg:
+                    updated = True
                 seg.pop("_audio_end", None)
         return updated
 
     def _regenerate_translated_srt_from_segments(self):
-        """Regenerate the project SRT from current_translated_segments.
-        Called after the voice workflow extends a segment's end time to
-        match the actual TTS audio duration, so the burned-in subtitle and
-        the rendered audio stay in sync.
-        """
+        """Regenerate the project SRT from the visual subtitle timeline."""
         out_path = str(getattr(self, "last_translated_srt_path", "") or "").strip()
         if not out_path:
             return
@@ -875,6 +973,7 @@ class PipelineLifecycleMixin:
             self.audio_tab_btn.setEnabled(True)
 
         if voice_track and os.path.exists(voice_track):
+            self._voice_track_partial = False
             self.last_voice_vi_path = voice_track
             self.processed_artifacts["voice_vi"] = voice_track
             self.update_project_artifact("voice_vi", voice_track)
@@ -903,13 +1002,13 @@ class PipelineLifecycleMixin:
                     self.timeline.set_voice_sync_mode(self.voice_timing_sync_combo.currentText())
             self._sync_timeline_mute_to_gui()
             self.persist_current_timeline_project_data()
-            # Regenerate the project SRT from the updated segments so it
-            # reflects the actual TTS audio duration (e.g. when a segment
-            # was extended in voice_workflow._extend_segment_ends_to_audio).
+            # Regenerate the project SRT from the unchanged visual subtitle
+            # timings. TTS queue placement is stored separately as metadata.
             self._regenerate_translated_srt_from_segments()
             self.schedule_live_subtitle_preview_refresh()
             self.sync_segment_editor_rows()
         if self.current_project_state:
+            self.current_project_state.set_setting("voice_track_partial", False)
             voice_signature = self.build_current_voice_signature(
                 segments=self._get_voiceover_segments(),
                 background_path=self.resolve_background_audio_path(),
@@ -1214,7 +1313,7 @@ class PipelineLifecycleMixin:
         # only files whose digest belongs to this source video; caches for
         # other projects remain untouched.
         source_video = self._normalize_local_file_path(
-            self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+            self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         )
         if source_video:
             source = os.path.abspath(source_video)
@@ -1308,9 +1407,7 @@ class PipelineLifecycleMixin:
         self._pending_mask_state_persist = False
         self._pending_blur_state_persist = False
         
-        video_path = getattr(self, "_current_video_path", "")
-        if not video_path:
-            video_path = os.path.normpath(self.video_path_edit.text().strip())
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else getattr(self, "_current_video_path", "")
         self.log(f"[Clean] _return_to_launcher: video_path={video_path}")
         if video_path and project_removed_from_recent:
             try:
@@ -1382,7 +1479,7 @@ class PipelineLifecycleMixin:
                         if not worker.wait(50):
                             worker.terminate()
                             worker.wait(50)
-                except Exception as e:
+                except Exception:
                     pass
                 setattr(self, name, None)
 
@@ -1492,6 +1589,12 @@ class PipelineLifecycleMixin:
             self.seek_timeline_video(float(position) / 1000.0)
             return
         set_position_impl(self, position)
+        # A seek is explicit navigation, even when playback is paused.  The
+        # media backend may emit positionChanged later, so use the requested
+        # timestamp immediately to keep the Inspector and Preview on the same
+        # cue instead of leaving the previously selected subtitle visible.
+        if hasattr(self, "_sync_selected_segment_to_playback_position"):
+            self._sync_selected_segment_to_playback_position(position)
 
     def update_duration_label(self, current, total):
         update_duration_label_impl(self, current, total)

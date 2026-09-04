@@ -20,10 +20,62 @@ class AIBatchTranslationError(Exception):
 
 class TranslationOrchestrator:
     def __init__(self):
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        env_path = os.path.join(base_dir, ".env")
+        if os.path.exists(env_path):
+            try:
+                from dotenv import load_dotenv
+                load_dotenv(env_path)
+            except Exception:
+                pass
         self.google_web = GoogleWebTranslatorProvider()
 
     @staticmethod
-    def _build_timed_ai_source(segment: dict, index: int) -> str:
+    def _segment_source_text(segment: dict | None) -> str:
+        if not isinstance(segment, dict):
+            return ""
+        return str(
+            segment.get("original_text")
+            or segment.get("source_text")
+            or segment.get("text")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _segment_translated_text(segment: dict | None) -> str:
+        if not isinstance(segment, dict):
+            return ""
+        return str(
+            segment.get("final_text")
+            or segment.get("refined_translation")
+            or segment.get("raw_translation")
+            or segment.get("translated_text")
+            or segment.get("text")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _segment_speaker(segment: dict | None) -> str:
+        speaker = str((segment or {}).get("speaker") or "").strip()
+        if speaker:
+            return speaker
+        metadata = (segment or {}).get("metadata") or {}
+        if isinstance(metadata, dict):
+            return str(metadata.get("speaker") or "").strip()
+        return ""
+
+    @staticmethod
+    def _xml_attr(value: str) -> str:
+        return (
+            str(value or "")
+            .replace("&", "&amp;")
+            .replace('"', "&quot;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    @classmethod
+    def _build_timed_ai_source(cls, segment: dict, index: int) -> str:
         """Attach non-translatable cue timing so AI can control readability."""
         try:
             start = max(0.0, float((segment or {}).get("start", 0.0) or 0.0))
@@ -32,11 +84,13 @@ class TranslationOrchestrator:
             start, end = 0.0, 0.0
         duration = max(0.1, end - start)
         text = " ".join(
-            str((segment or {}).get("text") or "").replace("</CUE>", "").split()
+            cls._segment_source_text(segment).replace("</CUE>", "").split()
         ).strip()
+        speaker = cls._segment_speaker(segment)
+        speaker_attr = f' speaker="{cls._xml_attr(speaker)}"' if speaker else ""
         return (
             f'<CUE id="{index + 1}" start="{start:.3f}" end="{end:.3f}" '
-            f'duration="{duration:.3f}">{text}</CUE>'
+            f'duration="{duration:.3f}"{speaker_attr}>{text}</CUE>'
         )
 
     def translate_segments(
@@ -55,17 +109,22 @@ class TranslationOrchestrator:
         if not segments:
             return TranslationResult(success=False, errors=["No segments to translate."], stage="input")
 
-        source_texts = [s.get("text") or "" for s in segments]
+        source_texts = [self._segment_source_text(s) for s in segments]
         ai_source_texts = [self._build_timed_ai_source(seg, index) for index, seg in enumerate(segments)]
         normalized_src = self._normalize_source_language(src_lang)
         warnings = []
-        optimize_subtitles = False
 
         if enable_polish:
             provider_type, polisher = self._resolve_ai_provider()
             if polisher.is_configured():
                 try:
-                    mode_label = self._describe_ai_provider(provider_type)
+                    # Quality passes (review/repair) may use a separate model
+                    # chosen by the user; the main model does the bulk
+                    # translation above.
+                    _, review_polisher = self._resolve_ai_provider(role="quality")
+                    if not review_polisher.is_configured():
+                        review_polisher = polisher
+                    mode_label = self._describe_ai_provider(provider_type, polisher)
                     merged_style = str(style_instruction or "")
                     print(
                         f"[AI Translation] Starting translation (provider: {mode_label}, batch_size={polish_batch_size})..."
@@ -91,7 +150,7 @@ class TranslationOrchestrator:
                         target_lang=target_lang,
                     )
                     translated_texts, review_warnings = self._review_local_translation_with_context(
-                        polisher=polisher,
+                        polisher=review_polisher,
                         provider_type=provider_type,
                         source_segments=segments,
                         ai_source_texts=ai_source_texts,
@@ -107,7 +166,7 @@ class TranslationOrchestrator:
                         target_lang=target_lang,
                     )
                     translated_texts, quality_warnings = self._repair_ai_quality_issues(
-                        polisher=polisher,
+                        polisher=review_polisher,
                         source_segments=segments,
                         ai_source_texts=ai_source_texts,
                         translated_texts=translated_texts,
@@ -155,7 +214,10 @@ class TranslationOrchestrator:
             else:
                 selected_provider = str(os.getenv("OPENAI_PROVIDER") or "google").strip().lower()
                 if selected_provider != "google":
+                    reason = str(getattr(polisher, "config_error", "") or "").strip()
                     msg = "AI Provider is unavailable. Falling back to Google Translate..."
+                    if reason:
+                        msg = f"{msg} ({reason})"
                     print(f"[AI Translation] WARNING: {msg}")
                     warnings.append(msg)
                 else:
@@ -226,17 +288,26 @@ class TranslationOrchestrator:
 
         provider_type, polisher = self._resolve_ai_provider()
         if not polisher.is_configured():
+            reason = str(getattr(polisher, "config_error", "") or "").strip()
+            message = f"AI provider '{provider_type}' is not configured."
+            if reason:
+                message = f"{message} {reason}"
             return TranslationResult(
                 success=False,
-                errors=[f"AI provider '{provider_type}' is not configured."],
+                errors=[message],
                 stage="rewrite",
             )
 
-        source_texts = [s.get("source_text") or s.get("text") or "" for s in source_segments]
-        translated_texts = [s.get("text") or "" for s in translated_segments]
+        source_texts = [self._segment_source_text(s) for s in source_segments]
+        translated_texts = [self._segment_translated_text(s) for s in translated_segments]
         normalized_src = self._normalize_source_language(src_lang)
 
         try:
+            # Rewriting is a sentence-polish role: prefer the dedicated
+            # quality model when one is configured.
+            _, quality_polisher = self._resolve_ai_provider(role="quality")
+            if quality_polisher.is_configured():
+                polisher = quality_polisher
             rewritten_texts, providers_used, warnings = self._run_ai_batches(
                 polisher=polisher,
                 provider_type=provider_type,
@@ -294,7 +365,7 @@ class TranslationOrchestrator:
         key = (src_lang or "zh").strip().lower()
         return mapping.get(key, src_lang)
 
-    def _resolve_ai_provider(self):
+    def _resolve_ai_provider(self, role: str = "translate"):
         # All selectable API providers use the same compatible client.
         configured_provider = (os.getenv("OPENAI_PROVIDER") or os.getenv("AI_POLISHER_PROVIDER") or "google_ai_studio").strip().lower()
         provider_type = configured_provider
@@ -312,28 +383,56 @@ class TranslationOrchestrator:
             provider_type = "google_ai_studio"
         
         display_name, env_prefix, base_url, default_model = definitions[provider_type]
+        config_error = ""
         
         if provider_type == "llama_app":
             from app.services.llama_local_manager import LlamaServerManager
             manager = LlamaServerManager.get_instance()
             model_path = os.getenv("LLAMA_APP_MODEL")
-            if model_path and os.path.exists(model_path):
-                manager.start_server(model_path)
-                base_url = manager.get_base_url()
-                default_model = os.path.basename(model_path)
+            if not os.path.isfile(manager.exe_path):
+                config_error = f"llama-server.exe was not found at {manager.exe_path}"
+            elif not model_path or not os.path.exists(model_path):
+                config_error = "No local GGUF model is selected. Select or download a model in the Llama.cpp panel."
+            else:
+                try:
+                    manager.start_server(model_path)
+                    base_url = manager.get_base_url()
+                    default_model = os.path.basename(model_path)
+                except Exception as exc:
+                    config_error = f"llama.cpp engine failed to start: {exc}"
+            if config_error:
+                # Fail soft: leave the provider unconfigured so every caller
+                # falls back to Google Translate instead of raising a raw
+                # FileNotFoundError/RuntimeError in worker processes when the
+                # engine or model is missing (e.g. packaged app builds that
+                # do not ship bin/llama_cpp).
+                default_model = ""
+                print(f"[AI Translation] WARNING: {config_error}")
 
         # Legacy fallback if user has OPENAI_API_KEY set for gemini
         if configured_provider == "gemini" and not os.getenv("GOOGLE_AI_STUDIO_API_KEY"):
             env_prefix = "OPENAI"
-        return provider_type, OpenAICompatiblePolisherProvider(
+        # "quality" role: the same endpoint but a different model (per-provider
+        # {PREFIX}_POLISH_MODEL env) used for fix/review passes. Without an
+        # explicit quality model it falls back to the main model.
+        model_env_key = f"{env_prefix}_MODEL"
+        if role == "quality":
+            model_env_key = f"{env_prefix}_POLISH_MODEL"
+            if not os.getenv(model_env_key, "").strip():
+                review_defaults = {"google_ai_studio": "gemini-2.5-pro"}
+                default_model = review_defaults.get(provider_type) or default_model
+        polisher = OpenAICompatiblePolisherProvider(
             provider_id=provider_type,
             display_name=display_name,
             env_prefix=env_prefix,
             default_base_url=base_url,
             default_model=default_model,
+            model_env=model_env_key,
         )
+        polisher.config_error = config_error
+        return provider_type, polisher
 
-    def _describe_ai_provider(self, provider_type: str) -> str:
+    def _describe_ai_provider(self, provider_type: str, polisher=None) -> str:
         names = {
             "google_ai_studio": "Google Gemini",
             "deepseek": "DeepSeek AI",
@@ -342,7 +441,9 @@ class TranslationOrchestrator:
             "custom": "Custom AI",
             "llama_app": "Llama App Engine",
         }
-        return f"{names.get(provider_type, 'AI')} ({getattr(self._resolve_ai_provider()[1], 'model_name', '')})"
+        if polisher is None:
+            polisher = self._resolve_ai_provider()[1]
+        return f"{names.get(provider_type, 'AI')} ({getattr(polisher, 'model_name', '')})"
 
     def _run_ai_batches(
         self,
@@ -356,20 +457,36 @@ class TranslationOrchestrator:
         style_instruction: str,
         polish_batch_size: int,
     ) -> tuple[list[str], list[str], list[str]]:
-        warnings = []
-        providers_used = set()
-
         # Modern cloud models benefit from enough neighbouring subtitle cues
         # to keep terminology, names, and tone consistent.  Do not rely only
         # on a cue count though: long subtitle files can still exceed a
         # provider's practical context/output budget.  The same boundaries
         # are used for source and draft text, preventing misaligned rewrites.
+        #
+        # Local CPU models are much slower than cloud APIs (llama.cpp on a
+        # typical machine generates ~10 tokens/s). A 24-cue batch routinely
+        # needs more than the generic 120s request timeout and then fails the
+        # whole translation pass, so local batches are kept deliberately
+        # small. VIUSTUDIO_AI_TRANSLATION_LOCAL_MAX_SEGMENTS is an escape
+        # hatch for fast GPUs.
         local_provider = provider_type in {"llama_app", "ollama"}
+        try:
+            local_max_segments = max(4, min(24, int(os.getenv("VIUSTUDIO_AI_TRANSLATION_LOCAL_MAX_SEGMENTS", "12"))))
+        except ValueError:
+            local_max_segments = 12
+        try:
+            cloud_max_segments = max(8, min(40, int(os.getenv("VIUSTUDIO_AI_TRANSLATION_CLOUD_MAX_SEGMENTS", "24"))))
+        except ValueError:
+            cloud_max_segments = 24
+        scene_max_segments = local_max_segments if local_provider else cloud_max_segments
         batches, full_context_request = self._build_ai_batches(
             source_texts=source_texts,
             translated_texts=translated_texts,
-            requested_max_segments=min(polish_batch_size, 24) if local_provider else polish_batch_size,
-            force_ordered=local_provider,
+            requested_max_segments=min(polish_batch_size, scene_max_segments),
+            # Scene-sized ordered batches keep pronouns, names, and addressee
+            # consistent. A single huge request makes Flash/local models
+            # translate each numbered line in isolation.
+            force_ordered=True,
             max_chars_limit=6000 if local_provider else None,
             response_token_limit=1800 if local_provider else None,
         )
@@ -417,6 +534,39 @@ class TranslationOrchestrator:
             except Exception as batch_exc:
                 print(f"[AI Translation] AI batch translation failed. Falling back to Google Translate. ({batch_exc})")
                 raise AIBatchTranslationError(str(batch_exc)) from exc
+        except Exception as exc:
+            # A slow local model that overran the request timeout would
+            # otherwise fail the entire translation pass. Retry once with
+            # half-size ordered batches before surfacing the provider error.
+            if not local_provider or full_context_request:
+                raise
+            shrink_segments = max(4, local_max_segments // 2)
+            print(
+                "[AI Translation] Local provider failure "
+                f"({type(exc).__name__}: {exc}). Retrying with smaller batches "
+                f"(max {shrink_segments} cues)..."
+            )
+            shrink_batches, _unused_full_context = self._build_ai_batches(
+                source_texts=source_texts,
+                translated_texts=translated_texts,
+                requested_max_segments=shrink_segments,
+                force_ordered=True,
+                max_chars_limit=6000 if local_provider else None,
+                response_token_limit=1800 if local_provider else None,
+            )
+            try:
+                recovered = self._run_ai_batch_requests(
+                    polisher=polisher,
+                    batches=shrink_batches,
+                    src_lang=src_lang,
+                    target_lang=target_lang,
+                    style_instruction=style_instruction,
+                    max_workers=1,
+                )
+                print("[AI Translation] Smaller-batch retry completed successfully.")
+                return recovered
+            except Exception as shrink_exc:
+                raise AIBatchTranslationError(str(shrink_exc)) from exc
 
     def _repair_ai_quality_issues(
         self,
@@ -451,16 +601,24 @@ class TranslationOrchestrator:
             return list(translated_texts), list(quality_warnings)
 
         repaired = list(translated_texts)
-        for index in sorted(severe_indices):
-            if index < 0 or index >= len(repaired):
-                continue
+        valid_indices = [
+            index for index in sorted(severe_indices)
+            if 0 <= index < len(repaired)
+        ]
+        if not valid_indices:
+            return list(translated_texts), list(quality_warnings)
+
+        def repair_one(index):
             context_start = max(0, index - 2)
             context_end = min(len(ai_source_texts), index + 3)
-            nearby = "\n".join(
-                f"- {ai_source_texts[pos]}"
-                for pos in range(context_start, context_end)
-                if pos != index
-            )
+            nearby_before = [
+                ai_source_texts[pos]
+                for pos in range(context_start, index)
+            ]
+            nearby_after = [
+                ai_source_texts[pos]
+                for pos in range(index + 1, context_end)
+            ]
             repair_instruction = (
                 f"{style_instruction}\n\n[mode=translation_quality_repair] "
                 "Repair only the current numbered cue. Its previous draft failed an objective "
@@ -474,7 +632,6 @@ class TranslationOrchestrator:
                     f"- {warning}" for warning in quality_warnings
                     if re.match(rf"Cue\s+{index + 1}:", str(warning))
                 )
-                + f"\nNearby source context:\n{nearby}"
             )
             try:
                 result, _warnings, _provider = polisher.polish_batch(
@@ -483,12 +640,80 @@ class TranslationOrchestrator:
                     src_lang=src_lang,
                     target_lang=target_lang,
                     style_instruction=repair_instruction,
+                    context_before=nearby_before,
+                    context_after=nearby_after,
                     max_tokens=1024,
                 )
                 if result and str(result[0]).strip():
                     repaired[index] = str(result[0]).strip()
             except Exception as exc:
                 print(f"[Translation QA] Cue {index + 1} repair skipped: {exc}")
+
+        # Local models are request-free for the user, so keep one request per
+        # cue there. API providers (Gemini/OpenAI/...) pay per request, so
+        # group flagged cues into a single numbered repair request per 8 cues
+        # instead of burning one request per cue; any failed group falls back
+        # to the old cue-by-cue path.
+        if getattr(polisher, "provider_id", "") in {"llama_app", "ollama"}:
+            for index in valid_indices:
+                repair_one(index)
+        else:
+            group_size = 8
+            for group_start in range(0, len(valid_indices), group_size):
+                group = valid_indices[group_start:group_start + group_size]
+                first, last = group[0], group[-1]
+                context_before = [
+                    ai_source_texts[pos] for pos in range(max(0, first - 2), first)
+                ]
+                context_after = [
+                    ai_source_texts[pos]
+                    for pos in range(last + 1, min(len(ai_source_texts), last + 3))
+                ]
+                entries = []
+                for batch_number, index in enumerate(group, start=1):
+                    defects = "; ".join(
+                        str(warning) for warning in quality_warnings
+                        if re.match(rf"Cue\s+{index + 1}:", str(warning))
+                    )
+                    entries.append(
+                        f"{batch_number}. source: {ai_source_texts[index]}\n"
+                        f"   draft: {repaired[index]}\n"
+                        f"   defects: {defects}"
+                    )
+                group_instruction = (
+                    f"{style_instruction}\n\n[mode=translation_quality_repair] "
+                    "Repair ONLY the numbered cues listed below; each shows its source, current "
+                    "draft and the exact automatic defects. Output exactly N. lines numbered 1..k, "
+                    "one repaired target-language line per cue, in the same order. Preserve the exact "
+                    "source meaning, names, numbers, negation and speaker register. Use the nearby "
+                    "source only for context; never output nearby cues. Satisfy the listed checks "
+                    "rather than merely rephrasing the draft.\n\n"
+                    + "\n\n".join(entries)
+                )
+                print(
+                    "[Translation QA] Repairing "
+                    f"{len(group)} of {len(valid_indices)} flagged cue(s) in one request."
+                )
+                try:
+                    results, _warnings, _provider = polisher.polish_batch(
+                        source_texts=[ai_source_texts[index] for index in group],
+                        translated_texts=[repaired[index] for index in group],
+                        src_lang=src_lang,
+                        target_lang=target_lang,
+                        style_instruction=group_instruction,
+                        context_before=context_before,
+                        context_after=context_after,
+                        max_tokens=max(2048, 600 * len(group)),
+                    )
+                    if len(results) == len(group):
+                        for batch_number, index in enumerate(group):
+                            if str(results[batch_number] or "").strip():
+                                repaired[index] = str(results[batch_number]).strip()
+                        continue
+                except Exception as exc:
+                    print(f"[Translation QA] Group repair failed ({exc}); retrying cue-by-cue.")
+                for index in group:
+                    repair_one(index)
 
         repaired, final_warnings = apply_translation_quality_guard(
             source_segments=list(source_segments),
@@ -530,7 +755,7 @@ class TranslationOrchestrator:
         repaired = list(translated_texts)
         try:
             fallback = self.google_web.translate_batch(
-                [str(source_segments[index].get("text") or "") for index in valid_indices],
+                [self._segment_source_text(source_segments[index]) for index in valid_indices],
                 src_lang=src_lang,
                 target_lang=target_lang,
             )
@@ -640,36 +865,85 @@ class TranslationOrchestrator:
         warnings = []
         providers_used = set()
         translated_texts_map = {}
-        if max_workers == 1 and len(batches) > 1:
+        if max_workers == 1:
             recent_pairs: list[tuple[str, str]] = []
+
+            def submit_batch(source_batch, translated_batch, max_tokens, *, context_before=None, context_after=None):
+                """Run one ordered batch, splitting a malformed numbered reply.
+
+                A provider occasionally stops after a few numbered lines of a
+                large batch (e.g. IDs 1..6 of 1..24). Retrying the identical
+                oversized request cannot restore the truncated reply, but
+                failing the whole translation pass is worse. Split the batch
+                in half and retry each half so only genuinely broken
+                single-cue replies surface.
+                """
+                total = len(source_batch)
+                try:
+                    batch_result, batch_warnings, provider_name = polisher.polish_batch(
+                        source_texts=list(source_batch),
+                        translated_texts=list(translated_batch) if translated_batch is not None else None,
+                        src_lang=src_lang,
+                        target_lang=target_lang,
+                        style_instruction=style_instruction,
+                        context_before=context_before,
+                        context_after=context_after,
+                        max_tokens=max_tokens,
+                    )
+                    return list(batch_result), list(batch_warnings), provider_name
+                except TranslationValidationError as exc:
+                    # A single-cue reply that is still malformed is genuinely
+                    # broken; anything larger can be split for another try.
+                    if total < 2:
+                        raise
+                    split_at = total // 2
+                    left_src = source_batch[:split_at]
+                    right_src = source_batch[split_at:]
+                    left_draft = translated_batch[:split_at] if translated_batch is not None else None
+                    right_draft = translated_batch[split_at:] if translated_batch is not None else None
+                    left_tokens = max(1024, int(max_tokens or 1024) * len(left_src) // total + 256)
+                    right_tokens = max(1024, int(max_tokens or 1024) * len(right_src) // total + 256)
+                    print(
+                        "[AI Translation] Malformed numbered reply for a "
+                        f"{total}-cue batch ({exc}). Retrying as two smaller batches "
+                        f"({len(left_src)} + {len(right_src)} cues)..."
+                    )
+                    left_result, left_warnings, left_provider = submit_batch(
+                        left_src,
+                        left_draft,
+                        left_tokens,
+                        context_before=context_before,
+                        context_after=right_src[:3],
+                    )
+                    right_context_before = [
+                        f"{src} => {trans}"
+                        for src, trans in zip(left_src[-5:], left_result[-5:])
+                    ]
+                    right_result, right_warnings, right_provider = submit_batch(
+                        right_src,
+                        right_draft,
+                        right_tokens,
+                        context_before=right_context_before,
+                        context_after=context_after,
+                    )
+                    return (
+                        left_result + right_result,
+                        left_warnings + right_warnings,
+                        left_provider or right_provider,
+                    )
+
             for idx, (source_batch, translated_batch, max_tokens) in enumerate(batches):
-                continuity_parts = []
-                if recent_pairs:
-                    prior = "\n".join(
-                        f"- {source} => {translation}"
-                        for source, translation in recent_pairs[-5:]
-                    )
-                    continuity_parts.append(
-                        "Continuity reference from the immediately preceding cues. "
-                        "Use only for names, terms, relationships, pronouns and register; "
-                        f"do not output these reference cues:\n{prior}"
-                    )
-                if idx + 1 < len(batches):
-                    following = "\n".join(f"- {text}" for text in batches[idx + 1][0][:3])
-                    continuity_parts.append(
-                        "Upcoming source context. Use only to resolve the current cues; "
-                        f"do not translate or output it:\n{following}"
-                    )
-                request_style = str(style_instruction or "")
-                if continuity_parts:
-                    request_style = request_style + "\n\n" + "\n\n".join(continuity_parts)
-                batch_result, batch_warnings, provider_name = polisher.polish_batch(
-                    source_texts=source_batch,
-                    translated_texts=translated_batch,
-                    src_lang=src_lang,
-                    target_lang=target_lang,
-                    style_instruction=request_style,
-                    max_tokens=max_tokens,
+                context_before = [
+                    f"{source} => {translation}"
+                    for source, translation in recent_pairs[-5:]
+                ]
+                context_after = list(batches[idx + 1][0][:3]) if idx + 1 < len(batches) else []
+                batch_result, batch_warnings, provider_name = submit_batch(
+                    source_batch,
+                    translated_batch,
+                    max_tokens,
+                    context_before=context_before,
+                    context_after=context_after,
                 )
                 translated_texts_map[idx] = batch_result
                 warnings.extend(batch_warnings)
@@ -684,6 +958,8 @@ class TranslationOrchestrator:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
             future_to_idx = {}
             for idx, (source_batch, translated_batch, max_tokens) in enumerate(batches):
+                context_before = list(batches[idx - 1][0][-5:]) if idx > 0 else []
+                context_after = list(batches[idx + 1][0][:3]) if idx + 1 < len(batches) else []
                 future = executor.submit(
                     polisher.polish_batch,
                     source_texts=source_batch,
@@ -691,6 +967,8 @@ class TranslationOrchestrator:
                     src_lang=src_lang,
                     target_lang=target_lang,
                     style_instruction=style_instruction,
+                    context_before=context_before,
+                    context_after=context_after,
                     max_tokens=max_tokens,
                 )
                 future_to_idx[future] = idx

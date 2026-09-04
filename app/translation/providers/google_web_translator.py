@@ -1,4 +1,3 @@
-import json
 import random
 import time
 from urllib.parse import quote
@@ -170,8 +169,14 @@ class GoogleWebTranslatorProvider:
         except Exception:
             pass
 
-        print(f"[Google Translate Fallback] Warning: Could not translate '{clean_text}' ({last_error}). Using original.")
-        return clean_text
+        # Never report an untranslated source line as a successful
+        # translation.  Returning ``clean_text`` here made a network outage
+        # silently produce Chinese (or another source language) in the final
+        # subtitle track and let later stages synthesize the wrong text.
+        detail = f" ({last_error})" if last_error else ""
+        raise TranslationProviderError(
+            f"Google Translate could not translate the subtitle after trying all endpoints{detail}."
+        )
 
     def _extract_text(self, payload) -> str:
         if isinstance(payload, str):

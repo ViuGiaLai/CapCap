@@ -87,7 +87,7 @@ class TimelineVideoSequenceTests(unittest.TestCase):
     def test_normalize_preserves_trim_and_speed(self):
         timeline = Timeline()
         first = append_video(timeline, "one.mp4", 5.0)
-        second = append_video(timeline, "two.mp4", 8.0)
+        append_video(timeline, "two.mp4", 8.0)
         first.source_start = 2.0
         first.speed = 2.0
         first.end = 3.0
@@ -220,7 +220,7 @@ class TimelineVideoSequenceTests(unittest.TestCase):
         app = QApplication.instance() or QApplication([])
         widget = EditorTimeline()
         model = Timeline()
-        clip = append_video(model, "episode.mp4", 20.0)
+        append_video(model, "episode.mp4", 20.0)
         widget._timeline = model
         widget._duration = 20.0
         widget.resize(900, 300)

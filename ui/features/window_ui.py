@@ -222,9 +222,12 @@ class WindowUiMixin:
         # laptops while the cards themselves remain scrollable.
         left_panel = getattr(self, "left_panel_scroll_area", None)
         if left_panel is not None:
-            left_panel.setFixedWidth(320 if compact_width else 420)
-        inspector_width = 320 if compact_width else 400
-        inspector_max = 440 if compact_width else 560
+            # The rail now carries navigation, so the controls column should
+            # stay a focused workbench rather than consuming half the screen.
+            # Its contents remain scrollable and all controls are reachable.
+            left_panel.setFixedWidth(286 if compact_width else 348)
+        inspector_width = 292 if compact_width else 340
+        inspector_max = 410 if compact_width else 480
         self._responsive_inspector_width = inspector_width
         studio_inspector = getattr(self, "studio_inspector", None)
         for attr in (

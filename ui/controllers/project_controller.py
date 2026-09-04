@@ -1,6 +1,6 @@
 import os
 import shutil
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication, QMessageBox
 try:
     from utils.display_utils import cleanup_temp_preview_files as cleanup_temp_preview_files_impl, show_processed_files as show_processed_files_impl
@@ -58,7 +58,48 @@ class ProjectController:
             removed.append(normalized)
 
     def reset_project_runtime_state(self) -> None:
+        # Stop asynchronous work and delayed persistence before replacing the
+        # project context. Otherwise an old worker/timer can write its result
+        # into the newly opened project after the reset returns.
+        terminate = getattr(self.gui, "_terminate_workers", None)
+        if callable(terminate):
+            try:
+                terminate()
+            except Exception:
+                pass
+        persist_timer = getattr(self.gui, "_timeline_persist_timer", None)
+        if persist_timer is not None:
+            try:
+                persist_timer.stop()
+            except Exception:
+                pass
+        self.gui._pending_timeline_persist = False
+        self.gui._pending_mask_state_persist = False
+        self.gui._pending_blur_state_persist = False
         self.gui.current_project_state = None
+        # Clear all source/preview routing state.  Leaving a previous
+        # canonical path or cached timeline source alive is what caused a new
+        # project to display another project's video, voice and subtitles.
+        self.gui._current_video_path = ""
+        self.gui._timeline_preview_source = ""
+        self.gui._timeline_global_position_ms = 0
+        self.gui._project_media_source_mismatch = False
+        self.gui._saved_timeline_model_restored = False
+        self.gui._voice_track_partial = False
+        self.gui._voiceover_force_refresh = False
+        self.gui._preview_audio_track_mode = "original"
+        self.gui._preview_audio_track_switching = False
+        self.gui._preview_video_has_burned_subtitles = False
+        self.gui._pipeline_active = False
+        self.gui._pipeline_step = ""
+        self.gui._styled_preview_running = False
+        self.gui._video_filter_preview_dirty = False
+        self.gui._video_filter_apply_requested = False
+        self.gui._play_video_filter_preview_when_ready = False
+        self.gui._timeline_timing_undo_stack = []
+        self.gui._timeline_timing_redo_stack = []
+        self.gui._subtitle_ass_pending_snapshot = None
+        self.gui._subtitle_ass_request_token = int(getattr(self.gui, "_subtitle_ass_request_token", 0)) + 1
         self.gui.current_segment_models = []
         self.gui.current_translated_segment_models = []
         self.gui.current_segments = []
@@ -71,6 +112,8 @@ class ProjectController:
         self.gui.last_translated_srt_path = ""
         self.gui.last_voice_vi_path = ""
         self.gui.last_mixed_vi_path = ""
+        self.gui.last_recap_video_path = ""
+        self.gui.current_auto_recap_edl = []
         self.gui.last_preview_video_path = ""
         self.gui.last_styled_preview_path = ""
         self.gui.last_styled_preview_signature = ""
@@ -190,24 +233,12 @@ class ProjectController:
             return
 
         removed_paths = []
-        removed_groups = {
-            "Project folder": [],
-            "Generated voice files": [],
-            "Separated audio": [],
-            "Preview temp files": [],
-            "TTS cache": [],
-            "Temp folders": [],
-            "Timeline media cache": [],
-            "Launcher media cache": [],
-        }
         project_temp_root = self.gui.get_project_temp_root()
         output_root = os.path.join(self.gui.workspace_root, "output")
         project_root = str(getattr(project_state, "project_root", "") or "").strip()
         project_id = str(getattr(project_state, "project_id", "") or "").strip()
         if not project_id and project_root:
             project_id = os.path.basename(os.path.normpath(project_root))
-        video_path = self.gui.video_path_edit.text().strip() if hasattr(self.gui, "video_path_edit") else ""
-
         # Remove temp files safely
         allowed_roots = [project_temp_root, project_root, output_root]
         for candidate in [

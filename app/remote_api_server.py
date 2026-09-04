@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import errno
+import ipaddress
 import json
 import os
 import sys
@@ -42,6 +44,8 @@ _configure_worker_text_streams()
 
 _QUIET = os.getenv("VIUSTUDIO_QUIET", "").strip().lower() in ("1", "true", "yes")
 _GPU_LOCK = threading.Lock()
+_MAX_REQUEST_BYTES = 128 * 1024 * 1024
+_MAX_DECODED_AUDIO_BYTES = 96 * 1024 * 1024
 
 
 def _log(msg: str):
@@ -74,6 +78,25 @@ def _set_status(phase: str, message: str = "") -> None:
 def _get_status() -> dict:
     with _STATUS_LOCK:
         return dict(_STATUS)
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized_host = str(host or "").strip().strip("[]").lower()
+    if normalized_host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(normalized_host).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_bind_security(host: str, token: str = "") -> None:
+    """Reject an externally reachable API that has no authentication."""
+    if not _is_loopback_host(host) and not str(token or "").strip():
+        raise RuntimeError(
+            "VIUSTUDIO_REMOTE_API_TOKEN is required when "
+            "VIUSTUDIO_REMOTE_API_HOST is not a loopback address."
+        )
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status_code: int, payload: dict) -> None:
@@ -118,6 +141,8 @@ class VIUStudioRemoteHandler(BaseHTTPRequestHandler):
                 _json_response(self, 200, payload)
                 return
             _json_response(self, 404, {"ok": False, "error": "Not found"})
+        except PermissionError as exc:
+            _json_response(self, 401, {"ok": False, "error": str(exc)})
         except Exception as exc:
             _json_response(self, 500, {"ok": False, "error": str(exc)})
 
@@ -202,8 +227,20 @@ class VIUStudioRemoteHandler(BaseHTTPRequestHandler):
             raise PermissionError("Invalid remote API token.")
 
     def _read_json_body(self) -> dict:
-        raw_length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_length_header = str(self.headers.get("Content-Length", "0") or "0").strip()
+        try:
+            raw_length = int(raw_length_header)
+        except (TypeError, ValueError):
+            raise ValueError("Content-Length must be a valid integer.")
+        if raw_length < 0:
+            raise ValueError("Content-Length cannot be negative.")
+        if raw_length > _MAX_REQUEST_BYTES:
+            raise ValueError(
+                f"Request body exceeds the {_MAX_REQUEST_BYTES // (1024 * 1024)} MiB limit."
+            )
         raw = self.rfile.read(raw_length) if raw_length > 0 else b"{}"
+        if len(raw) != raw_length:
+            raise ValueError("Request body was truncated.")
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("JSON body must be an object.")
@@ -213,7 +250,14 @@ class VIUStudioRemoteHandler(BaseHTTPRequestHandler):
         audio_b64 = str(payload.get("audio_b64", "") or "").strip()
         if not audio_b64:
             raise ValueError("audio_b64 is required.")
-        audio_bytes = base64.b64decode(audio_b64.encode("ascii"))
+        try:
+            audio_bytes = base64.b64decode(audio_b64.encode("ascii"), validate=True)
+        except (UnicodeEncodeError, binascii.Error, ValueError) as exc:
+            raise ValueError("audio_b64 must be valid standard base64 data.") from exc
+        if len(audio_bytes) > _MAX_DECODED_AUDIO_BYTES:
+            raise ValueError(
+                f"Decoded audio exceeds the {_MAX_DECODED_AUDIO_BYTES // (1024 * 1024)} MiB limit."
+            )
         audio_filename = str(payload.get("audio_filename", "remote_input.wav") or "remote_input.wav")
         suffix = os.path.splitext(audio_filename)[1] or ".wav"
         tmp_dir = os.path.join(tempfile.gettempdir(), "viustudio_remote_api")
@@ -309,7 +353,7 @@ class VIUStudioRemoteHandler(BaseHTTPRequestHandler):
 
     def _handle_prepare(self, payload: dict) -> dict:
         video_path = str(payload.get("video_path", "") or "").strip()
-        if not video_path or not os.path.exists(video_path):
+        if not video_path or not os.path.isfile(video_path):
             raise ValueError("video_path required and must exist.")
         workspace_root = str(payload.get("workspace_root", "") or "").strip() or WORKSPACE_ROOT
         runtime = WorkflowRuntime(workspace_root)
@@ -421,12 +465,19 @@ def _unload_models():
 
 
 def main() -> None:
-    host = str(os.getenv("VIUSTUDIO_REMOTE_API_HOST", "0.0.0.0") or "0.0.0.0").strip()
+    host = str(os.getenv("VIUSTUDIO_REMOTE_API_HOST", "127.0.0.1") or "127.0.0.1").strip()
     port_raw = str(os.getenv("VIUSTUDIO_REMOTE_API_PORT", "8765") or "8765").strip()
     try:
         port = int(port_raw)
     except Exception:
         port = 8765
+
+    # The worker API can execute transcription, TTS, and export operations on
+    # paths supplied by the caller.  Never expose that capability on a LAN or
+    # public interface without an explicit token.  Local GUI workers already
+    # provide a random per-process token, while a remote deployment must opt
+    # in by configuring VIUSTUDIO_REMOTE_API_TOKEN.
+    _validate_bind_security(host, remote_api_token())
 
     preload_models = str(os.getenv("VIUSTUDIO_REMOTE_PRELOAD_MODELS", "1") or "1").strip().lower()
     if preload_models not in {"0", "false", "no", "off"}:

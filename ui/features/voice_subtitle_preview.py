@@ -19,6 +19,7 @@ from worker_adapters import (
     SegmentAudioPreviewWorker,
     VoiceSamplePreviewWorker,
 )
+from utils.thread_lifecycle import release_thread_when_stopped
 
 from workflows.voice_workflow import predict_speed_ratios
 
@@ -230,6 +231,14 @@ class VoiceSubtitlePreviewMixin:
         )
         worker.progress.connect(self.log)
         worker.finished.connect(self.on_voice_sample_preview_ready)
+        worker.finished.connect(
+            lambda *_args, worker=worker: release_thread_when_stopped(
+                worker,
+                lambda: setattr(self, "_voice_sample_preview_thread", None)
+                if getattr(self, "_voice_sample_preview_thread", None) is worker
+                else None,
+            )
+        )
         self._voice_sample_preview_thread = worker
         worker.start()
 
@@ -237,7 +246,6 @@ class VoiceSubtitlePreviewMixin:
         if hasattr(self, "preview_voice_btn"):
             self.preview_voice_btn.setEnabled(True)
             self.preview_voice_btn.setText("Preview voice")
-        self._voice_sample_preview_thread = None
 
         if error:
             self.show_error("Voice Preview Failed", "Could not generate the preview audio.", error)
@@ -271,7 +279,7 @@ class VoiceSubtitlePreviewMixin:
             QMessageBox.warning(self, "Missing Voice", "Choose a voice first before generating subtitle audio preview.")
             return
         voice_speed = self._parse_voice_speed_value()
-        row = self._find_segment_editor_row(index)
+        self._find_segment_editor_row(index)
         # The per-segment "Regenerate voice" button was moved to the
         # A2 Dub Track Inspector. Disable that one instead.
         if getattr(self, "audio_inspector_regenerate_voice_btn", None) is not None:
@@ -292,6 +300,14 @@ class VoiceSubtitlePreviewMixin:
             cache_temp_dir=self.get_project_temp_dir("tts"),
         )
         worker.finished.connect(self.on_segment_audio_preview_ready)
+        worker.finished.connect(
+            lambda *_args, worker=worker: release_thread_when_stopped(
+                worker,
+                lambda: self._segment_preview_threads.pop(index, None)
+                if self._segment_preview_threads.get(index) is worker
+                else None,
+            )
+        )
         self._segment_preview_threads[index] = worker
         worker.start()
 
@@ -378,7 +394,8 @@ class VoiceSubtitlePreviewMixin:
             QMessageBox.warning(self, "Missing Subtitle", "No translated subtitle is ready yet.")
             return
         target_lang = str(self.get_target_language_code() or "translated").lower()
-        suggested_name = os.path.splitext(os.path.basename(self.video_path_edit.text().strip() or "subtitle"))[0] + f"_{target_lang}.srt"
+        source_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
+        suggested_name = os.path.splitext(os.path.basename(source_path or "subtitle"))[0] + f"_{target_lang}.srt"
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Translated Subtitle", suggested_name, "Subtitle Files (*.srt)")
         if not file_path:
             return
@@ -566,7 +583,8 @@ class VoiceSubtitlePreviewMixin:
         if not script_text:
             QMessageBox.warning(self, "Missing Script", "No original script is ready yet.")
             return
-        base_name = os.path.splitext(os.path.basename(self.video_path_edit.text().strip() or "original"))[0] + "_original"
+        source_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
+        base_name = os.path.splitext(os.path.basename(source_path or "original"))[0] + "_original"
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Source Subtitle",
@@ -705,7 +723,7 @@ class VoiceSubtitlePreviewMixin:
 
     def _build_live_subtitle_ass_snapshot(self, segments):
         """Capture all Qt-owned state before an ASS worker is started."""
-        video_path = self.video_path_edit.text().strip()
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
         source_width = max(1, int(getattr(self.video_view, "video_source_width", 0) or 1920))
         source_height = max(1, int(getattr(self.video_view, "video_source_height", 0) or 1080))
         canvas_width, canvas_height = self._subtitle_render_dimensions()
@@ -848,7 +866,7 @@ class VoiceSubtitlePreviewMixin:
 
         from subtitle_builder import generate_srt
 
-        video_path = self.video_path_edit.text().strip()
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else self.video_path_edit.text().strip()
         if (
             video_path
             and os.path.exists(video_path)
@@ -1018,7 +1036,11 @@ class VoiceSubtitlePreviewMixin:
                     previous_boundary = max(previous_boundary, boundary)
                 else:
                     next_boundary = boundary if next_boundary is None else min(next_boundary, boundary)
-            if start_s <= position_seconds <= end_s:
+            # Subtitle end times are exclusive.  At an exact cue boundary,
+            # selecting the previous cue for one frame makes the Inspector,
+            # overlay and TTS timing appear shifted; the next cue (or no cue
+            # during a gap) must win immediately.
+            if start_s <= position_seconds < end_s:
                 result.append(idx)
         stable_start = previous_boundary
         stable_end = next_boundary if next_boundary is not None else float("inf")

@@ -23,6 +23,63 @@ def voice_track_storage_plan(duration_seconds: float, sample_rate: int = 16000) 
     }
 
 
+def mute_voice_windows(
+    *,
+    input_wav_path: str,
+    segments: list,
+    changed_indices: set[int] | list[int],
+    output_wav_path: str,
+) -> str:
+    """Create a temporary voice track with only edited cue windows muted.
+
+    Subtitle edits should not make every previously generated cue disappear.
+    Until the user regenerates TTS, this preserves the unchanged speech and
+    silences only the cue whose text is now stale.
+    """
+    if not input_wav_path or not os.path.exists(input_wav_path):
+        raise FileNotFoundError(input_wav_path)
+    _require_pydub()
+    from pydub import AudioSegment
+
+    audio = AudioSegment.from_file(input_wav_path)
+    windows: list[tuple[int, int]] = []
+    by_index = {}
+    for position, segment in enumerate(list(segments or [])):
+        if not isinstance(segment, dict):
+            continue
+        try:
+            index = int(segment.get("_seg_index", position))
+        except (TypeError, ValueError):
+            index = position
+        by_index[index] = segment
+    for raw_index in set(changed_indices or []):
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        segment = by_index.get(index)
+        if not segment:
+            continue
+        try:
+            start = float(segment.get("_audio_start", segment.get("start", 0.0)))
+            end = float(segment.get("_audio_end", segment.get("end", start)))
+        except (TypeError, ValueError):
+            continue
+        if end > start + 0.005:
+            windows.append((max(0, int(round(start * 1000))), max(0, int(round(end * 1000)))))
+    if not windows:
+        raise ValueError("No valid voice window matched the edited subtitle cues.")
+    for start_ms, end_ms in sorted(windows, reverse=True):
+        start_ms = min(start_ms, len(audio))
+        end_ms = min(max(start_ms, end_ms), len(audio))
+        if end_ms <= start_ms:
+            continue
+        audio = audio[:start_ms] + AudioSegment.silent(duration=end_ms - start_ms, frame_rate=audio.frame_rate) + audio[end_ms:]
+    os.makedirs(os.path.dirname(os.path.abspath(output_wav_path)) or ".", exist_ok=True)
+    audio.export(output_wav_path, format="wav")
+    return output_wav_path
+
+
 def _ffmpeg_path():
     return bin_path("ffmpeg", "ffmpeg.exe")
 

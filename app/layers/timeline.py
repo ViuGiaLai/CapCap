@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from app.layers.base import BaseLayer, LayerType, BlendMode
+from app.layers.base import BaseLayer, LayerType
 from app.layers.video import VideoLayer
 from app.layers.audio import AudioLayer
 from app.layers.subtitle import SubtitleLayer

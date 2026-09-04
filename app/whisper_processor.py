@@ -5,7 +5,7 @@ import threading
 import traceback
 from pathlib import Path
 
-from runtime_paths import bin_path, models_path, workspace_root, subprocess_hidden_kwargs, subprocess_text_kwargs
+from runtime_paths import bin_path, models_path, workspace_root, subprocess_text_kwargs
 from services.resource_download_service import ResourceDownloadService
 
 
@@ -271,7 +271,6 @@ def _load_whisper_model(model_name):
     }
     print(f"[Whisper] Model: {model_name}")
 
-    original_name = str(model_name)
     if not os.path.isdir(str(model_name)):
         model_kwargs["download_root"] = _faster_whisper_cache_dir()
     cache_key = (str(model_name), str(model_kwargs["device"]), str(model_kwargs["compute_type"]))

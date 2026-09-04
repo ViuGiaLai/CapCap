@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import uuid
+import stat
 from pathlib import Path
 
 from runtime_paths import app_path, bin_path, bundle_root, join_root, models_path, subprocess_hidden_kwargs, subprocess_text_kwargs
@@ -610,6 +611,26 @@ class ResourceDownloadService:
                 "auto_download_supported": False,
                 "description": "ONNX model that identifies and groups speaker voices.",
             },
+            {
+                "id": "llama:engine",
+                "name": "Llama.cpp Engine (llama-server.exe)",
+                "kind": "llama",
+                "status": "installed" if self.is_resource_installed("llama:engine") else "missing",
+                "target_dir": bin_path("llama_cpp"),
+                "expected_filename": "llama-server.exe",
+                "download_links": [
+                    {
+                        "label": "Open llama.cpp releases (win-cpu-x64 zip)",
+                        "url": "https://github.com/ggml-org/llama.cpp/releases",
+                    },
+                ],
+                "auto_download_supported": False,
+                "description": (
+                    "Local translation engine used by the Llama.cpp provider. Download the "
+                    "win-cpu-x64 build (llama-b*-bin-win-cpu-x64.zip), then extract "
+                    "llama-server.exe and its DLLs into the target folder and click Refresh."
+                ),
+            },
         ]
 
         vietnamese_entries = self._piper_voice_entries("vi")
@@ -696,6 +717,8 @@ class ResourceDownloadService:
                 )
             except Exception:
                 return False
+        if resource_id == "llama:engine":
+            return os.path.isfile(bin_path("llama_cpp", "llama-server.exe"))
         return False
 
     def _find_voice_entry(self, voice_id: str) -> dict | None:
@@ -729,7 +752,7 @@ class ResourceDownloadService:
                 if block_num % 10 == 0:  # Log every 10 blocks
                     print(f"[Download] Progress: block {block_num}, size {block_size}, total {total_size}")
 
-            print(f"[Download] Calling urlretrieve...")
+            print("[Download] Calling urlretrieve...")
             urllib.request.urlretrieve(zip_url, tmp_path, reporthook=_report_progress)
             print(f"[Download] Download complete. File size: {os.path.getsize(tmp_path)} bytes")
 
@@ -738,8 +761,8 @@ class ResourceDownloadService:
 
             print(f"[Download] Extracting zip to {extract_to}...")
             with zipfile.ZipFile(tmp_path, "r") as zip_ref:
-                zip_ref.extractall(extract_to)
-            print(f"[Download] Extraction complete.")
+                self._safe_extract_zip(zip_ref, extract_to)
+            print("[Download] Extraction complete.")
 
             if progress_cb:
                 progress_cb(100, "Extraction complete.")
@@ -749,6 +772,59 @@ class ResourceDownloadService:
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+    @staticmethod
+    def _safe_extract_zip(zip_ref, extract_to: str) -> None:
+        """Extract a trusted resource archive without allowing path escapes.
+
+        Resource URLs are configurable through environment variables and can
+        be changed outside the application.  ``ZipFile.extractall`` accepts
+        ``../`` paths and symlink entries, which could overwrite arbitrary
+        files when a compromised archive is downloaded.  Validate every
+        member before writing anything, then extract manually beneath the
+        resolved destination.
+        """
+        destination = Path(extract_to).expanduser().resolve()
+        destination.mkdir(parents=True, exist_ok=True)
+        members = zip_ref.infolist()
+        resolved_members: list[tuple[object, Path, bool]] = []
+        seen_targets: set[Path] = set()
+        for member in members:
+            raw_name = str(member.filename or "")
+            if not raw_name or "\x00" in raw_name:
+                raise ValueError("Resource archive contains an invalid filename.")
+            # ZIP names are POSIX paths even on Windows.  Reject absolute
+            # drive/UNC paths as well as traversal components before resolve.
+            normalized_name = raw_name.replace("\\", "/")
+            candidate = Path(normalized_name)
+            if candidate.is_absolute() or (len(normalized_name) >= 2 and normalized_name[1] == ":"):
+                raise ValueError(f"Resource archive contains an absolute path: {raw_name}")
+            relative_parts = [part for part in normalized_name.split("/") if part not in {"", "."}]
+            if not relative_parts:
+                raise ValueError(f"Resource archive contains an invalid root entry: {raw_name}")
+            if any(part == ".." for part in relative_parts):
+                raise ValueError(f"Resource archive contains a path traversal entry: {raw_name}")
+            target = (destination.joinpath(*relative_parts)).resolve()
+            try:
+                target.relative_to(destination)
+            except ValueError as exc:
+                raise ValueError(f"Resource archive entry escapes target directory: {raw_name}") from exc
+            is_directory = raw_name.endswith(("/", "\\"))
+            mode = (int(member.external_attr) >> 16) & 0xFFFF
+            if stat.S_ISLNK(mode):
+                raise ValueError(f"Resource archive contains a symlink entry: {raw_name}")
+            if target in seen_targets:
+                raise ValueError(f"Resource archive contains duplicate entries: {raw_name}")
+            seen_targets.add(target)
+            resolved_members.append((member, target, is_directory))
+
+        for member, target, is_directory in resolved_members:
+            if is_directory:
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zip_ref.open(member, "r") as source, open(target, "wb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
 
     def download_resource(self, resource_id: str, progress_cb=None) -> None:
         if resource_id.startswith("whisper:"):
@@ -846,6 +922,12 @@ class ResourceDownloadService:
             if progress_cb:
                 progress_cb(100, f"Voice {voice_id} is ready.")
             return
+
+        if resource_id == "llama:engine":
+            raise ValueError(
+                "The llama.cpp engine is downloaded manually. Use 'Open Download Page', "
+                "then extract llama-server.exe and its DLLs into the target folder."
+            )
 
         if resource_id in {self.NORMAL_AI_RESOURCE_ID, self.HIGH_AI_RESOURCE_ID}:
             raise ValueError(

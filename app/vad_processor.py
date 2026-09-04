@@ -100,6 +100,19 @@ def get_speech_segments(audio: np.ndarray, sr: int = 16000) -> list[dict]:
 
                 _VAD.pop()
 
+        # Feed the final partial window as well.  Dropping it silently loses
+        # short speech at the end of a file/chunk (and made the final subtitle
+        # disappear intermittently).  Silero expects a full window, so pad
+        # with zeros; downstream timestamp clipping keeps the synthetic tail
+        # out of the real subtitle interval.
+        if len(buffer):
+            padded = np.pad(
+                buffer,
+                (0, max(0, _WINDOW_SIZE - len(buffer))),
+                mode="constant",
+            )
+            _VAD.accept_waveform(padded[:_WINDOW_SIZE])
+
         _VAD.flush()
 
         while not _VAD.empty():

@@ -53,6 +53,8 @@ class SubtitleOverlayItem(QGraphicsItem):
         self._suppressed = bool(suppressed)
         if self._suppressed:
             self.hide()
+        elif self.current_text or self.current_lines:
+            self.show()
 
     def is_top_level_overlay(self) -> bool:
         return False
@@ -200,7 +202,6 @@ class SubtitleOverlayItem(QGraphicsItem):
         font.setBold(bool(self.bold))
         painter.setFont(font)
         line_height = max(24, int(self.font_size * self.LINE_HEIGHT_FACTOR))
-        single_line_flags = Qt.AlignCenter
         wrap_flags = Qt.AlignCenter | Qt.TextWordWrap
 
         line_rects: list[QRectF] = []

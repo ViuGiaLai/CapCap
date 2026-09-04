@@ -262,7 +262,7 @@ class TestStudioShellIntegration(unittest.TestCase):
         self.assertEqual(segment["tts_text"], "")
         self.assertEqual(segment["dubbing_vi"], "")
         self.assertFalse(segment["voice_edited"])
-        commit.assert_called_once_with(selected_index=0)
+        commit.assert_called_once_with(selected_index=0, changed_indices={0})
 
     def test_original_srt_is_rewritten_from_current_timeline(self):
         with tempfile.TemporaryDirectory() as folder:

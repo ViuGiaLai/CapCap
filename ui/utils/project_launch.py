@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QTimer, QUrl
 
 
 def initialize_editor_from_selection(window, selection) -> None:
@@ -42,10 +42,26 @@ def initialize_editor_from_selection(window, selection) -> None:
         window.media_player.setSource(QUrl.fromLocalFile(preview_source))
         if hasattr(window, "refresh_video_dimensions"):
             window.refresh_video_dimensions(preview_source)
+        # Qt Multimedia and MPV both defer the first paint until a position
+        # change or a play request.  Prime the first frame after the source
+        # metadata is available so a newly opened project never presents a
+        # misleading black preview while the timeline already has media.
+        def _prime_first_frame():
+            player = getattr(window, "media_player", None)
+            if player is None or not os.path.isfile(preview_source):
+                return
+            try:
+                if player.is_playing() or int(player.position() or 0) > 0:
+                    return
+                player.setPosition(1)
+            except Exception:
+                # Priming is a visual enhancement; playback remains valid if
+                # a backend does not expose a seekable position yet.
+                return
+        QTimer.singleShot(180, _prime_first_frame)
     if hasattr(window, "refresh_source_video_list"):
         window.refresh_source_video_list()
     if hasattr(window, "update_project_header"):
         window.update_project_header()
     if preview_source:
         window.schedule_timeline_visual_refresh(waveform=True, thumbnails=True)
-

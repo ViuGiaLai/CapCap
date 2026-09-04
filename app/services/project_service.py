@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from typing import Any
 
 from core.models import Segment, coerce_segments
@@ -189,8 +190,7 @@ class ProjectService:
         self._ensure_project_dirs(state.project_root)
         state.touch()
         state_path = self.project_file(state.project_root)
-        with open(state_path, "w", encoding="utf-8") as handle:
-            json.dump(state.to_dict(), handle, ensure_ascii=False, indent=2)
+        self._atomic_write_json(state_path, state.to_dict())
         return state_path
 
     def save_json_artifact(
@@ -200,13 +200,48 @@ class ProjectService:
         relative_path: str,
         payload: Any,
     ) -> str:
-        output_path = os.path.join(state.project_root, relative_path)
+        project_root = os.path.abspath(state.project_root)
+        output_path = os.path.abspath(os.path.join(project_root, relative_path))
+        try:
+            inside_project = os.path.commonpath((project_root, output_path)) == project_root
+        except ValueError:
+            inside_project = False
+        if not inside_project:
+            raise ValueError("Artifact path must stay inside the project directory.")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        self._atomic_write_json(output_path, payload)
         state.set_artifact(artifact_name, output_path)
         self.save_project(state)
         return output_path
+
+    @staticmethod
+    def _atomic_write_json(path: str, payload: Any) -> None:
+        """Write JSON atomically so a crash cannot leave a half-written file."""
+        target = os.path.abspath(str(path))
+        parent = os.path.dirname(target) or os.getcwd()
+        os.makedirs(parent, exist_ok=True)
+        temporary_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".tmp",
+                prefix=".viustudio_",
+                dir=parent,
+                delete=False,
+            ) as handle:
+                temporary_path = handle.name
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, target)
+            temporary_path = ""
+        finally:
+            if temporary_path:
+                try:
+                    os.remove(temporary_path)
+                except OSError:
+                    pass
 
     def save_segment_artifact(
         self,
@@ -223,11 +258,17 @@ class ProjectService:
         )
 
     def load_json_artifact(self, state: ProjectState, artifact_name: str, default=None):
-        path = state.artifacts.get(artifact_name, "")
-        if not path or not os.path.exists(path):
+        path = str(state.artifacts.get(artifact_name, "") or "").strip()
+        if not path or not os.path.isfile(path):
             return default
-        with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (OSError, UnicodeError, ValueError, TypeError):
+            # A partially written or manually edited artifact should not make
+            # an otherwise valid project impossible to open.  Callers already
+            # have a typed default and can regenerate the artifact.
+            return default
 
     def load_segment_artifact(self, state: ProjectState, artifact_name: str) -> list[Segment]:
         payload = self.load_json_artifact(state, artifact_name, default=[])
@@ -281,11 +322,24 @@ class ProjectService:
             return {"path": "", "exists": False}
         try:
             stat = os.stat(normalized)
+            # mtime resolution is coarse on some Windows filesystems.  A
+            # model can be replaced in-place with identical size and an
+            # unchanged timestamp, which would otherwise reuse a translation
+            # cache produced by a different model.  Hash small edge samples
+            # rather than the whole (potentially multi-GB) GGUF file.
+            sample_size = 1024 * 1024
+            digest = hashlib.sha1()
+            with open(normalized, "rb") as handle:
+                digest.update(handle.read(sample_size))
+                if stat.st_size > sample_size:
+                    handle.seek(max(0, stat.st_size - sample_size))
+                    digest.update(handle.read(sample_size))
             return {
                 "path": os.path.abspath(normalized),
                 "exists": True,
                 "size": int(stat.st_size),
                 "mtime_ns": int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+                "sample_sha1": digest.hexdigest(),
             }
         except OSError:
             return {"path": os.path.abspath(normalized), "exists": False}
@@ -317,7 +371,7 @@ class ProjectService:
             # Translation behavior includes the contextual-reasoning prompt.
             # Bump this when prompt semantics change so projects do not reuse
             # older, literal translations from the cache.
-            "translation_prompt_version": 6,
+            "translation_prompt_version": 7,
             "translation_provider": provider,
             "translation_provider_model": provider_model,
             "src_lang": str(src_lang or "auto").strip().lower(),
@@ -393,16 +447,18 @@ class ProjectService:
 
     def build_ocr_transcription_signature(self, video_path: str, *, region: str = "bottom") -> str:
         """Fingerprint all inputs that affect video-subtitle OCR output."""
+        from ocr_processor import ocr_quality_signature
         return self._hash_payload(
             {
                 # OCR text filtering and temporal merging are part of the
                 # transcription result, not just a display concern.
-                "version": 5,
+                "version": 6,
                 "video": self._file_signature(video_path),
                 "region": str(region or "bottom").strip().lower(),
                 "subtitle_rect": str(os.getenv("OCR_SUBTITLE_RECT") or "").strip(),
                 "crop_ratio": str(os.getenv("OCR_CROP_RATIO") or "0.30").strip(),
                 "sampling_fps": str(os.getenv("OCR_SAMPLING_FPS") or "auto").strip().lower(),
+                "ocr_quality": ocr_quality_signature(),
             }
         )
 

@@ -68,7 +68,13 @@ def remote_api_post(path: str, payload: dict, *, timeout: int | None = None, ret
             if not data.get("ok", False):
                 raise RuntimeError(str(data.get("error") or "Remote API request failed."))
             return data
-        except (requests.ConnectionError, ConnectionError, ConnectionResetError, TimeoutError) as exc:
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            ConnectionError,
+            ConnectionResetError,
+            TimeoutError,
+        ) as exc:
             last_error = exc
             if attempt < retries - 1:
                 import time

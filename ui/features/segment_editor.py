@@ -164,7 +164,7 @@ class SegmentEditorMixin:
         segment["voice_edited"] = True
         self._voiceover_force_refresh = True
         self.current_translated_segment_models = self._dict_segments_to_models(self.current_translated_segments, translated=True)
-        self._invalidate_dubbed_output_after_subtitle_edit()
+        self._invalidate_dubbed_output_after_subtitle_edit(changed_indices={int(index)})
         self.persist_current_timeline_project_data()
         self._update_segment_spoken_status(index)
         self.refresh_ui_state()
@@ -183,7 +183,7 @@ class SegmentEditorMixin:
         self._voiceover_force_refresh = True
         self.current_translated_segment_models = self._dict_segments_to_models(self.current_translated_segments, translated=True)
         self._sync_hidden_translated_text_from_segments()
-        self._commit_subtitle_mutation(selected_index=index)
+        self._commit_subtitle_mutation(selected_index=index, changed_indices={int(index)})
         self.sync_segment_editor_rows()
 
     def _normalize_manual_highlight(self, text: str) -> str:
@@ -363,7 +363,10 @@ class SegmentEditorMixin:
         valid_indexes = [int(row.get("segment_index", idx)) for idx, row in enumerate(rows)]
         if selected in valid_indexes:
             return selected
-        active_index = self._find_active_segment_index(self.media_player.position(), self.live_preview_segments or self.get_active_segments())
+        # The editor/timeline arrays are canonical.  ``live_preview_segments``
+        # is a debounced preview snapshot and can briefly contain the
+        # previous subtitle set after an import or edit.
+        active_index = self._find_active_segment_index(self.media_player.position(), self.get_active_segments() or self.live_preview_segments)
         if active_index in valid_indexes:
             return active_index
         return valid_indexes[0]
@@ -853,7 +856,9 @@ class SegmentEditorMixin:
             self._switch_inspector("default")
             if hasattr(self, "default_inspector_summary_label"):
                 self.default_inspector_summary_label.setText(
-                    "Video Filter Inspector requires the gpu-next preview backend."
+                    "Video filters are unavailable in the current preview mode. "
+                    "Switch to GPU preview in Settings to edit them; the source "
+                    "video, captions, and export workflow are still available."
                 )
             return
         self._switch_inspector("video")
@@ -1605,7 +1610,7 @@ class SegmentEditorMixin:
         if self._preview_is_playing():
             return
 
-        video_path = self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else ""
+        video_path = self.resolve_canonical_video_path() if hasattr(self, "resolve_canonical_video_path") else (self.video_path_edit.text().strip() if hasattr(self, "video_path_edit") else "")
         if layer_type != "subtitle" and (not video_path or not os.path.exists(video_path)):
             QMessageBox.information(
                 self,

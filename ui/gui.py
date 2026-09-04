@@ -44,7 +44,7 @@ def _acquire_single_instance() -> bool:
         # A mutex failure should never prevent the application from starting.
         return True
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 # Keep the worker entrypoint before the GUI import.  In a windowed PyInstaller

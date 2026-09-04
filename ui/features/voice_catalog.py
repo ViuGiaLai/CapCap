@@ -529,7 +529,7 @@ class VoiceCatalogMixin:
         url_edit = getattr(self, "translation_base_url_edit", None)
         link_label = getattr(self, "translation_link_label", None)
         key_label = getattr(self, "translation_key_label", None)
-        test_btn = getattr(self, "translation_test_btn", None)
+        getattr(self, "translation_test_btn", None)
         status_lbl = getattr(self, "translation_test_status", None)
 
         show_config = provider not in ("google", "llama_app")
@@ -573,6 +573,8 @@ class VoiceCatalogMixin:
                 "url_env": "GOOGLE_AI_STUDIO_BASE_URL",
                 "default_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
                 "default_model": "gemini-2.5-flash",
+                "polish_env": "GOOGLE_AI_STUDIO_POLISH_MODEL",
+                "default_polish_model": "gemini-2.5-pro",
                 "link": "Get a free API key: <a href='https://aistudio.google.com/apikey'>Google AI Studio</a>",
             },
             "deepseek": {
@@ -580,6 +582,8 @@ class VoiceCatalogMixin:
                 "url_env": "DEEPSEEK_BASE_URL",
                 "default_url": "https://api.deepseek.com/v1",
                 "default_model": "deepseek-chat",
+                "polish_env": "DEEPSEEK_POLISH_MODEL",
+                "default_polish_model": "",
                 "link": "Get an API key: <a href='https://platform.deepseek.com/api_keys'>DeepSeek Platform</a>",
             },
             "openai": {
@@ -587,6 +591,8 @@ class VoiceCatalogMixin:
                 "url_env": "OPENAI_BASE_URL",
                 "default_url": "https://api.openai.com/v1/",
                 "default_model": "gpt-4o-mini",
+                "polish_env": "OPENAI_POLISH_MODEL",
+                "default_polish_model": "",
                 "link": "Get an API key: <a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>",
             },
             "ollama": {
@@ -594,6 +600,8 @@ class VoiceCatalogMixin:
                 "url_env": "OLLAMA_BASE_URL",
                 "default_url": "http://localhost:11434/v1",
                 "default_model": "qwen2.5:7b",
+                "polish_env": "OLLAMA_POLISH_MODEL",
+                "default_polish_model": "",
                 "link": "Install Ollama: <a href='https://ollama.com/download'>ollama.com/download</a>. Suggested models: <b>qwen2.5:7b</b> or <b>llama3.1:8b</b>",
             },
             "custom": {
@@ -601,6 +609,8 @@ class VoiceCatalogMixin:
                 "url_env": "CUSTOM_AI_BASE_URL",
                 "default_url": "https://api.openai.com/v1/",
                 "default_model": "gpt-4o-mini",
+                "polish_env": "CUSTOM_AI_POLISH_MODEL",
+                "default_polish_model": "",
                 "link": "Enter the URL of any OpenAI-compatible API.",
             },
         }
@@ -618,12 +628,20 @@ class VoiceCatalogMixin:
                 key_edit.clear()
         if model_edit:
             model_edit.setText(os.getenv(p["model_env"], "") or p["default_model"])
+        polish_env = p.get("polish_env") or ""
+        polish_label = getattr(self, "translation_polish_model_label", None)
+        polish_edit = getattr(self, "translation_polish_model_edit", None)
+        if polish_label:
+            polish_label.setVisible(bool(polish_env))
+        if polish_edit:
+            polish_edit.setVisible(bool(polish_env))
+            polish_edit.setText(os.getenv(polish_env, "") or p.get("default_polish_model") or "")
         if url_edit:
             url_edit.setText(os.getenv(p["url_env"], "") or p["default_url"])
         if link_label:
             link_label.setText(p["link"])
 
-    def _save_translation_engine_env(self, provider: str, api_key: str, model: str, base_url: str):
+    def _save_translation_engine_env(self, provider: str, api_key: str, model: str, base_url: str, polish_model: str = ""):
         """Persist the exact provider configuration used by the next worker."""
         env_path = os.path.join(workspace_root(), ".env")
         env_lines = []
@@ -636,18 +654,21 @@ class VoiceCatalogMixin:
         updates = {"OPENAI_PROVIDER": provider, "AI_POLISHER_PROVIDER": provider}
         provider_env = {
             "google_ai_studio": (
-                "GOOGLE_AI_STUDIO_API_KEY", "GOOGLE_AI_STUDIO_MODEL", "GOOGLE_AI_STUDIO_BASE_URL"
+                "GOOGLE_AI_STUDIO_API_KEY", "GOOGLE_AI_STUDIO_MODEL", "GOOGLE_AI_STUDIO_BASE_URL",
+                "GOOGLE_AI_STUDIO_POLISH_MODEL",
             ),
-            "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL"),
-            "openai": ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"),
-            "ollama": ("", "OLLAMA_MODEL", "OLLAMA_BASE_URL"),
-            "custom": ("CUSTOM_AI_API_KEY", "CUSTOM_AI_MODEL", "CUSTOM_AI_BASE_URL"),
+            "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "DEEPSEEK_POLISH_MODEL"),
+            "openai": ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL", "OPENAI_POLISH_MODEL"),
+            "ollama": ("", "OLLAMA_MODEL", "OLLAMA_BASE_URL", "OLLAMA_POLISH_MODEL"),
+            "custom": ("CUSTOM_AI_API_KEY", "CUSTOM_AI_MODEL", "CUSTOM_AI_BASE_URL", "CUSTOM_AI_POLISH_MODEL"),
         }
-        key_env, model_env, url_env = provider_env.get(provider, ("", "", ""))
+        key_env, model_env, url_env, polish_env = provider_env.get(provider, ("", "", "", ""))
         if key_env and str(api_key or "").strip():
             updates[key_env] = str(api_key).strip()
         if model_env and str(model or "").strip():
             updates[model_env] = str(model).strip()
+        if polish_env and str(polish_model or "").strip():
+            updates[polish_env] = str(polish_model).strip()
         if url_env and str(base_url or "").strip():
             updates[url_env] = str(base_url).strip()
         new_lines = []
@@ -715,12 +736,36 @@ class VoiceCatalogMixin:
         except OSError:
             pass
 
+    def on_translation_credentials_edited(self):
+        """Persist credentials as soon as an API field is edited.
+
+        Previously a key/model change only reached the worker after a
+        successful Test Connection or Generate, so an updated key could
+        silently keep using the old .env value.
+        """
+        engine_combo = getattr(self, "translation_engine_combo", None)
+        if engine_combo is None:
+            return
+        provider = str(engine_combo.currentData() or "google").strip()
+        if provider in ("google", "llama_app"):
+            return
+        key_edit = getattr(self, "translation_api_key_edit", None)
+        model_edit = getattr(self, "translation_model_edit", None)
+        polish_edit = getattr(self, "translation_polish_model_edit", None)
+        url_edit = getattr(self, "translation_base_url_edit", None)
+        api_key = str(key_edit.text() if key_edit is not None else "").strip()
+        model = str(model_edit.text() if model_edit is not None else "").strip()
+        polish_model = str(polish_edit.text() if polish_edit is not None else "").strip()
+        base_url = str(url_edit.text() if url_edit is not None else "").strip()
+        self._save_translation_engine_env(provider, api_key, model, base_url, polish_model)
+
     def on_translation_engine_test_connection(self):
         """Test the AI translation connection from the sidebar."""
         status_lbl = getattr(self, "translation_test_status", None)
         engine_combo = getattr(self, "translation_engine_combo", None)
         key_edit = getattr(self, "translation_api_key_edit", None)
         model_edit = getattr(self, "translation_model_edit", None)
+        polish_edit = getattr(self, "translation_polish_model_edit", None)
         url_edit = getattr(self, "translation_base_url_edit", None)
         if not engine_combo:
             return
@@ -732,6 +777,7 @@ class VoiceCatalogMixin:
         url = (url_edit.text().strip() if url_edit else "") or "https://api.openai.com/v1/"
         key = (key_edit.text().strip() if key_edit else "") or ("ollama" if provider == "ollama" else "")
         model = (model_edit.text().strip() if model_edit else "") or "gpt-4o-mini"
+        polish_model = (polish_edit.text().strip() if polish_edit else "") or ""
         if status_lbl:
             status_lbl.setText("Testing connection...")
             status_lbl.repaint()
@@ -756,18 +802,20 @@ class VoiceCatalogMixin:
             except Exception:
                 pass
             PRESETS = {
-                "google_ai_studio": ("GOOGLE_AI_STUDIO_API_KEY", "GOOGLE_AI_STUDIO_MODEL", "GOOGLE_AI_STUDIO_BASE_URL"),
-                "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL"),
-                "openai": ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"),
-                "ollama": ("", "OLLAMA_MODEL", "OLLAMA_BASE_URL"),
-                "custom": ("CUSTOM_AI_API_KEY", "CUSTOM_AI_MODEL", "CUSTOM_AI_BASE_URL"),
+                "google_ai_studio": ("GOOGLE_AI_STUDIO_API_KEY", "GOOGLE_AI_STUDIO_MODEL", "GOOGLE_AI_STUDIO_BASE_URL", "GOOGLE_AI_STUDIO_POLISH_MODEL"),
+                "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "DEEPSEEK_POLISH_MODEL"),
+                "openai": ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL", "OPENAI_POLISH_MODEL"),
+                "ollama": ("", "OLLAMA_MODEL", "OLLAMA_BASE_URL", "OLLAMA_POLISH_MODEL"),
+                "custom": ("CUSTOM_AI_API_KEY", "CUSTOM_AI_MODEL", "CUSTOM_AI_BASE_URL", "CUSTOM_AI_POLISH_MODEL"),
             }
-            k_env, m_env, u_env = PRESETS.get(provider, ("", "", ""))
+            k_env, m_env, u_env, p_env = PRESETS.get(provider, ("", "", "", ""))
             updates = {"OPENAI_PROVIDER": provider, "AI_POLISHER_PROVIDER": provider}
             if k_env and key:
                 updates[k_env] = key
             if m_env and model:
                 updates[m_env] = model
+            if p_env and polish_model:
+                updates[p_env] = polish_model
             if u_env and url:
                 updates[u_env] = url
             new_lines = []
@@ -882,6 +930,8 @@ class VoiceCatalogMixin:
         if not getattr(self, "_llama_buttons_connected", False):
             scan_btn = getattr(self, "llama_scan_btn", None)
             test_btn = getattr(self, "llama_test_btn", None)
+            engine_dl_btn = getattr(self, "llama_engine_download_btn", None)
+            engine_scan_btn = getattr(self, "llama_engine_scan_btn", None)
             if scan_btn:
                 scan_btn.clicked.connect(self._on_llama_scan_clicked)
             if dl_btn:
@@ -894,11 +944,30 @@ class VoiceCatalogMixin:
                     )
             if test_btn:
                 test_btn.clicked.connect(self._on_llama_test_clicked)
+            if engine_dl_btn:
+                engine_dl_btn.clicked.connect(self._on_llama_engine_download_clicked)
+            if engine_scan_btn:
+                engine_scan_btn.clicked.connect(self._on_llama_engine_scan_clicked)
             
             if combo:
                 combo.currentIndexChanged.connect(self._on_llama_model_selected)
                 
             self._llama_buttons_connected = True
+
+        # Restore a previously scan-selected engine folder, then only show the
+        # engine download/scan buttons while llama-server.exe is still missing.
+        if not os.getenv("LLAMA_APP_ENGINE_DIR", "").strip():
+            env_engine_dir = self._llama_engine_dir_from_env_file()
+            if env_engine_dir and os.path.isfile(os.path.join(env_engine_dir, "llama-server.exe")):
+                os.environ["LLAMA_APP_ENGINE_DIR"] = env_engine_dir
+        engine_path = str(getattr(manager, "exe_path", "") or "").strip()
+        engine_missing = bool(engine_path) and not os.path.isfile(engine_path)
+        engine_dl_btn = getattr(self, "llama_engine_download_btn", None)
+        if engine_dl_btn:
+            engine_dl_btn.setVisible(engine_missing)
+        engine_scan_btn = getattr(self, "llama_engine_scan_btn", None)
+        if engine_scan_btn:
+            engine_scan_btn.setVisible(engine_missing)
 
     def _on_llama_model_selected(self, index: int):
         combo = getattr(self, "llama_model_combo", None)
@@ -913,11 +982,13 @@ class VoiceCatalogMixin:
         provider = str(combo.currentData() if combo is not None else "google").strip() or "google"
         key_edit = getattr(self, "translation_api_key_edit", None)
         model_edit = getattr(self, "translation_model_edit", None)
+        polish_model_edit = getattr(self, "translation_polish_model_edit", None)
         url_edit = getattr(self, "translation_base_url_edit", None)
         api_key = str(key_edit.text() if key_edit is not None else "").strip()
         model = str(model_edit.text() if model_edit is not None else "").strip()
+        polish_model = str(polish_model_edit.text() if polish_model_edit is not None else "").strip()
         base_url = str(url_edit.text() if url_edit is not None else "").strip()
-        self._save_translation_engine_env(provider, api_key, model, base_url)
+        self._save_translation_engine_env(provider, api_key, model, base_url, polish_model)
 
         state = getattr(self, "current_project_state", None)
         project_service = getattr(self, "project_service", None)
@@ -954,9 +1025,19 @@ class VoiceCatalogMixin:
         if not model_path or not os.path.isfile(model_path):
             return False, "The selected llama.cpp GGUF model file no longer exists. Select a valid local model."
         from app.services.llama_local_manager import LlamaServerManager
+        # Re-apply a scan-selected engine folder so a llama-server.exe chosen
+        # from anywhere on disk is honoured by worker processes too.
+        engine_dir = str(os.getenv("LLAMA_APP_ENGINE_DIR", "") or "").strip()
+        if not engine_dir:
+            engine_dir = self._llama_engine_dir_from_env_file()
+        if engine_dir and os.path.isfile(os.path.join(engine_dir, "llama-server.exe")):
+            self._save_llama_engine_selection(os.path.join(engine_dir, "llama-server.exe"))
         manager = LlamaServerManager.get_instance()
         if not os.path.isfile(manager.exe_path):
-            return False, f"llama-server.exe was not found: {manager.exe_path}"
+            return False, (
+                f"llama-server.exe was not found: {manager.exe_path}. "
+                "Use the 'Download llama.cpp Engine' button in the Llama.cpp panel to install it."
+            )
         self._save_llama_model_selection(model_path)
         try:
             self.log(
@@ -1081,3 +1162,117 @@ class VoiceCatalogMixin:
         except Exception as exc:
             if lbl:
                 lbl.setText(f"Error: {str(exc)[:100]}")
+
+    def _on_llama_engine_download_clicked(self):
+        """Open the official llama.cpp releases page to install llama-server.exe."""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        from app.services.llama_local_manager import LlamaServerManager
+        manager = LlamaServerManager.get_instance()
+        QDesktopServices.openUrl(QUrl("https://github.com/ggml-org/llama.cpp/releases"))
+        lbl = getattr(self, "llama_status_label", None)
+        if lbl:
+            lbl.setText(
+                "Download the win-cpu-x64 build (llama-b*-bin-win-cpu-x64.zip), then extract "
+                f"llama-server.exe and its DLLs into: {manager.bin_dir}. "
+                "Alternatively use 'Scan for llama-server.exe' to pick it from anywhere."
+            )
+
+    @staticmethod
+    def _llama_engine_dir_from_env_file() -> str:
+        """Read a scan-selected llama.cpp engine folder from the .env file."""
+        env_path = os.path.join(workspace_root(), ".env")
+        try:
+            with open(env_path, "r", encoding="utf-8") as handle:
+                matches = [
+                    line.split("=", 1)[1].strip()
+                    for line in handle
+                    if line.startswith("LLAMA_APP_ENGINE_DIR=") and "=" in line
+                ]
+            return matches[-1] if matches else ""
+        except OSError:
+            return ""
+
+    def _save_llama_engine_selection(self, engine_exe_path: str) -> None:
+        """Remember an engine folder chosen via scan so the manager uses it."""
+        engine_dir = os.path.dirname(os.path.abspath(str(engine_exe_path or "").strip()))
+        if not os.path.isfile(os.path.join(engine_dir, "llama-server.exe")):
+            return
+        os.environ["LLAMA_APP_ENGINE_DIR"] = engine_dir
+        env_path = os.path.join(workspace_root(), ".env")
+        lines = []
+        try:
+            if os.path.isfile(env_path):
+                with open(env_path, "r", encoding="utf-8") as handle:
+                    lines = handle.readlines()
+        except OSError:
+            lines = []
+        replacement = f"LLAMA_APP_ENGINE_DIR={engine_dir}\n"
+        updated = []
+        found = False
+        for line in lines:
+            if re.match(r"^LLAMA_APP_ENGINE_DIR=", line):
+                if not found:
+                    updated.append(replacement)
+                    found = True
+            else:
+                updated.append(line)
+        if not found:
+            updated.append(replacement)
+        try:
+            with open(env_path, "w", encoding="utf-8") as handle:
+                handle.writelines(updated)
+        except OSError:
+            pass
+
+    def _on_llama_engine_scan_clicked(self):
+        """Scan for llama-server.exe by exact name, then let the user pick one."""
+        from app.services.llama_local_manager import fast_scan_llama_server
+        lbl = getattr(self, "llama_status_label", None)
+        if lbl:
+            lbl.setText("Scanning for llama-server.exe. Please wait a few seconds...")
+            lbl.repaint()
+
+        results = fast_scan_llama_server()
+        if not results:
+            if lbl:
+                lbl.setText(
+                    "No llama-server.exe found. Use 'Download llama.cpp Engine', "
+                    "extract the zip, then scan again."
+                )
+            return
+
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QListWidget, QListWidgetItem,
+            QPushButton, QHBoxLayout, QLabel, QWidget,
+        )
+        from PySide6.QtCore import Qt
+        parent_widget = self if isinstance(self, QWidget) else None
+        dlg = QDialog(parent_widget)
+        dlg.setWindowTitle("Select llama-server.exe")
+        dlg.resize(680, 420)
+        ly = QVBoxLayout(dlg)
+        ly.addWidget(QLabel(f"Found {len(results)} llama-server.exe files. Pick the one from your downloaded llama.cpp build:"))
+        lst = QListWidget()
+        for result in results:
+            item = QListWidgetItem(str(result.get("path", "") or ""))
+            item.setData(Qt.UserRole, result.get("path", "") or "")
+            lst.addItem(item)
+        ly.addWidget(lst)
+
+        btn_layout = QHBoxLayout()
+        use_btn = QPushButton("Use Selected Engine")
+        def on_use():
+            if lst.currentItem():
+                path = lst.currentItem().data(Qt.UserRole)
+                self._save_llama_engine_selection(path)
+                self._refresh_llama_models_list()
+                if lbl:
+                    lbl.setText(f"llama.cpp engine ready: {os.path.dirname(path)}")
+                dlg.accept()
+        use_btn.clicked.connect(on_use)
+        btn_layout.addStretch()
+        btn_layout.addWidget(use_btn)
+        ly.addLayout(btn_layout)
+
+        dlg.exec()

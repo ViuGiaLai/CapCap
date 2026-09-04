@@ -2,7 +2,19 @@ import os
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .advanced_tabs import build_advanced_group
 from .preview_panel import build_preview_panel
@@ -34,7 +46,15 @@ def build_main_window_ui(gui):
     gui.root_layout = root_layout
 
     scroll_area = _build_left_panel(gui)
-    root_layout.addWidget(_build_header_bar(gui))
+
+    # New cockpit shell: workflow navigation is persistent on the rail and
+    # the command header/media workspace share one visual column. The legacy
+    # stacked pages remain the state source so controllers and shortcuts are
+    # unchanged.
+    workspace_layout = QVBoxLayout()
+    workspace_layout.setContentsMargins(0, 0, 0, 0)
+    workspace_layout.setSpacing(12)
+    workspace_layout.addWidget(_build_header_bar(gui))
 
     content_layout = QHBoxLayout()
     content_layout.setSpacing(10)
@@ -44,11 +64,19 @@ def build_main_window_ui(gui):
     content_layout.addWidget(scroll_area)
     content_layout.addWidget(right_panel, 1)
     gui.right_panel = right_panel
-    root_layout.addLayout(content_layout, 1)
+    workspace_layout.addLayout(content_layout, 1)
+
+    body_layout = QHBoxLayout()
+    body_layout.setContentsMargins(0, 0, 0, 0)
+    body_layout.setSpacing(14)
+    body_layout.addWidget(_build_navigation_rail(gui))
+    body_layout.addLayout(workspace_layout, 1)
+    root_layout.addLayout(body_layout, 1)
 
     _connect_ui_signals(gui)
     if hasattr(gui, "left_panel_stack"):
         gui.left_panel_stack.currentChanged.connect(gui.sync_runtime_log_view)
+        gui.left_panel_stack.currentChanged.connect(lambda index: _sync_navigation_selection(gui, index))
     _initialize_ui_state(gui)
     QTimer.singleShot(0, gui.sync_left_panel_container_width)
     QTimer.singleShot(0, gui.sync_runtime_log_view)
@@ -58,9 +86,122 @@ def build_main_window_ui(gui):
     gui.prepare_responsive_layout()
 
 
+def _build_navigation_rail(gui):
+    """Build the persistent workflow rail for the redesigned editor shell.
+
+    Buttons proxy the existing ``left_panel_stack`` rather than introducing a
+    second navigation state machine. This preserves page locks, shortcuts and
+    controller behaviour while making the production flow explicit.
+    """
+    rail = QFrame()
+    rail.setObjectName("navigationRail")
+    rail.setFixedWidth(92)
+    rail.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+    layout = QVBoxLayout(rail)
+    layout.setContentsMargins(8, 14, 8, 12)
+    layout.setSpacing(8)
+
+    mark = QLabel("V")
+    mark.setObjectName("navigationMark")
+    mark.setAlignment(Qt.AlignCenter)
+    mark.setFixedSize(42, 42)
+    layout.addWidget(mark, 0, Qt.AlignHCenter)
+
+    brand = QLabel("VIU\nSTUDIO")
+    brand.setObjectName("navigationBrand")
+    brand.setAlignment(Qt.AlignCenter)
+    layout.addWidget(brand)
+
+    divider = QFrame()
+    divider.setObjectName("navigationDivider")
+    divider.setFrameShape(QFrame.HLine)
+    divider.setFixedHeight(1)
+    layout.addWidget(divider)
+
+    nav_group = QButtonGroup(rail)
+    nav_group.setExclusive(True)
+    navigation = (
+        ("01", "Source", 0),
+        ("02", "Audio", 1),
+        ("03", "Captions", 2),
+        ("04", "Voice", 3),
+        ("05", "Style", 4),
+        ("06", "Advanced", 5),
+    )
+    gui.navigation_buttons = {}
+    for number, label, page_index in navigation:
+        button = QToolButton(rail)
+        button.setObjectName("navigationButton")
+        button.setText(f"{number}\n{label}")
+        button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        button.setCheckable(True)
+        button.setAutoRaise(True)
+        button.setCursor(Qt.PointingHandCursor)
+        button.setMinimumHeight(52)
+        button.setToolTip(f"Open {label} controls")
+        nav_group.addButton(button)
+        layout.addWidget(button)
+        key = label.lower()
+        gui.navigation_buttons[key] = button
+
+        def _select_page(_checked=False, index=page_index, key=key):
+            stack = getattr(gui, "left_panel_stack", None)
+            if stack is not None:
+                stack.setCurrentIndex(index)
+            legacy = getattr(gui, "workflow_tab_buttons", {}).get(key)
+            if legacy is not None and not legacy.isChecked():
+                legacy.setChecked(True)
+
+        button.clicked.connect(_select_page)
+
+    layout.addStretch(1)
+    progress_button = QToolButton(rail)
+    progress_button.setObjectName("navigationUtilityButton")
+    progress_button.setText("◎\nProgress")
+    progress_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+    progress_button.setAutoRaise(True)
+    progress_button.setCursor(Qt.PointingHandCursor)
+    progress_button.setToolTip("Show active pipeline progress")
+    progress_button.clicked.connect(gui.show_active_progress_dialog)
+    layout.addWidget(progress_button)
+
+    project_button = QToolButton(rail)
+    project_button.setObjectName("navigationUtilityButton")
+    project_button.setText("⌂\nProjects")
+    project_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+    project_button.setAutoRaise(True)
+    project_button.setCursor(Qt.PointingHandCursor)
+    project_button.setToolTip("Return to Projects")
+    project_button.clicked.connect(lambda: getattr(gui, "header_home_btn", None).click())
+    layout.addWidget(project_button)
+
+    settings_button = QToolButton(rail)
+    settings_button.setObjectName("navigationUtilityButton")
+    settings_button.setText("⚙\nSettings")
+    settings_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+    settings_button.setAutoRaise(True)
+    settings_button.setCursor(Qt.PointingHandCursor)
+    settings_button.setToolTip("Open application settings")
+    settings_button.clicked.connect(gui.open_model_settings_dialog)
+    layout.addWidget(settings_button)
+
+    gui.navigation_group = nav_group
+    gui.navigation_buttons["source"].setChecked(True)
+    return rail
+
+
+def _sync_navigation_selection(gui, index: int):
+    """Reflect stack changes made by legacy workflow code on the rail."""
+    order = ("source", "audio", "captions", "voice", "style", "advanced")
+    for position, key in enumerate(order):
+        button = getattr(gui, "navigation_buttons", {}).get(key)
+        if button is not None:
+            button.setChecked(position == int(index))
+
+
 def _build_header_bar(gui):
     header = _TitleBar()
-    header.setObjectName("statusCard")
+    header.setObjectName("commandHeader")
     layout = QHBoxLayout(header)
     layout.setContentsMargins(14, 8, 14, 8)
     layout.setSpacing(10)
@@ -83,8 +224,12 @@ def _build_header_bar(gui):
     layout.addWidget(brand_label)
     gui.header_brand_label = brand_label
 
+    gui.header_context_label = QLabel("EDITOR / WORKSPACE")
+    gui.header_context_label.setObjectName("commandContext")
+    layout.addWidget(gui.header_context_label)
+
     gui.project_title_label = QLabel("Project: No video selected")
-    gui.project_title_label.setObjectName("statusHeadline")
+    gui.project_title_label.setObjectName("commandProject")
     layout.addWidget(gui.project_title_label, 1)
 
     gui.run_all_btn.setFixedSize(132, 40)
@@ -343,6 +488,18 @@ def _connect_ui_signals(gui):
         gui.translation_engine_combo.currentIndexChanged.connect(gui.on_translation_engine_changed)
     if hasattr(gui, "translation_test_btn"):
         gui.translation_test_btn.clicked.connect(gui.on_translation_engine_test_connection)
+    # Write the visible API credentials through as soon as the user finishes
+    # editing a field, so a pasted/new key applies immediately instead of only
+    # after a successful Test Connection or Generate.
+    for _edit_name in (
+        "translation_api_key_edit",
+        "translation_model_edit",
+        "translation_polish_model_edit",
+        "translation_base_url_edit",
+    ):
+        _edit = getattr(gui, _edit_name, None)
+        if _edit is not None:
+            _edit.editingFinished.connect(gui.on_translation_credentials_edited)
     gui.blur_area_btn.toggled.connect(gui.toggle_blur_effect_enabled)
     # The visible Blur button creates a timeline-backed B1 layer.  Keeping
     # creation in one path ensures multiple Blur layers receive independent

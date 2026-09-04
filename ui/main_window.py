@@ -33,6 +33,160 @@ from utils.bootstrap_media_backend import BootstrapMediaBackend
 from runtime_paths import asset_path, workspace_root
 from runtime_profile import is_remote_profile
 
+
+_REIMAGINED_THEME = """
+/* VIUStudio Studio 2 shell: ink canvas + plum rail + amber action language. */
+QMainWindow, QWidget#centralWidget { background: #111217; }
+QFrame#navigationRail {
+    background: #1d1824;
+    border: 1px solid #3a2d45;
+    border-radius: 18px;
+}
+QLabel#navigationMark {
+    background: #f0b35c;
+    color: #211a12;
+    border-radius: 13px;
+    font-size: 22px;
+    font-weight: 900;
+}
+QLabel#navigationBrand {
+    color: #f2e9dc;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+QFrame#navigationDivider { background: #493653; border: none; }
+QToolButton#navigationButton, QToolButton#navigationUtilityButton {
+    background: transparent;
+    color: #a99ab5;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 7px 2px;
+    font-size: 10px;
+    font-weight: 800;
+}
+QToolButton#navigationButton:hover, QToolButton#navigationUtilityButton:hover {
+    background: #30263b;
+    color: #fff4e6;
+    border-color: #594361;
+}
+QToolButton#navigationButton:checked {
+    background: #f0b35c;
+    color: #271c13;
+    border-color: #ffd18b;
+}
+QToolButton#navigationUtilityButton { color: #c2b5ca; }
+QFrame#commandHeader {
+    background: #1b1720;
+    border: 1px solid #3a2d45;
+    border-radius: 16px;
+}
+QLabel#commandContext {
+    color: #a99ab5;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+QLabel#commandProject {
+    color: #fff4e6;
+    font-size: 15px;
+    font-weight: 800;
+}
+QPushButton#headerActionBtn {
+    background: #2b2234;
+    border: 1px solid #60496d;
+    border-radius: 11px;
+    color: #f3dfc4;
+    font-size: 11px;
+    font-weight: 800;
+}
+QPushButton#headerActionBtn[accent="true"] {
+    background: #f0b35c;
+    color: #281b11;
+    border-color: #ffd18b;
+}
+QPushButton#headerActionBtn:hover, QPushButton#headerActionBtn[accent="true"]:hover {
+    background: #ffd18b;
+    color: #281b11;
+}
+QScrollArea#leftPanelArea {
+    background: #15131a;
+    border: 1px solid #302638;
+    border-radius: 16px;
+}
+QWidget#leftPanelContainer { background: #15131a; }
+QWidget#rightPanel {
+    background: #111217;
+    border: 1px solid #302638;
+    border-radius: 16px;
+}
+QFrame#previewTransportBar {
+    background: #1b1720;
+    border: 1px solid #493653;
+    border-radius: 12px;
+}
+QLabel#inspectorStatusPill {
+    background: #243a33;
+    border: 1px solid #4e8f78;
+    border-radius: 8px;
+    color: #91f0c7;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+}
+QLabel#previewTransportBar QLabel {
+    color: #b6a8c1;
+    font-size: 10px;
+    font-weight: 800;
+}
+QPushButton#previewTransportIconBtn {
+    background: #2a2233;
+    border: 1px solid #5b4568;
+    border-radius: 8px;
+    padding: 0;
+}
+QPushButton#previewTransportIconBtn:hover {
+    background: #3b2d49;
+    border-color: #f0b35c;
+}
+QPushButton#previewTransportIconBtn:pressed {
+    background: #f0b35c;
+    border-color: #ffd18b;
+}
+QComboBox#previewSpeedCombo {
+    min-width: 66px;
+    max-width: 66px;
+    min-height: 26px;
+}
+QLabel#previewTimeLabel {
+    background: #281f30;
+    border: 1px solid #594361;
+    border-radius: 8px;
+    color: #f0b35c;
+    font-weight: 900;
+    padding: 4px 8px;
+}
+QLabel#previewSectionTitle {
+    color: #fff4e6;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 1.4px;
+}
+QLabel#previewStatePill {
+    background: #202b3a;
+    border: 1px solid #3c5b77;
+    border-radius: 8px;
+    color: #9fc8eb;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: .8px;
+    padding: 3px 8px;
+}
+QPushButton#workflowTabBtn { min-height: 36px; }
+QToolTip { background: #2a2031; color: #fff4e6; border: 1px solid #60496d; }
+"""
+
 def _default_asr_engine() -> str:
     return "sensevoice"
 
@@ -897,12 +1051,22 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, MultiVideoTimelineMixin, AutoRe
         self._deferred_startup_stage2_done = False
 
         self.setup_ui()
+        self._apply_reimagined_theme()
         self._configure_local_voice_mode_ui()
         self._timeline_visual_refresh_timer = QTimer(self)
         self._timeline_visual_refresh_timer.setSingleShot(True)
         self._timeline_visual_refresh_timer.timeout.connect(self._run_pending_timeline_visual_refresh)
         QTimer.singleShot(0, self._run_deferred_startup_stage1)
         QTimer.singleShot(600, self._run_deferred_startup_stage2)
+
+    def _apply_reimagined_theme(self):
+        """Append the Studio 2 theme after widgets exist.
+
+        The original stylesheet remains as a compatibility base for legacy
+        custom widgets; these selectors define the new shell and override the
+        shared chrome without changing the rendering/processing code.
+        """
+        self.setStyleSheet(self.styleSheet() + "\n" + _REIMAGINED_THEME)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -548,6 +548,7 @@ After completing the translation, return the XLSX file with the same structure. 
             raise SubtitleExchangeError("The subtitle columns were renamed, removed, or reordered.")
 
         imported: dict[int, str] = {}
+        expected_row_cue = 1
         for row in range(2, sheet.max_row + 1):
             values = [sheet.cell(row, column).value for column in range(1, 6)]
             if all(value in (None, "") for value in values):
@@ -556,6 +557,11 @@ After completing the translation, return the XLSX file with the same structure. 
                 cue_number = int(values[0])
             except (TypeError, ValueError) as exc:
                 raise SubtitleExchangeError(f"Row {row}: invalid cue number.") from exc
+            if cue_number != expected_row_cue:
+                raise SubtitleExchangeError(
+                    f"Row {row}: cue order changed; expected cue #{expected_row_cue}, "
+                    f"found #{cue_number}. Import was cancelled."
+                )
             if cue_number in imported:
                 raise SubtitleExchangeError(f"Row {row}: duplicate cue #{cue_number}.")
             if cue_number < 1 or cue_number > len(segments):
@@ -582,6 +588,7 @@ After completing the translation, return the XLSX file with the same structure. 
             if not translated:
                 raise SubtitleExchangeError(f"Cue #{cue_number}: Translated text is empty.")
             imported[cue_number] = translated
+            expected_row_cue += 1
 
         missing = [str(number) for number in range(1, len(segments) + 1) if number not in imported]
         if missing:
@@ -662,6 +669,7 @@ After completing the translation, return the XLSX file with the same structure. 
         if headers != self.SUBTITLE_HEADERS:
             raise SubtitleExchangeError("The subtitle columns were renamed, removed, or reordered.")
         imported: dict[int, str] = {}
+        expected_row_cue = 1
         for row_number in sorted(number for number in rows if number >= 2):
             row = rows[row_number]
             values = [row.get(column, ("", False))[0] for column in range(1, 6)]
@@ -671,6 +679,11 @@ After completing the translation, return the XLSX file with the same structure. 
                 cue_number = int(float(values[0]))
             except (TypeError, ValueError) as exc:
                 raise SubtitleExchangeError(f"Row {row_number}: invalid cue number.") from exc
+            if cue_number != expected_row_cue:
+                raise SubtitleExchangeError(
+                    f"Row {row_number}: cue order changed; expected cue #{expected_row_cue}, "
+                    f"found #{cue_number}. Import was cancelled."
+                )
             if cue_number in imported:
                 raise SubtitleExchangeError(f"Row {row_number}: duplicate cue #{cue_number}.")
             if cue_number < 1 or cue_number > len(segments):
@@ -692,6 +705,7 @@ After completing the translation, return the XLSX file with the same structure. 
             if not translated:
                 raise SubtitleExchangeError(f"Cue #{cue_number}: Translated text is empty.")
             imported[cue_number] = translated
+            expected_row_cue += 1
         missing = [str(number) for number in range(1, len(segments) + 1) if number not in imported]
         if missing:
             preview = ", ".join(missing[:8]) + ("…" if len(missing) > 8 else "")
