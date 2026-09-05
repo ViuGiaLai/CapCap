@@ -45,7 +45,7 @@ QMainWindow, QWidget#centralWidget {
 QFrame#navigationRail {
     background: #0d121c;
     border: 1px solid #1a2333;
-    border-radius: 16px;
+    border-radius: 14px;
 }
 QLabel#navigationMark {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6366f1, stop:1 #4f46e5);
@@ -65,32 +65,43 @@ QFrame#navigationDivider {
     border: none;
     height: 1px;
 }
-QToolButton#navigationButton, QToolButton#navigationUtilityButton {
-    background: transparent;
+QToolButton#navigationButton {
+    background: #101622;
     color: #94a3b8;
-    border: 1px solid transparent;
-    border-radius: 10px;
-    padding: 7px 3px;
+    border: 1px solid #1a2436;
+    border-radius: 9px;
+    padding: 5px 2px;
     font-size: 10px;
     font-weight: 700;
 }
-QToolButton#navigationButton:hover, QToolButton#navigationUtilityButton:hover {
-    background: #151d2b;
+QToolButton#navigationButton:hover {
+    background: #182236;
     color: #f8fafc;
-    border-color: #24334a;
+    border-color: #3b82f6;
 }
 QToolButton#navigationButton:checked {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6366f1, stop:1 #4f46e5);
     color: #ffffff;
     border: 1px solid #818cf8;
 }
+QToolButton#navigationButton:disabled {
+    background: #090d15;
+    color: #475569;
+    border: 1px solid #131a26;
+}
 QToolButton#navigationUtilityButton {
+    background: #0d121c;
     color: #94a3b8;
+    border: 1px solid #182030;
+    border-radius: 9px;
+    padding: 4px 2px;
+    font-size: 10px;
+    font-weight: 700;
 }
 QToolButton#navigationUtilityButton:hover {
-    background: #151d2b;
+    background: #182236;
     color: #f8fafc;
-    border-color: #24334a;
+    border-color: #3b82f6;
 }
 
 /* ── Command Header ─────────────────────────────────────────────────────────── */

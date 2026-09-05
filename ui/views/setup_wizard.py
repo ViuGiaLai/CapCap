@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QCheckBox,
     QPushButton,
     QProgressBar,
     QRadioButton,
@@ -31,8 +32,8 @@ class SetupWizard(QDialog):
         },
         "local": {
             "title": "Local AI",
-            "description": "Basic CPU plus offline Vietnamese Piper voices. Llama.cpp/GGUF can be imported afterwards.",
-            "resources": ("sensevoice:model", "sensevoice:vad", "voice:pack"),
+            "description": "Basic CPU plus selectable offline Piper voices in Vietnamese and English. Llama.cpp/GGUF can be imported afterwards.",
+            "resources": ("sensevoice:model", "sensevoice:vad"),
         },
         "gpu": {
             "title": "GPU acceleration",
@@ -58,6 +59,7 @@ class SetupWizard(QDialog):
             QLabel#hint { color: #91a4bb; font-size: 12px; }
             QFrame#profile { background: #111d2c; border: 1px solid #263d58; border-radius: 10px; }
             QRadioButton { color: #e7f0fb; font-size: 13px; font-weight: 700; spacing: 8px; }
+            QCheckBox { color: #dbeafe; font-size: 13px; spacing: 8px; }
             QPushButton { background: #17263a; color: #dbeafe; border: 1px solid #315476; border-radius: 7px; padding: 8px 16px; font-weight: 700; }
             QPushButton:hover { background: #203652; border-color: #4b9be8; }
             QPushButton#primary { background: #22b992; color: #07130f; border-color: #22b992; }
@@ -99,6 +101,34 @@ class SetupWizard(QDialog):
             layout.addWidget(description)
             root.addWidget(card)
 
+        # Voice packs are optional setup resources.  Keep this choice local to
+        # the wizard; the existing voice catalog/TTS selection logic remains
+        # unchanged and continues to select the active language at runtime.
+        self.voice_options = QFrame(self)
+        self.voice_options.setObjectName("profile")
+        voice_layout = QVBoxLayout(self.voice_options)
+        voice_layout.setContentsMargins(14, 10, 14, 10)
+        voice_title = QLabel("Offline Piper voice packs (optional)", self.voice_options)
+        voice_title.setStyleSheet("color: #e7f0fb; font-size: 13px; font-weight: 700;")
+        voice_layout.addWidget(voice_title)
+        voice_hint = QLabel("Choose one or both languages for offline voiceover.", self.voice_options)
+        voice_hint.setObjectName("hint")
+        voice_hint.setWordWrap(True)
+        voice_layout.addWidget(voice_hint)
+        voice_checks = QHBoxLayout()
+        self.voice_vi_check = QCheckBox("Vietnamese", self.voice_options)
+        self.voice_en_check = QCheckBox("English", self.voice_options)
+        self.voice_vi_check.setChecked(True)
+        self.voice_en_check.setChecked(True)
+        voice_checks.addWidget(self.voice_vi_check)
+        voice_checks.addWidget(self.voice_en_check)
+        voice_checks.addStretch(1)
+        voice_layout.addLayout(voice_checks)
+        self.voice_vi_check.toggled.connect(lambda _checked: self._refresh_status())
+        self.voice_en_check.toggled.connect(lambda _checked: self._refresh_status())
+        root.addWidget(self.voice_options)
+        self.voice_options.setVisible(False)
+
         self.status_label = QLabel(self)
         self.status_label.setWordWrap(True)
         root.addWidget(self.status_label)
@@ -129,11 +159,26 @@ class SetupWizard(QDialog):
 
     def _select_profile(self, key: str):
         self._profile_key = key
+        self.voice_options.setVisible(key == "local")
         self._refresh_status()
+
+    def _selected_resources(self) -> list[str]:
+        """Return setup resources selected in the wizard.
+
+        Piper packs are deliberately added here instead of changing the
+        runtime voice catalog, so existing project and TTS behaviour is kept.
+        """
+        resources = list(self.PROFILES[self._profile_key]["resources"])
+        if self._profile_key == "local":
+            if self.voice_vi_check.isChecked():
+                resources.append("voice:pack")
+            if self.voice_en_check.isChecked():
+                resources.append("voice:pack-en")
+        return resources
 
     def _refresh_status(self):
         profile = self.PROFILES[self._profile_key]
-        missing = [rid for rid in profile["resources"] if not self.service.is_resource_installed(rid)]
+        missing = [rid for rid in self._selected_resources() if not self.service.is_resource_installed(rid)]
         self._pending = missing
         if missing:
             self.status_label.setText(f"{len(missing)} resource(s) need installation for {profile['title']}.")

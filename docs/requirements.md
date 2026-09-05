@@ -34,6 +34,7 @@ cho người dùng nâng cao.
 | **Faster-Whisper Small/Medium** | Nhận diện giọng nói độ chính xác cao trên GPU | ~480 MB - 1.5 GB | `models/faster_whisper/` |
 | **CUDA 12 Runtime Pack** | Thư viện tăng tốc GPU cho Whisper & OCR | ~450 MB | `bin/cuda12_fw/` |
 | **Piper Voice (Tiếng Việt)** | Giọng đọc thuyết minh tự nhiên (Ngọc Huyền, Tuấn Khang) | ~60 MB / giọng | `models/piper/` |
+| **Piper Voice (English)** | Giọng đọc thuyết minh tiếng Anh offline | ~60 MB / giọng | `models/piper-en/` |
 | **Sherpa-ONNX Diarization** | Nhận diện phân tách người nói | ~40 MB | `models/pyannote/` |
 | **PP-OCRv4 (ONNX)** | Nhận diện chữ phụ đề trên khung hình video | ~30 MB | `models/ocr/` |
 
@@ -43,8 +44,8 @@ resources**; the setup wizard does not download them silently.
 ### Cấu hình đề xuất
 
 - **Basic CPU**: SenseVoice + `tokens.txt` + Silero VAD (đủ để bắt đầu).
-- **Local AI**: Basic CPU + Piper tiếng Việt; llama.cpp/GGUF được nhập khi
-  người dùng chọn nhà cung cấp local.
+- **Local AI**: Basic CPU + Piper tiếng Việt và/hoặc tiếng Anh (chọn trong
+  Setup Wizard); llama.cpp/GGUF được nhập khi người dùng chọn nhà cung cấp local.
 - **GPU acceleration**: Basic CPU + CUDA runtime pack và NVIDIA driver.
 
 Tài nguyên tùy chọn chỉ được kiểm tra khi workflow tương ứng được chạy, nên

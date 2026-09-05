@@ -647,12 +647,12 @@ class LauncherWindow(QDialog):
         self.split_btn.clicked.connect(self._on_split_video)
         action_row_one.addWidget(self.split_btn)
 
-        self.resource_btn = QPushButton("Manage Resources")
+        self.resource_btn = QPushButton("Setup & Resources")
         self.resource_btn.setMinimumHeight(38)
         self.resource_btn.setMinimumWidth(135)
         self.resource_btn.setCursor(Qt.PointingHandCursor)
         self.resource_btn.setStyleSheet(sec_btn_style)
-        self.resource_btn.clicked.connect(self._on_manage_resources)
+        self.resource_btn.clicked.connect(self._on_setup_resources)
         action_row_one.addWidget(self.resource_btn)
 
         self.open_project_btn = QPushButton("Open Projects Folder")
@@ -876,6 +876,12 @@ class LauncherWindow(QDialog):
         from runtime_paths import workspace_root
         from services import ResourceDownloadService
         return ResourceDownloadService(workspace_root())
+
+    def _on_setup_resources(self):
+        """Open the guided installer from the launcher."""
+        from views.setup_wizard import open_setup_wizard
+        open_setup_wizard(workspace_root(), parent=self)
+        self._validate_resources_for_device()
 
     def _validate_resources_for_device(self):
         try:
