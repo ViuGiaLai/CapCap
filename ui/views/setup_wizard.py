@@ -109,9 +109,9 @@ class SetupWizard(QDialog):
         self.voice_options.setObjectName("profile")
         voice_layout = QVBoxLayout(self.voice_options)
         voice_layout.setContentsMargins(14, 10, 14, 10)
-        voice_title = QLabel("Offline Piper voice packs (optional)", self.voice_options)
-        voice_title.setStyleSheet("color: #e7f0fb; font-size: 13px; font-weight: 700;")
-        voice_layout.addWidget(voice_title)
+        self.voice_title = QLabel("Offline Piper voice packs (optional)", self.voice_options)
+        self.voice_title.setStyleSheet("color: #e7f0fb; font-size: 13px; font-weight: 700;")
+        voice_layout.addWidget(self.voice_title)
         voice_hint = QLabel("Choose one or both languages for offline voiceover.", self.voice_options)
         voice_hint.setObjectName("hint")
         voice_hint.setWordWrap(True)
@@ -182,7 +182,7 @@ class SetupWizard(QDialog):
         runtime voice catalog, so existing project and TTS behaviour is kept.
         """
         resources = list(self.PROFILES[self._profile_key]["resources"])
-        if self._profile_key == "local":
+        if self._profile_key == "local" and self.selected_engine() == "piper":
             if self.voice_vi_check.isChecked():
                 resources.append("voice:pack")
             if self.voice_en_check.isChecked():
@@ -190,6 +190,7 @@ class SetupWizard(QDialog):
         return resources
 
     def _refresh_status(self):
+        self._update_voice_pack_visibility()
         profile = self.PROFILES[self._profile_key]
         missing = [rid for rid in self._selected_resources() if not self.service.is_resource_installed(rid)]
         self._pending = missing
@@ -213,6 +214,13 @@ class SetupWizard(QDialog):
             self.status_label.setStyleSheet("color: #6ee7b7; font-weight: 700;")
             self.install_btn.setText("Done")
             self.install_btn.setEnabled(self._worker is None)
+
+    def _update_voice_pack_visibility(self):
+        """Show Piper language packs only when Piper is selected."""
+        visible = self._profile_key == "local" and self.selected_engine() == "piper"
+        self.voice_title.setVisible(visible)
+        self.voice_vi_check.setVisible(visible)
+        self.voice_en_check.setVisible(visible)
 
     def _install_selected(self):
         if not self._pending:
