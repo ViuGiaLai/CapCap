@@ -1632,7 +1632,11 @@ class TimelineEditingMixin:
                 return
         active_index = self._find_active_segment_index(position_ms, segments)
         if active_index >= 0:
-            self.set_selected_segment_index(active_index, sync_ui=False)
+            current_selected = getattr(self, "_selected_segment_index", -1)
+            should_sync_ui = (active_index != current_selected)
+            self.set_selected_segment_index(active_index, sync_ui=should_sync_ui)
+            if hasattr(self, "timeline"):
+                self.timeline.set_active_segment_index(active_index)
 
     def sync_segment_editor_rows(self):
         if not hasattr(self, "segment_editor_layout") or getattr(self, "_syncing_segment_editor", False):
@@ -1690,51 +1694,50 @@ class TimelineEditingMixin:
                 card_layout.setContentsMargins(4, 4, 4, 4)
                 card_layout.setSpacing(6)
 
-                # Start/End timing chips
+                # Start/End timing chips with duration
                 timing_meta_layout = QHBoxLayout()
                 timing_meta_layout.setContentsMargins(0, 0, 0, 0)
-                timing_meta_layout.setSpacing(12)
+                timing_meta_layout.setSpacing(8)
                 start_label = QLabel(f"Start  {self.format_timestamp(row['start'])}")
                 start_label.setObjectName("timingChip")
                 end_label = QLabel(f"End  {self.format_timestamp(row['end'])}")
                 end_label.setObjectName("timingChip")
+                duration_sec = max(0.0, float(row.get('end', 0) or 0) - float(row.get('start', 0) or 0))
+                dur_label = QLabel(f"{duration_sec:.2f}s")
+                dur_label.setObjectName("durationChip")
+                dur_label.setToolTip("Duration of this subtitle cue")
                 timing_meta_layout.addWidget(start_label)
                 timing_meta_layout.addWidget(end_label)
+                timing_meta_layout.addWidget(dur_label)
                 timing_meta_layout.addStretch()
-
-                original_label = QLabel(row["original"] or "", card)
-                original_label.setWordWrap(True)
-                original_label.setObjectName("helperLabel")
-                original_label.setVisible(show_original and bool(row["original"].strip()))
-
                 card_layout.addLayout(timing_meta_layout)
 
-                # Speaker assignment is intentionally local to the selected
-                # cue.  It lets users correct diarization mistakes without
-                # rerunning the entire audio analysis pass.
-                speaker_row = QHBoxLayout()
-                speaker_row.setContentsMargins(0, 0, 0, 0)
-                speaker_row.setSpacing(8)
+                # Speaker & Voice Speed row (unified properties bar)
+                props_row = QHBoxLayout()
+                props_row.setContentsMargins(0, 0, 0, 0)
+                props_row.setSpacing(10)
+
                 speaker_ids = self._detected_speaker_ids()
                 segment_source = self.current_translated_segments or self.current_segments or []
                 selected_speaker = ""
                 if 0 <= idx < len(segment_source):
                     selected_speaker = str(segment_source[idx].get("speaker", "") or "").strip()
-                speaker_indicator = QLabel()
-                speaker_indicator.setFixedSize(10, 10)
-                speaker_indicator.setStyleSheet(
-                    "background: %s; border-radius: 5px; border: 1px solid #dcecff;"
-                    % (self._speaker_color_hex(selected_speaker) if selected_speaker else "#53657d")
-                )
-                speaker_row.addWidget(speaker_indicator)
-                speaker_row.addWidget(QLabel("Speaker:"))
+
+                speaker_label = QLabel("Speaker:")
+                speaker_label.setObjectName("helperLabel")
                 speaker_combo = QComboBox()
-                for position, speaker_id in enumerate(speaker_ids):
-                    speaker_combo.addItem(self._speaker_display_name(speaker_id, position), speaker_id)
-                combo_index = speaker_combo.findData(selected_speaker)
-                if combo_index >= 0:
-                    speaker_combo.setCurrentIndex(combo_index)
-                speaker_combo.setEnabled(bool(speaker_ids))
+                if not speaker_ids:
+                    speaker_combo.addItem("Auto (No diarization)", "")
+                    speaker_combo.setEnabled(False)
+                else:
+                    for position, speaker_id in enumerate(speaker_ids):
+                        speaker_combo.addItem(self._speaker_display_name(speaker_id, position), speaker_id)
+                    combo_index = speaker_combo.findData(selected_speaker)
+                    if combo_index >= 0:
+                        speaker_combo.setCurrentIndex(combo_index)
+                    speaker_combo.setEnabled(True)
+                speaker_combo.setFixedHeight(28)
+                speaker_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 speaker_combo.setToolTip(
                     "Assign this subtitle segment to a detected speaker."
                     if speaker_ids else "Run Speaker Diarization first to assign a speaker."
@@ -1744,14 +1747,8 @@ class TimelineEditingMixin:
                         segment_index, str(combo.currentData() or "")
                     )
                 )
-                speaker_row.addWidget(speaker_combo, 1)
-                speaker_row.addStretch()
-                card_layout.addLayout(speaker_row)
 
-                speed_row = QHBoxLayout()
-                speed_row.setContentsMargins(0, 0, 0, 0)
-                speed_row.setSpacing(8)
-                speed_label = QLabel("Voice Speed:")
+                speed_label = QLabel("Speed:")
                 speed_label.setObjectName("helperLabel")
                 speed_spin = QDoubleSpinBox()
                 speed_spin.setRange(0.5, 3.0)
@@ -1759,27 +1756,52 @@ class TimelineEditingMixin:
                 speed_spin.setDecimals(1)
                 speed_spin.setValue(float(row.get("voice_speed", 1.0)))
                 speed_spin.setSuffix("x")
-                speed_spin.setFixedWidth(90)
+                speed_spin.setFixedHeight(28)
+                speed_spin.setFixedWidth(75)
                 speed_spin.valueChanged.connect(
                     lambda val, idx=idx: self.on_segment_voice_speed_changed(idx, val)
                 )
-                speed_row.addWidget(speed_label)
-                speed_row.addWidget(speed_spin)
-                speed_row.addStretch()
 
-                card_layout.addLayout(speed_row)
-                card_layout.addWidget(original_label)
+                props_row.addWidget(speaker_label)
+                props_row.addWidget(speaker_combo, 1)
+                props_row.addWidget(speed_label)
+                props_row.addWidget(speed_spin)
+                card_layout.addLayout(props_row)
 
-                # The QTabWidget wrapper (with the "Subtitle" tab label
-                # and the horizontal tab bar / "hr" beneath it) has been
-                # removed. The translated editor + highlight actions are
-                # placed directly in the card layout.
+                # Original Transcript Frame
+                orig_container = QFrame()
+                orig_container.setObjectName("originalTextCard")
+                orig_container.setStyleSheet(
+                    "QFrame#originalTextCard { background-color: #0b111a; border: 1px solid #1c2738; border-radius: 6px; padding: 6px 10px; }"
+                )
+                orig_box_layout = QVBoxLayout(orig_container)
+                orig_box_layout.setContentsMargins(6, 4, 6, 4)
+                orig_box_layout.setSpacing(2)
+
+                orig_title = QLabel("ORIGINAL TRANSCRIPT (BẢN GỐC)")
+                orig_title.setStyleSheet("color: #64748b; font-size: 9px; font-weight: 800; letter-spacing: 0.5px;")
+
+                original_label = QLabel(row["original"] or "", card)
+                original_label.setWordWrap(True)
+                original_label.setObjectName("helperLabel")
+                original_label.setStyleSheet("color: #cbd5e1; font-size: 12px;")
+
+                orig_box_layout.addWidget(orig_title)
+                orig_box_layout.addWidget(original_label)
+                orig_container.setVisible(show_original and bool(str(row.get("original", "") or "").strip()))
+                card_layout.addWidget(orig_container)
+
+                # Translated Subtitle Editor
+                editor_title = QLabel("ON-SCREEN SUBTITLE (BẢN DỊCH HIỂN THỊ)")
+                editor_title.setStyleSheet("color: #818cf8; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; margin-top: 2px;")
+                card_layout.addWidget(editor_title)
+
                 translated_editor = QTextEdit()
                 translated_editor.setObjectName("segmentInspectorEditor")
                 translated_editor.setAcceptRichText(False)
                 translated_editor.setPlainText(row["translated"])
-                translated_editor.setMinimumHeight(96)
-                translated_editor.setMaximumHeight(96)
+                translated_editor.setMinimumHeight(84)
+                translated_editor.setMaximumHeight(84)
                 translated_editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
                 translated_editor.setPlaceholderText("Text shown on screen.")
                 translated_editor.textChanged.connect(
@@ -1788,8 +1810,11 @@ class TimelineEditingMixin:
                 translated_editor.selectionChanged.connect(
                     lambda idx=idx, editor=translated_editor: self._update_segment_highlight_button_state(idx, editor)
                 )
-                highlight_btn = QPushButton("Add highlight from selection")
+                highlight_btn = QPushButton("✨ Add highlight from selection")
+                highlight_btn.setObjectName("subtitleHighlightBtn")
                 highlight_btn.setEnabled(False)
+                highlight_btn.setFixedHeight(28)
+                highlight_btn.setCursor(Qt.PointingHandCursor)
                 highlight_btn.clicked.connect(
                     lambda _=False, idx=idx, editor=translated_editor: self.add_segment_manual_highlight(idx, editor)
                 )
@@ -1914,12 +1939,37 @@ class TimelineEditingMixin:
     def on_segment_voice_speed_changed(self, index: int, value: float):
         if getattr(self, "_syncing_segment_editor", False):
             return
+        updated = False
+        new_speed = round(float(value), 1)
         for segments_list in (self.current_translated_segments, self.current_segments):
             if segments_list and 0 <= index < len(segments_list):
-                segments_list[index]["voice_speed"] = round(float(value), 1)
+                if segments_list[index].get("voice_speed") != new_speed:
+                    segments_list[index]["voice_speed"] = new_speed
+                    updated = True
                 self._voiceover_force_refresh = True
-        self._invalidate_dubbed_output_after_subtitle_edit()
-        self.persist_current_timeline_project_data()
+        if updated:
+            if self.current_translated_segments:
+                self.current_translated_segment_models = self._dict_segments_to_models(
+                    self.current_translated_segments, translated=True
+                )
+            if self.current_segments:
+                self.current_segment_models = self._dict_segments_to_models(
+                    self.current_segments, translated=False
+                )
+            self._invalidate_dubbed_output_after_subtitle_edit()
+            state = getattr(self, "current_project_state", None)
+            if state is not None and hasattr(self, "project_bridge"):
+                try:
+                    self.current_translated_segment_models = self.project_bridge.persist_translation(
+                        state,
+                        self.current_segment_models or [],
+                        self.current_translated_segments or [],
+                        self.last_translated_srt_path,
+                    )
+                except Exception as exc:
+                    if hasattr(self, "log"):
+                        self.log(f"[Subtitle] Could not persist voice speed change: {exc}")
+            self.persist_current_timeline_project_data()
 
     def _set_segment_editor_highlight(self, active_index: int):
         rows = getattr(self, "_segment_editor_rows", [])

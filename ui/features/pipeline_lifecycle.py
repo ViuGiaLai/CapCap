@@ -810,7 +810,11 @@ class PipelineLifecycleMixin:
             self.get_ai_dubbing_style_instruction(),
             self.get_source_language_code(),
         )
-        self.voice_thread.progress.connect(self.log)
+        pipeline_controller = getattr(self, "pipeline_controller", None)
+        if pipeline_controller is not None:
+            self.voice_thread.progress.connect(pipeline_controller.on_voiceover_progress)
+        else:
+            self.voice_thread.progress.connect(self.log)
         worker = self.voice_thread
         worker.finished.connect(self.on_voiceover_finished)
         worker.finished.connect(

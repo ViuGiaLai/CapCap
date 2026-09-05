@@ -49,6 +49,11 @@ class Segment:
                     metadata[timing_key] = float(raw_timing)
                 except (TypeError, ValueError):
                     pass
+        if "voice_speed" in data and "voice_speed" not in metadata:
+            try:
+                metadata["voice_speed"] = float(data.get("voice_speed", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                metadata["voice_speed"] = 1.0
         return cls(
             id=int(segment_id or 0),
             start=float(data.get("start", 0.0) or 0.0),
@@ -92,6 +97,7 @@ class Segment:
             self.final_text = translated_text
         self.status = "translated"
 
+
     @property
     def subtitle_text(self) -> str:
         return (
@@ -104,6 +110,14 @@ class Segment:
     @property
     def tts_source_text(self) -> str:
         return self.subtitle_text
+
+    @property
+    def voice_speed(self) -> float:
+        return float(self.metadata.get("voice_speed", 1.0) or 1.0)
+
+    @voice_speed.setter
+    def voice_speed(self, value: float) -> None:
+        self.metadata["voice_speed"] = float(value)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,6 +141,8 @@ class Segment:
             "end": self.end,
             "text": self.subtitle_text,
         }
+        if "voice_speed" in self.metadata:
+            payload["voice_speed"] = float(self.metadata.get("voice_speed", 1.0) or 1.0)
         for key in ("tts_group_id", "tts_group_start", "tts_group_end"):
             if key in self.metadata:
                 payload[key] = self.metadata.get(key)
@@ -154,6 +170,8 @@ class Segment:
             "end": self.end,
             "text": self.original_text,
         }
+        if "voice_speed" in self.metadata:
+            payload["voice_speed"] = float(self.metadata.get("voice_speed", 1.0) or 1.0)
         if self.metadata.get("words"):
             payload["words"] = list(self.metadata.get("words") or [])
         if self.metadata.get("speaker"):

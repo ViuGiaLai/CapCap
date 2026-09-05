@@ -202,6 +202,14 @@ class VoiceSubtitlePreviewMixin:
     def preview_selected_voice_sample(self):
         if not (self.voice_catalog_entries or []):
             target_language = str(self.get_target_language_code() if hasattr(self, "get_target_language_code") else "vi").strip().lower()
+            engine_key = self._current_voice_engine_key() if hasattr(self, "_current_voice_engine_key") else "piper"
+            if engine_key == "zerotts":
+                QMessageBox.information(
+                    self,
+                    "Preview voice",
+                    "ZeroTTS voices could not be loaded. Use Install / Manage Voice Engines, then reopen the Voice section.",
+                )
+                return
             folder = "models/piper-en" if target_language.startswith("en") else "models/piper"
             QMessageBox.information(
                 self,
@@ -690,6 +698,11 @@ class VoiceSubtitlePreviewMixin:
                     }
                     if base.get("speaker"):
                         d["speaker"] = str(base.get("speaker", "") or "")
+                    if base.get("voice_speed") is not None:
+                        try:
+                            d["voice_speed"] = float(base.get("voice_speed", 1.0) or 1.0)
+                        except (TypeError, ValueError):
+                            pass
                     raw = base.get("_audio_end")
                     if raw is not None:
                         try:

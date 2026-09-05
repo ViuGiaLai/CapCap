@@ -77,6 +77,9 @@ class SegmentService:
                 source_auto_highlights = base_model.metadata.get("auto_highlights")
                 if source_auto_highlights and "auto_highlights" not in seg:
                     model.metadata["auto_highlights"] = list(source_auto_highlights)
+                source_voice_speed = getattr(base_model, "voice_speed", 1.0)
+                if source_voice_speed != 1.0 and "voice_speed" not in seg:
+                    model.voice_speed = source_voice_speed
             translated_text = seg.get("text", "")
             model.apply_translation(translated_text, refined=bool(seg.get("polished")))
             model.metadata["translation_provider"] = seg.get("provider", "")

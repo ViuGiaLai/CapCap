@@ -14,6 +14,7 @@ from services import EngineRuntime
 
 class PreviewMuxWorker(QThread):
     finished = Signal(str, str)
+    progress = Signal(int, str)
 
     def __init__(self, video_path, audio_path, output_path, mode="voice", srt_path="", subtitle_style=None, render_subtitles=True, target_width=None, target_height=None, output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, video_filter_state=None, mask_regions=None, logo_layers=None, temp_dir=""):
         super().__init__()
@@ -39,6 +40,7 @@ class PreviewMuxWorker(QThread):
         try:
             from preview_processor import mux_audio_into_video_for_preview
 
+            self.progress.emit(5, "Checking preview inputs…")
             current_video = self.video_path
             # The subtitle render pass owns the final canvas and grade.  Do
             # not apply them while muxing audio as that would re-filter the
@@ -50,6 +52,7 @@ class PreviewMuxWorker(QThread):
                 and os.path.exists(self.srt_path)
             )
             if self.audio_path and os.path.exists(self.audio_path):
+                self.progress.emit(15, "Combining generated voice with video…")
                 temp_dir = self.temp_dir or os.path.join(os.getcwd(), "temp")
                 os.makedirs(temp_dir, exist_ok=True)
                 temp_mux_path = os.path.normpath(os.path.join(temp_dir, f"preview_mux_{int(time.time())}.mp4"))
@@ -64,8 +67,10 @@ class PreviewMuxWorker(QThread):
                     focus_y=self.output_fill_focus_y,
                     video_filter_state={} if final_render_applies_filters else self.video_filter_state,
                 )
+                self.progress.emit(55, "Voice track combined successfully")
 
             if self.render_subtitles and self.mode in ("subtitle", "both") and self.srt_path and os.path.exists(self.srt_path):
+                self.progress.emit(60, "Rendering subtitles and visual layers…")
                 engine = EngineRuntime()
                 ok = engine.embed_subtitles(
                     current_video,
@@ -86,10 +91,12 @@ class PreviewMuxWorker(QThread):
                     raise RuntimeError("Failed to render subtitle preview video.")
                 output = self.output_path
             else:
+                self.progress.emit(80, "Finalizing preview file…")
                 if current_video != self.output_path:
                     shutil.copyfile(current_video, self.output_path)
                 output = self.output_path
 
+            self.progress.emit(100, "Preview is ready")
             self.finished.emit(output, "")
         except Exception as exc:
             self.finished.emit("", str(exc))

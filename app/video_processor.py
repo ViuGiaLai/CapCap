@@ -1837,7 +1837,9 @@ def embed_ass_subtitles(video_path, ass_path, output_path, ffmpeg_path=None, blu
             pass
         try:
             gain_db = float(audio_gain_db or 0.0)
-            if abs(gain_db) > 0.001:
+            if gain_db <= -59.0:
+                command += ['-af', 'volume=0']
+            elif abs(gain_db) > 0.001:
                 command += ['-af', f'volume={gain_db:.4f}dB']
         except (TypeError, ValueError):
             pass
@@ -2023,7 +2025,9 @@ def _build_logo_overlay_command(ffmpeg, video_path, ass_path, output_path, logo_
     ]
     try:
         gain_db = float(audio_gain_db or 0.0)
-        if abs(gain_db) > 0.001:
+        if gain_db <= -59.0:
+            command += ['-af', 'volume=0']
+        elif abs(gain_db) > 0.001:
             command += ['-af', f'volume={gain_db:.4f}dB']
     except (TypeError, ValueError):
         pass

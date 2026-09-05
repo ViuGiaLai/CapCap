@@ -268,9 +268,14 @@ class ExportWorkflow:
             if not timeline_data and hasattr(state, "timeline") and state.timeline:
                 timeline_data = state.timeline
             if not timeline_data and hasattr(state, "project_root") and state.project_root:
-                tl_file = os.path.join(state.project_root, "timeline.json")
-                if os.path.exists(tl_file):
-                    timeline_data = tl_file
+                candidates = [
+                    os.path.join(state.project_root, "timeline", "timeline.json"),
+                    os.path.join(state.project_root, "timeline.json"),
+                ]
+                for tl_file in candidates:
+                    if os.path.exists(tl_file):
+                        timeline_data = tl_file
+                        break
             print(f"[Export] timeline data/path: {timeline_data}")
             if timeline_data:
                 import json
@@ -294,6 +299,9 @@ class ExportWorkflow:
                 tracks = timeline_data.get("tracks", [])
                 print(f"[Export] Found {len(tracks)} track(s) in timeline")
                 for track in tracks:
+                    if not bool(track.get("visible", True)):
+                        print(f"[Export] Skipping hidden track: {track.get('name', '')}")
+                        continue
                     track_type = track.get("type", "")
                     track_name = track.get("name", "")
                     layers = track.get("layers", [])
@@ -340,8 +348,8 @@ class ExportWorkflow:
                             except (TypeError, ValueError):
                                 continue
                     
-                    # Extract logo/image layers from image track (type="image")
-                    if track_type == "image":
+                    # Extract logo/image layers from image track (type="image" or "sticker")
+                    if track_type in ("image", "sticker"):
                         for layer in layers:
                             if layer.get("visible", True):
                                 source = layer.get("source", "")
@@ -415,8 +423,10 @@ class ExportWorkflow:
                             except (TypeError, ValueError):
                                 continue
 
+            preview_visibility = getattr(state, "settings", {}).get("preview_track_visibility") or {}
+            m1_visible = preview_visibility.get("M1", True) if isinstance(preview_visibility, dict) else True
             # Fallback: extract mask regions from settings if not found in timeline
-            if not mask_regions:
+            if not mask_regions and m1_visible:
                 mask_state = state.settings.get("mask_state", {})
                 print(f"[Export] Fallback: checking settings mask_state: {mask_state}")
                 if mask_state and mask_state.get("enabled", False):
@@ -433,6 +443,31 @@ class ExportWorkflow:
                             "pixelate_size": int(region.get("pixelate_size", 12)),
                             "blur_strength": int(region.get("blur_strength", 20)),
                         })
+
+            b1_visible = preview_visibility.get("B1", True) if isinstance(preview_visibility, dict) else True
+            # Fallback: extract blur regions from settings if not found in timeline
+            if not blur_regions and b1_visible:
+                blur_state = getattr(state, "settings", {}).get("blur_state", {})
+                print(f"[Export] Fallback: checking settings blur_state: {blur_state}")
+                if blur_state and blur_state.get("enabled", False):
+                    regions = blur_state.get("regions", [])
+                    print(f"[Export] Found {len(regions)} blur region(s) in settings")
+                    for region in regions:
+                        try:
+                            blur_regions.append({
+                                "x": float(region.get("x", 0.0) or 0.0),
+                                "y": float(region.get("y", 0.0) or 0.0),
+                                "width": float(region.get("width", 0.0) or 0.0),
+                                "height": float(region.get("height", 0.0) or 0.0),
+                                "blur_strength": float(region.get("blur_strength", 20.0) or 20.0),
+                                "blur_opacity": float(region.get("blur_opacity", 1.0) or 1.0),
+                                "pixelate": bool(region.get("pixelate", False)),
+                                "pixelate_size": int(region.get("pixelate_size", 12) or 12),
+                                "start": max(0.0, float(region.get("start", 0.0) or 0.0)),
+                                "end": max(0.0, float(region.get("end", 0.0) or 0.0)),
+                            })
+                        except (TypeError, ValueError):
+                            continue
         except Exception as e:
             print(f"Warning: Failed to extract overlay layers: {e}")
             import traceback

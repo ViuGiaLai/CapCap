@@ -253,6 +253,7 @@ class ProjectStateMixin:
                 "B1": bool(self._blur_effect_enabled()),
             },
             "subtitle_style_controls": self._current_subtitle_style_controls_state(),
+            "video_filter_state": self.get_video_filter_state() if hasattr(self, "get_video_filter_state") else {},
         }
         for k, v in proj_settings.items():
             state.set_setting(k, v)
@@ -665,6 +666,19 @@ class ProjectStateMixin:
                 self.voice_timing_sync_combo.setCurrentIndex(idx)
             if hasattr(self, "timeline") and self.timeline is not None:
                 self.timeline.set_voice_sync_mode(saved_sync)
+
+        # 4b. Video Filter Settings
+        saved_vfilter = st.get("video_filter_state")
+        if saved_vfilter and isinstance(saved_vfilter, dict) and hasattr(self, "video_filter_controller"):
+            try:
+                self.video_filter_controller.set_video_filter_state(
+                    saved_vfilter.get("preset", "original"),
+                    saved_vfilter.get("intensity", 75),
+                    saved_vfilter.get("overrides") or saved_vfilter.get("final"),
+                    saved_vfilter.get("modified"),
+                )
+            except Exception:
+                pass
 
         # 5. Advanced Settings
         if "speaker_diarization" in st and hasattr(self, "speaker_diarization_cb"):

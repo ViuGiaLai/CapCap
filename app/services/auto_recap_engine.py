@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from runtime_paths import subprocess_hidden_kwargs
+
 
 @dataclass
 class AutoRecapConfig:
@@ -152,6 +154,7 @@ class AutoRecapEngine:
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=30,
+                **subprocess_hidden_kwargs(),
             )
             matches = re.findall(r"pts_time:([\d\.]+)", process.stdout)
 
@@ -167,6 +170,7 @@ class AutoRecapEngine:
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=10,
+                **subprocess_hidden_kwargs(),
             )
             total_dur = float(dur_res.stdout.strip())
             if not math.isfinite(total_dur) or total_dur <= 0:
@@ -612,6 +616,7 @@ class AutoRecapEngine:
                 stderr=subprocess.DEVNULL,
                 text=True,
                 timeout=10,
+                **subprocess_hidden_kwargs(),
             )
             return result.returncode == 0 and bool(result.stdout.strip())
         except (OSError, subprocess.SubprocessError):
@@ -634,6 +639,7 @@ class AutoRecapEngine:
                 stderr=subprocess.DEVNULL,
                 text=True,
                 timeout=10,
+                **subprocess_hidden_kwargs(),
             )
             width_text, height_text = result.stdout.strip().lower().split("x", 1)
             width = max(2, int(width_text))

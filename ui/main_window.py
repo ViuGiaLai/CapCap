@@ -633,14 +633,24 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, MultiVideoTimelineMixin, AutoRe
 
             /* ── Chips / Pills ───────────────────────────────────── */
             QLabel#timingChip {
-                background-color: #0e2235;
-                color: #6ec6f5;
-                border: 1px solid #1e4a6a;
-                border-radius: 999px;
-                padding: 3px 10px;
+                background-color: #0e1a2b;
+                color: #38bdf8;
+                border: 1px solid #1e3a5f;
+                border-radius: 6px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 700;
+                font-family: 'JetBrains Mono', 'Consolas', monospace;
+            }
+            QLabel#durationChip {
+                background-color: #182334;
+                color: #94a3b8;
+                border: 1px solid #28374d;
+                border-radius: 6px;
+                padding: 3px 6px;
                 font-size: 10px;
                 font-weight: 700;
-                letter-spacing: 0.3px;
+                font-family: 'JetBrains Mono', 'Consolas', monospace;
             }
             QLabel#statusPill {
                 background-color: #0e2235;
@@ -706,41 +716,80 @@ class VideoTranslatorGUI(PipelineLifecycleMixin, MultiVideoTimelineMixin, AutoRe
                 border-color: #1a2a3a;
             }
 
-            /* Subtitle Inspector — dense, reliable five-action toolbar */
-            QPushButton#subtitleInspectorAction,
-            QPushButton#subtitleInspectorDangerAction {
-                background-color: #132235;
-                color: #d8e6f5;
-                border: 1px solid #294766;
-                border-radius: 7px;
-                padding: 0px 5px;
-                font-size: 10px;
+            /* Subtitle Inspector — clean, reliable five-action toolbar */
+            QPushButton#subtitleInspectorAction {
+                background-color: #141f32;
+                color: #cbd5e1;
+                border: 1px solid #24354d;
+                border-radius: 6px;
+                padding: 3px 10px;
+                font-size: 11px;
                 font-weight: 700;
             }
             QPushButton#subtitleInspectorAction:hover {
-                background-color: #1a3149;
+                background-color: #1d2c45;
                 color: #ffffff;
-                border-color: #3d78aa;
+                border-color: #38bdf8;
             }
             QPushButton#subtitleInspectorAction:pressed {
-                background-color: #10273b;
-                border-color: #42b8d6;
+                background-color: #0f1826;
+                border-color: #0284c7;
             }
             QPushButton#subtitleInspectorDangerAction {
-                background-color: #25191f;
-                color: #ffb5bd;
-                border-color: #57303a;
+                background-color: #24141a;
+                color: #fca5a5;
+                border: 1px solid #4a1d26;
+                border-radius: 6px;
+                padding: 3px 10px;
+                font-size: 11px;
+                font-weight: 700;
             }
             QPushButton#subtitleInspectorDangerAction:hover {
-                background-color: #3a1e27;
-                color: #ffd6da;
-                border-color: #d45d6c;
+                background-color: #3b1721;
+                color: #ffffff;
+                border-color: #ef4444;
+            }
+            QPushButton#subtitleInspectorDangerAction:pressed {
+                background-color: #1a0d12;
+                border-color: #b91c1c;
             }
             QPushButton#subtitleInspectorAction:disabled,
             QPushButton#subtitleInspectorDangerAction:disabled {
-                background-color: #0e1824;
-                color: #52667d;
-                border-color: #1b2c40;
+                background-color: #0e1522;
+                color: #475569;
+                border-color: #1a2535;
+            }
+            QPushButton#subtitleHighlightBtn {
+                background-color: #121c2d;
+                color: #64748b;
+                border: 1px solid #1e2c40;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 4px 12px;
+            }
+            QPushButton#subtitleHighlightBtn:enabled {
+                background-color: #1e1b4b;
+                color: #c7d2fe;
+                border-color: #4338ca;
+            }
+            QPushButton#subtitleHighlightBtn:enabled:hover {
+                background-color: #312e81;
+                color: #ffffff;
+                border-color: #6366f1;
+            }
+            QTextEdit#segmentInspectorEditor {
+                background-color: #080d15;
+                color: #f8fafc;
+                border: 1px solid #233246;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+                selection-background-color: #4338ca;
+                selection-color: #ffffff;
+            }
+            QTextEdit#segmentInspectorEditor:focus {
+                border-color: #6366f1;
             }
 
             /* Generate — primary CTA */

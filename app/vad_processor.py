@@ -7,6 +7,14 @@ _VAD = None
 _WINDOW_SIZE = 0
 
 
+def _safe_log(message: str) -> None:
+    """Diagnostic output must never be able to stop speech recognition."""
+    try:
+        print(message)
+    except (OSError, ValueError):
+        pass
+
+
 def _ensure_vad():
     global _VAD, _WINDOW_SIZE
     if _VAD is not None:
@@ -16,10 +24,10 @@ def _ensure_vad():
         import sherpa_onnx
 
         model = os.path.join(bin_path(), "silero_vad.onnx")
-        print(f"[VAD] model: {model}, exists={os.path.exists(model)}")
+        _safe_log(f"[VAD] model: {model}, exists={os.path.exists(model)}")
 
         if not os.path.exists(model):
-            print("[VAD] model not found")
+            _safe_log("[VAD] model not found")
             _VAD = False
             return
 
@@ -34,7 +42,7 @@ def _ensure_vad():
         _WINDOW_SIZE = config.silero_vad.window_size
 
         _VAD = sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=30)
-        print(f"[VAD] initialized OK, window_size={_WINDOW_SIZE}")
+        _safe_log(f"[VAD] initialized OK, window_size={_WINDOW_SIZE}")
 
     except Exception:
         traceback.print_exc()
@@ -48,18 +56,18 @@ def get_speech_segments(audio: np.ndarray, sr: int = 16000) -> list[dict]:
 
     if _VAD is False:
         message = "Silero VAD is unavailable; refusing unsafe full-audio fallback."
-        print(f"[VAD] {message}")
+        _safe_log(f"[VAD] {message}")
         raise RuntimeError(message)
 
     if sr != 16000:
         message = f"Silero VAD requires 16000Hz audio, received {sr}Hz."
-        print(f"[VAD] {message}")
+        _safe_log(f"[VAD] {message}")
         raise RuntimeError(message)
 
     if audio is None or len(audio) == 0:
         return []
 
-    print(f"[VAD] audio stats: min={audio.min():.4f} max={audio.max():.4f} mean_abs={np.abs(audio).mean():.6f}")
+    _safe_log(f"[VAD] audio stats: min={audio.min():.4f} max={audio.max():.4f} mean_abs={np.abs(audio).mean():.6f}")
 
     try:
         if hasattr(_VAD, "reset"):
@@ -136,7 +144,7 @@ def get_speech_segments(audio: np.ndarray, sr: int = 16000) -> list[dict]:
 
             _VAD.pop()
 
-        print(f"[VAD] raw segments: {len(segments)}")
+        _safe_log(f"[VAD] raw segments: {len(segments)}")
 
         if not segments:
             # An empty result is a valid "no speech" outcome.  Do not turn
@@ -148,5 +156,5 @@ def get_speech_segments(audio: np.ndarray, sr: int = 16000) -> list[dict]:
     except Exception:
         traceback.print_exc()
         message = "Silero VAD failed; refusing unsafe full-audio fallback."
-        print(f"[VAD] {message}")
+        _safe_log(f"[VAD] {message}")
         raise RuntimeError(message)

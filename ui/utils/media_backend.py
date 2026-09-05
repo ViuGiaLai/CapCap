@@ -1508,6 +1508,13 @@ class MpvMediaPlayerBackend(QObject):
                 self._sub_track_id = track_id
             self._player.sub_visibility = True
             self._applied_subtitle_path = self._subtitle_ass_path
+            if not self.is_playing():
+                try:
+                    self._player.command("seek", 0, "relative+exact")
+                except Exception:
+                    pass
+                if hasattr(self, "video_view") and hasattr(self.video_view, "update"):
+                    self.video_view.update()
         except Exception:
             pass
 

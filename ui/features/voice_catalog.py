@@ -86,6 +86,8 @@ class VoiceCatalogMixin:
             return entry_id
         if provider == "edge":
             return f"edge:{provider_voice or 'vi-VN-HoaiMyNeural'}"
+        if provider == "zerotts":
+            return f"zerotts:{provider_voice or 'maichi'}"
         return ""
 
     def _voice_provider_label(self, provider: str) -> str:
@@ -94,6 +96,8 @@ class VoiceCatalogMixin:
             return "Local"
         if provider_key == "edge":
             return "Edge"
+        if provider_key == "zerotts":
+            return "ZeroTTS"
         return str(provider or "Other").strip().title() or "Other"
 
     def _current_voice_tier(self) -> str:
@@ -205,10 +209,10 @@ class VoiceCatalogMixin:
         button.setToolTip("Transcribe the Selection Range with custom Whisper or OCR settings")
 
     def _resolve_active_voice_name(self, *, persist_new_clone: bool = False) -> str:
-        if self._current_voice_engine_key() not in {"piper", "edge"}:
+        if self._current_voice_engine_key() not in {"piper", "edge", "zerotts"}:
             return ""
         free_value = str(self.free_voice_combo.currentData() or "").strip() if hasattr(self, "free_voice_combo") else ""
-        if free_value and free_value.startswith("edge:"):
+        if free_value and free_value.startswith(("edge:", "zerotts:")):
             return free_value
         if free_value and free_value in getattr(self, "voice_catalog_map", {}):
             return free_value
@@ -239,9 +243,35 @@ class VoiceCatalogMixin:
         if label is None:
             return
         engine_key = self._current_voice_engine_key()
-        if engine_key in {"zerotts", "korvatts", "kokoro"}:
+        choice_label = getattr(self, "voice_choice_label", None)
+        if choice_label is not None:
+            choice_label.setText(
+                {
+                    "piper": "Piper voice",
+                    "zerotts": "ZeroTTS voice",
+                    "edge": "Edge voice",
+                }.get(engine_key, "Voice")
+            )
+        combo = getattr(self, "voice_engine_combo", None)
+        if combo is not None:
+            zero_index = combo.findData("zerotts")
+            if zero_index >= 0:
+                try:
+                    zero_ready = self._resource_service().is_resource_installed("tts:zerotts")
+                except Exception:
+                    zero_ready = False
+                combo.setItemText(
+                    zero_index,
+                    f"ZeroTTS [VI] · Natural · {'Installed' if zero_ready else 'Not installed'}",
+                )
+        if engine_key in {"korvatts", "kokoro"}:
             label.setText(
                 "This engine is listed for planning only; its runtime is not integrated in this build."
+            )
+            return
+        if engine_key == "zerotts":
+            label.setText(
+                "Output language: Vietnamese · ZeroTTS runs locally after its runtime and first-use model are installed."
             )
             return
         language = str(self.get_target_language_code() or "").strip().lower()
@@ -497,11 +527,11 @@ class VoiceCatalogMixin:
             if not entry.get("enabled", True):
                 continue
             provider = str(entry.get("provider", "")).strip().lower()
-            if provider not in {"piper", "edge"}:
+            if provider not in {"piper", "edge", "zerotts"}:
                 continue
-            if engine_key in {"piper", "edge"} and provider != engine_key:
+            if engine_key in {"piper", "edge", "zerotts"} and provider != engine_key:
                 continue
-            if engine_key not in {"piper", "edge"}:
+            if engine_key not in {"piper", "edge", "zerotts"}:
                 # Planned engines do not have runtime-backed catalog entries.
                 continue
             entry_language = str(entry.get("language", "")).strip().lower().split("-", 1)[0]

@@ -190,8 +190,13 @@ class PipelineController:
             cwd=app_root,
             env=env,
             stdin=subprocess.DEVNULL,
-            stdout=None,
-            stderr=None,
+            # pythonw/packaged GUI processes do not own a valid Windows
+            # console handle. Inheriting stdout/stderr makes an innocent
+            # ``print`` inside VAD/ASR raise OSError(22) and abort Prepare.
+            # Progress already travels through /v1/status and tracebacks are
+            # persisted by the worker, so a real DEVNULL handle is safest.
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             close_fds=False,
             **process_kwargs,
         )
@@ -422,9 +427,7 @@ class PipelineController:
             self.progress_dialog.finish_step(previous)
         self.gui._pipeline_step = str(step_id)
         self.progress_dialog.start_step(str(step_id))
-        self.progress_dialog.footer.setText(
-            f"Stage {self.progress_dialog.step_order.index(str(step_id)) + 1}/5: {message}"
-        )
+        self.progress_dialog.update_step_progress(str(step_id), None, message)
 
     def _on_auto_recap_finished(self, decisions, output_path, error):
         worker = getattr(self.gui, "auto_recap_worker", None)
@@ -602,27 +605,53 @@ class PipelineController:
         }
         label = str(message or labels.get(str(step_id or ""), step_id or "Processing")).strip()
         if label and self.progress_dialog:
-            self.progress_dialog.footer.setText(f"Prepare: {label}")
-            self.progress_dialog.footer.setStyleSheet("color: #9fb7d5; font-size: 13px; margin-top: 15px;")
-            if self.target_stage == "transcript":
-                progress_value = None
-                match = re.search(r"\((\d{1,3})%\)", label)
-                if match:
-                    # Reserve the first/last few percent for extraction and
-                    # transcript merge so 100% always means genuinely done.
-                    progress_value = 8 + int(match.group(1)) * 88 // 100
-                elif step_id in {"prepare", "extract_audio", "extraction"}:
-                    progress_value = 2
-                elif step_id == "sensevoice_chunking":
-                    progress_value = 6
-                elif step_id == "transcript_finalize":
-                    progress_value = 97
-                if progress_value is not None:
-                    self.progress_dialog.overall_progress.setValue(
-                        max(0, min(99, progress_value))
-                    )
+            phase = str(step_id or "prepare").strip().lower()
+            if phase not in {"done", "error"}:
+                self.gui._pipeline_step = phase
+            match = re.search(r"(?:\(|\b)(\d{1,3})%(?:\)|\b)", label)
+            reported = max(0, min(100, int(match.group(1)))) if match else None
+            phase_ranges = {
+                "prepare": (1, 4),
+                "extract_audio": (5, 10),
+                "extraction": (5, 10),
+                "separation": (15, 20),
+                "sensevoice_chunking": (25, 8),
+                "diarization": (30, 15),
+                "transcription": (40, 38),
+                "transcript_finalize": (79, 4),
+                "translation": (84, 15),
+                "done": (100, 0),
+            }
+            base, span = phase_ranges.get(phase, (1, 0))
+            progress_value = base if reported is None else base + (reported * span // 100)
+            progress_value = max(0, min(99 if phase != "done" else 100, progress_value))
+            self.progress_dialog.update_step_progress(
+                "ai_process",
+                progress_value,
+                f"{labels.get(phase, phase.replace('_', ' ').title())}  •  {label}",
+            )
         if step_id == "transcription":
             self._hide_whisper_download_dialog()
+
+    def on_voiceover_progress(self, message):
+        """Surface real TTS cue progress instead of writing it only to Logs."""
+        text = str(message or "").strip()
+        if text:
+            self.gui.log(text)
+        if not self.progress_dialog:
+            return
+        match = re.search(r"(\d+)\s*/\s*(\d+)", text)
+        percent_match = re.search(r"(?:\(|\b)(\d{1,3})%(?:\)|\b)", text)
+        percent = None
+        if match and int(match.group(2)) > 0:
+            percent = int(int(match.group(1)) * 100 / int(match.group(2)))
+        elif percent_match:
+            percent = int(percent_match.group(1))
+        self.progress_dialog.update_step_progress("voiceover", percent, text or "Generating voice audio…")
+
+    def on_preview_progress(self, percent, message):
+        if self.progress_dialog:
+            self.progress_dialog.update_step_progress("preview", percent, message)
 
     def on_prepare_workflow_finished(self, project_state_path, error, run_id=None):
         """Callback when the background PrepareWorkflow finishes completely."""
@@ -869,10 +898,20 @@ class PipelineController:
         
         if self.progress_dialog:
             current_step = getattr(self.gui, "_pipeline_step", "prepare")
-            self.progress_dialog.fail_step(current_step)
-            # Show the error reason in the footer
-            self.progress_dialog.footer.setText(f"FAILED: {reason}")
-            self.progress_dialog.footer.setStyleSheet("color: #FF4444; font-weight: bold;")
+            dialog_step = {
+                "prepare": "ai_process",
+                "extract_audio": "ai_process",
+                "extraction": "ai_process",
+                "separation": "ai_process",
+                "diarization": "ai_process",
+                "transcription": "ai_process",
+                "translation": "ai_process",
+            }.get(str(current_step or "").lower(), current_step)
+            detailed_reason = str(reason or "Unknown error").strip()
+            last_activity = str(self.prepare_status_message or "").strip()
+            if dialog_step == "ai_process" and last_activity and last_activity not in detailed_reason:
+                detailed_reason = f"Last activity: {last_activity}\n\n{detailed_reason}"
+            self.progress_dialog.set_error(dialog_step or "ai_process", detailed_reason)
 
         # Restore UI
         if hasattr(self.gui, "run_all_btn"):

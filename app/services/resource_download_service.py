@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import ensurepip
+import fnmatch
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -403,6 +406,37 @@ class ResourceDownloadService:
             issues.append(("piper:runtime", f"Piper runtime could not load: {exc}"))
         return issues
 
+    def validate_tts_voice_runtime(self, voice_id: str) -> list[tuple[str, str]]:
+        """Validate the selected provider without treating every local voice as Piper."""
+        voice_id = str(voice_id or "").strip()
+        if not voice_id or voice_id.startswith(("edge:", "f5:")):
+            return []
+        if voice_id.startswith("zerotts:"):
+            try:
+                if importlib.util.find_spec("zerotts") is None:
+                    raise ModuleNotFoundError("zerotts")
+            except (ImportError, ModuleNotFoundError, ValueError):
+                return [
+                    (
+                        "tts:zerotts",
+                        "ZeroTTS runtime is not installed. Install it from Manage Resources.",
+                    )
+                ]
+            return []
+        return self.validate_piper_voice_runtime(voice_id)
+
+    @staticmethod
+    def _zerotts_model_ready() -> bool:
+        model_dir = models_path("zerotts")
+        required = (
+            "config.json",
+            "null_voice_emb.npy",
+            os.path.join("onnx", "text_encoder.onnx"),
+            os.path.join("onnx", "prefix_step.onnx"),
+            os.path.join("onnx", "local_frame_decode.onnx"),
+        )
+        return all(os.path.isfile(os.path.join(model_dir, relative)) for relative in required)
+
     def validate_pipeline_runtime(self) -> list[tuple[str, str]]:
         """Check local executables and writable working folders before a worker starts."""
         issues: list[tuple[str, str]] = []
@@ -677,7 +711,7 @@ class ResourceDownloadService:
                 "zerotts",
                 "https://pypi.org/project/zerotts/",
                 models_path("zerotts"),
-                "Natural Vietnamese TTS. Install the Python runtime; model weights download on first use.",
+                "Natural Vietnamese TTS. Install downloads and verifies both the runtime and local model with visible progress.",
             ),
             (
                 "tts:korvatts",
@@ -701,16 +735,28 @@ class ResourceDownloadService:
                 runtime_found = importlib.util.find_spec(module_name) is not None
             except (ImportError, ModuleNotFoundError, ValueError):
                 runtime_found = False
+            integrated = resource_id == "tts:zerotts"
+            model_ready = self._zerotts_model_ready() if integrated else False
             resources.append(
                 {
                     "id": resource_id,
                     "name": name,
                     "kind": "voice",
-                    "status": "partial" if runtime_found else "missing",
-                    "status_label": "Runtime found; adapter pending" if runtime_found else "Not installed",
+                    "status": (
+                        "installed"
+                        if runtime_found and integrated and model_ready
+                        else ("partial" if runtime_found else "missing")
+                    ),
+                    "status_label": (
+                        "Runtime and model ready"
+                        if runtime_found and integrated and model_ready
+                        else "Runtime ready; model download required"
+                        if runtime_found and integrated
+                        else ("Runtime found; adapter pending" if runtime_found else "Not installed")
+                    ),
                     "target_dir": target_dir,
                     "download_url": download_url,
-                    "auto_download_supported": False,
+                    "auto_download_supported": integrated,
                     "description": description,
                 }
             )
@@ -754,9 +800,12 @@ class ResourceDownloadService:
                 "tts:kokoro": "kokoro",
             }[resource_id]
             try:
-                return importlib.util.find_spec(module_name) is not None
+                runtime_found = importlib.util.find_spec(module_name) is not None
             except (ImportError, ModuleNotFoundError, ValueError):
                 return False
+            if resource_id == "tts:zerotts":
+                return runtime_found and self._zerotts_model_ready()
+            return runtime_found
         if resource_id.startswith("voice:"):
             voice_id = resource_id.split(":", 1)[1].strip()
             voice_entry = self._find_voice_entry(voice_id)
@@ -912,6 +961,19 @@ class ResourceDownloadService:
                 shutil.copyfileobj(source, output, length=1024 * 1024)
 
     def download_resource(self, resource_id: str, progress_cb=None) -> None:
+        if resource_id == "tts:zerotts":
+            self._install_zerotts_runtime(progress_cb)
+            importlib.invalidate_caches()
+            if not self._python_module_imports("zerotts"):
+                raise RuntimeError(
+                    "ZeroTTS installation command finished, but the runtime could not be imported. "
+                    "Use Retry; VIUStudio will repair pip automatically if necessary."
+                )
+            self._install_zerotts_model(progress_cb)
+            if progress_cb:
+                progress_cb(100, "ZeroTTS runtime and model installed and verified.")
+            return
+
         if resource_id == "sensevoice:model":
             target_dir = models_path("sensevoice")
             self._download_file(
@@ -982,8 +1044,8 @@ class ResourceDownloadService:
                                     os.remove(target_ort)
                                 os.makedirs(ort_dir, exist_ok=True)
                                 shutil.move(downloaded, target_ort)
-                    except Exception as e:
-                        print(f"[CUDA] Failed to download ONNX GPU provider: {e}")
+                    except Exception as exc:
+                        print(f"[CUDA] Failed to download ONNX GPU provider: {exc}")
             if progress_cb:
                 progress_cb(100, "GPU runtime is ready.")
             return
@@ -1045,3 +1107,146 @@ class ResourceDownloadService:
             )
 
         raise ValueError(f"Unsupported resource: {resource_id}")
+
+    @staticmethod
+    def _python_module_imports(module_name: str) -> bool:
+        result = subprocess.run(
+            [sys.executable, "-c", f"import {module_name}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+            **subprocess_hidden_kwargs(),
+        )
+        return result.returncode == 0
+
+    @staticmethod
+    def _pip_runtime_usable() -> bool:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "--version"],
+            capture_output=True,
+            timeout=60,
+            **subprocess_text_kwargs(),
+        )
+        return result.returncode == 0 and "pip " in str(result.stdout or "").lower()
+
+    @staticmethod
+    def _repair_pip_runtime(progress_cb=None) -> None:
+        wheel_dir = os.path.join(os.path.dirname(ensurepip.__file__), "_bundled")
+        wheel_path = os.path.join(wheel_dir, f"pip-{ensurepip.version()}-py3-none-any.whl")
+        if not os.path.isfile(wheel_path):
+            raise RuntimeError(f"Bundled pip repair wheel is missing: {wheel_path}")
+        if progress_cb:
+            progress_cb(5, "Repairing the Python package installer (pip)...")
+        repair_script = (
+            "import sys; w=sys.argv[1]; sys.path.insert(0,w); "
+            "from pip._internal.cli.main import main; "
+            "raise SystemExit(main(['install','--force-reinstall','--no-index',w]))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", repair_script, wheel_path],
+            capture_output=True,
+            timeout=600,
+            **subprocess_text_kwargs(),
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Could not repair pip:\n" + str(result.stderr or result.stdout or "Unknown error"))
+
+    def _install_zerotts_runtime(self, progress_cb=None) -> None:
+        if progress_cb:
+            progress_cb(2, "Checking Python package installer...")
+        if not self._pip_runtime_usable():
+            self._repair_pip_runtime(progress_cb)
+        if not self._pip_runtime_usable():
+            raise RuntimeError("pip is still unavailable after automatic repair.")
+
+        command = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "zerotts",
+            "--disable-pip-version-check",
+            "--progress-bar",
+            "off",
+        ]
+        if progress_cb:
+            progress_cb(10, "Resolving ZeroTTS dependencies...")
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            **subprocess_text_kwargs(),
+        )
+        output_lines: list[str] = []
+        current_percent = 10
+        for raw_line in process.stdout or ():
+            line = str(raw_line or "").strip()
+            if not line:
+                continue
+            output_lines.append(line)
+            lower = line.lower()
+            if lower.startswith("collecting"):
+                current_percent = max(current_percent, 12)
+                message = "Resolving ZeroTTS package..."
+            elif lower.startswith("downloading"):
+                current_percent = max(current_percent, 15)
+                message = "Downloading ZeroTTS runtime..."
+            elif "installing collected packages" in lower:
+                current_percent = max(current_percent, 18)
+                message = "Installing ZeroTTS runtime..."
+            elif "successfully installed" in lower or "requirement already satisfied: zerotts" in lower:
+                current_percent = 20
+                message = "Verifying ZeroTTS runtime..."
+            else:
+                continue
+            if progress_cb:
+                progress_cb(current_percent, message)
+        return_code = process.wait(timeout=1800)
+        if return_code != 0:
+            details = "\n".join(output_lines[-30:]) or "Unknown pip error"
+            raise RuntimeError("ZeroTTS installation failed:\n" + details)
+
+    def _install_zerotts_model(self, progress_cb=None) -> None:
+        if self._zerotts_model_ready():
+            if progress_cb:
+                progress_cb(100, "ZeroTTS model is already available.")
+            return
+        if progress_cb:
+            progress_cb(20, "Reading ZeroTTS model manifest...")
+        try:
+            from huggingface_hub import HfApi, hf_hub_download, hf_hub_url
+            from huggingface_hub.file_download import get_hf_file_metadata
+            from zerotts.hub import _ALLOW_PATTERNS
+        except Exception as exc:
+            raise RuntimeError(f"ZeroTTS model downloader is unavailable: {exc}") from exc
+
+        repo_id = "zeroweight-ai/ZeroTTS"
+        files = HfApi().list_repo_files(repo_id=repo_id)
+        selected = [
+            filename for filename in files
+            if any(fnmatch.fnmatch(filename, pattern) for pattern in _ALLOW_PATTERNS)
+        ]
+        if not selected:
+            raise RuntimeError("ZeroTTS model manifest did not contain any supported files.")
+        target_dir = models_path("zerotts")
+        os.makedirs(target_dir, exist_ok=True)
+        total = len(selected)
+        for index, filename in enumerate(selected):
+            start = 20 + int(index * 78 / total)
+            end = 20 + int((index + 1) * 78 / total)
+            self._download_hf_file(
+                repo_id=repo_id,
+                revision="main",
+                filename=filename,
+                local_dir=target_dir,
+                hf_hub_download=hf_hub_download,
+                hf_hub_url=hf_hub_url,
+                get_hf_file_metadata=get_hf_file_metadata,
+                progress_cb=progress_cb,
+                start_percent=start,
+                end_percent=end,
+                label=f"Downloading ZeroTTS model ({index + 1}/{total}): {os.path.basename(filename)}",
+            )
+        if not self._zerotts_model_ready():
+            raise RuntimeError("ZeroTTS model download completed but required ONNX files are missing.")

@@ -822,6 +822,9 @@ def build_start_group(gui, left_layout):
     gui.voice_engine_combo.currentIndexChanged.connect(gui.on_voice_engine_changed)
     gui.preview_voice_btn = QPushButton("Preview Selected Voice")
     gui.preview_voice_btn.clicked.connect(gui.preview_selected_voice_sample)
+    gui.manage_voice_engines_btn = QPushButton("Install / Manage Voice Engines")
+    gui.manage_voice_engines_btn.setToolTip("Install the selected TTS runtime or manage local voice models.")
+    gui.manage_voice_engines_btn.clicked.connect(gui.open_resource_manager_dialog)
     gui.voice_preview_meta_label = QLabel("Listen to a short sample before generating the full voice track.", gui)
     gui.voice_preview_meta_label.setObjectName("helperLabel")
     gui.voice_preview_meta_label.setWordWrap(True)
@@ -837,7 +840,8 @@ def build_start_group(gui, left_layout):
     fast_voice_layout = QVBoxLayout(gui.fast_voice_panel)
     fast_voice_layout.setContentsMargins(0, 0, 0, 0)
     fast_voice_layout.setSpacing(8)
-    fast_voice_layout.addWidget(QLabel("Fast voice"))
+    gui.voice_choice_label = QLabel("Voice")
+    fast_voice_layout.addWidget(gui.voice_choice_label)
     fast_voice_layout.addWidget(gui.free_voice_combo)
     fast_voice_layout.addWidget(QLabel("Voice type"))
     fast_voice_layout.addWidget(gui.voice_gender_combo)
@@ -845,6 +849,7 @@ def build_start_group(gui, left_layout):
     # Voice preview belongs to the global/default voice configuration.  It is
     # deliberately kept outside the per-speaker diarization controls below.
     voice_setup_layout.addWidget(gui.preview_voice_btn)
+    voice_setup_layout.addWidget(gui.manage_voice_engines_btn)
     voice_setup_layout.addWidget(gui.voice_preview_meta_label)
     # These legacy tuning controls are retained for internal compatibility
     # after removing the Voice Tuning panel, but must never become orphaned

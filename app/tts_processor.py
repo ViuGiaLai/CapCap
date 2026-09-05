@@ -18,6 +18,8 @@ if os.path.exists(ENV_PATH):
 
 _PIPER_VOICE_CACHE = {}
 _PIPER_VOICE_CACHE_LOCK = threading.Lock()
+_ZEROTTS_MODEL = None
+_ZEROTTS_MODEL_LOCK = threading.Lock()
 _VIETNAMESE_NORMALIZER = None
 _VIETNAMESE_NORMALIZER_DATA_DIR = ""
 
@@ -78,6 +80,26 @@ def _get_cached_piper_voice(*, model_path: str, on_progress: callable = None):
         # Avoid double-load if another thread raced.
         _PIPER_VOICE_CACHE.setdefault(model_key, voice)
         return _PIPER_VOICE_CACHE[model_key]
+
+
+def _get_cached_zerotts(*, on_progress: callable = None):
+    global _ZEROTTS_MODEL
+    with _ZEROTTS_MODEL_LOCK:
+        if _ZEROTTS_MODEL is not None:
+            return _ZEROTTS_MODEL
+        try:
+            from zerotts import ZeroTTS
+        except Exception as exc:
+            raise ImportError(
+                "ZeroTTS is not installed. Open Voice → Install / Manage Voice Engines "
+                "and install ZeroTTS first."
+            ) from exc
+        if on_progress:
+            on_progress("Loading ZeroTTS (the model is downloaded on first use)...")
+        local_model_dir = models_path("zerotts")
+        model_source = local_model_dir if os.path.isfile(os.path.join(local_model_dir, "config.json")) else "zeroweight-ai/ZeroTTS"
+        _ZEROTTS_MODEL = ZeroTTS.from_pretrained(model_source)
+        return _ZEROTTS_MODEL
 
 
 def _ffmpeg_path():
@@ -271,6 +293,53 @@ def piper_tts_to_wav_16k_mono(
     return wav_path
 
 
+def zerotts_tts_to_wav_16k_mono(
+    *,
+    text: str,
+    wav_path: str,
+    voice: str = "maichi",
+    speed: float = 1.0,
+    tmp_dir: str | None = None,
+    on_progress: callable = None,
+) -> str:
+    if tmp_dir is None:
+        tmp_dir = temp_path()
+    os.makedirs(os.path.dirname(wav_path) or ".", exist_ok=True)
+    os.makedirs(tmp_dir, exist_ok=True)
+    normalized_text = " ".join(str(text or "").replace("\n", " ").split()).strip()
+    if not normalized_text:
+        raise ValueError("TTS text is empty.")
+
+    model = _get_cached_zerotts(on_progress=on_progress)
+    try:
+        from zerotts import normalize_vi_text
+        normalized_text = normalize_vi_text(normalized_text) or normalized_text
+    except (ImportError, AttributeError):
+        pass
+
+    base = _sanitize_filename(os.path.splitext(os.path.basename(wav_path))[0] or "zerotts")
+    source_path = os.path.join(tmp_dir, f"{base}_zerotts_source.wav")
+    if on_progress:
+        on_progress(f"Synthesizing ZeroTTS voice: {voice or 'maichi'}...")
+    audio = model.synthesize(normalized_text, voice=voice or "maichi")
+    model.save_audio(audio, source_path)
+    _validate_generated_wav(source_path)
+
+    ffmpeg = _ffmpeg_path()
+    if not os.path.exists(ffmpeg):
+        raise FileNotFoundError(f"FFmpeg not found at {ffmpeg}")
+    safe_speed = max(0.5, min(2.0, _speed_to_float(speed)))
+    cmd = [ffmpeg, "-y", "-i", source_path]
+    if abs(safe_speed - 1.0) > 0.001:
+        cmd.extend(["-filter:a", f"atempo={safe_speed:.4f}"])
+    cmd.extend(["-ar", "16000", "-ac", "1", wav_path])
+    proc = subprocess.run(cmd, capture_output=True, timeout=180, **subprocess_text_kwargs())
+    if proc.returncode != 0:
+        raise RuntimeError(f"ZeroTTS audio conversion failed:\n{proc.stderr or proc.stdout}")
+    _validate_generated_wav(wav_path)
+    return wav_path
+
+
 async def _edge_tts_to_mp3_async(text: str, mp3_path: str, voice: str, rate: str, volume: str):
     try:
         import edge_tts
@@ -375,11 +444,22 @@ def preload_tts_voice(voice: str, on_progress: callable = None) -> bool:
             if v.get("provider") == provider and (v.get("provider_voice") == provider_voice or v.get("id") == provider_voice):
                 voice_entry = v
                 break
+    if not voice_entry and voice_to_search.lower().startswith("zerotts:"):
+        voice_entry = {
+            "provider": "zerotts",
+            "provider_voice": voice_to_search.split(":", 1)[1].strip() or "maichi",
+        }
     if not voice_entry:
         return False
 
     provider = voice_entry.get("provider", "").strip().lower()
     provider_voice = str(voice_entry.get("provider_voice", "")).strip()
+    if provider == "zerotts":
+        model = _get_cached_zerotts(on_progress=on_progress)
+        load_voice = getattr(model, "load_voice", None)
+        if callable(load_voice):
+            load_voice(provider_voice or "maichi")
+        return True
     if provider != "piper":
         return False
 
@@ -425,6 +505,14 @@ def synthesize_text_to_wav_16k_mono(
                 voice_entry = v
                 break
     
+    if not voice_entry and voice_to_search.lower().startswith("zerotts:"):
+        voice_entry = {
+            "id": voice_to_search,
+            "provider": "zerotts",
+            "provider_voice": voice_to_search.split(":", 1)[1].strip() or "maichi",
+            "language": "vi",
+        }
+
     # Fallback: use the first available voice
     if not voice_entry:
         voices = catalog.get("voices", [])
@@ -466,6 +554,17 @@ def synthesize_text_to_wav_16k_mono(
             rate=edge_rate,
             tmp_dir=tmp_dir,
         )
+    elif provider == "zerotts":
+        return zerotts_tts_to_wav_16k_mono(
+            text=text,
+            wav_path=wav_path,
+            voice=provider_voice or "maichi",
+            speed=speed,
+            tmp_dir=tmp_dir,
+            on_progress=on_progress,
+        )
     else:
-        raise ValueError(f"Unsupported TTS provider: {provider}. Only 'piper' and 'edge' are supported.")
+        raise ValueError(
+            f"Unsupported TTS provider: {provider}. Supported providers are 'piper', 'edge', and 'zerotts'."
+        )
 

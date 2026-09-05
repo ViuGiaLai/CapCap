@@ -772,6 +772,22 @@ class PreviewController:
         original_volume = int(self.gui.audio_a1_volume_slider.value()) if hasattr(self.gui, 'audio_a1_volume_slider') else 100
         dub_volume = int(self.gui.audio_a2_volume_slider.value()) if hasattr(self.gui, 'audio_a2_volume_slider') else 100
 
+        a1_muted = False
+        if hasattr(self.gui, "_is_audio_track_muted"):
+            a1_muted = bool(self.gui._is_audio_track_muted("A1 Audio") or self.gui._is_audio_track_muted("A1"))
+        if not a1_muted and hasattr(self.gui, "_mute_original"):
+            a1_muted = bool(self.gui._mute_original)
+        if a1_muted:
+            original_volume = 0
+
+        a2_muted = False
+        if hasattr(self.gui, "_is_audio_track_muted"):
+            a2_muted = bool(self.gui._is_audio_track_muted("A2 Dub") or self.gui._is_audio_track_muted("A2"))
+        if not a2_muted and hasattr(self.gui, "_mute_dubbed"):
+            a2_muted = bool(self.gui._mute_dubbed)
+        if a2_muted:
+            dub_volume = 0
+
         # Resolve voice (dub) track
         voice_path = ""
         if hasattr(self.gui, 'last_voice_vi_path') and self.gui.last_voice_vi_path:
@@ -802,19 +818,72 @@ class PreviewController:
         os.makedirs(temp_dir, exist_ok=True)
         output_path = os.path.join(temp_dir, "export_mixed_temp.wav")
 
+        # --- Case 0: Both Muted or 0 volume ---
+        if original_volume <= 0 and dub_volume <= 0:
+            print("[Export] Both original and dub tracks are muted/zero volume; outputting silent audio")
+            try:
+                from audio_mixer import ffprobe_wav_duration
+                ref = voice_path if (voice_path and os.path.exists(voice_path)) else bg_path
+                dur = ffprobe_wav_duration(ref) if (ref and os.path.exists(ref)) else 1.0
+                if dur <= 0.0:
+                    dur = 1.0
+                from pydub import AudioSegment
+                silence = AudioSegment.silent(duration=int(dur * 1000), frame_rate=16000)
+                silence.export(output_path, format="wav")
+                return output_path
+            except Exception as e:
+                print(f"[Export] Failed to generate silence: {e}")
+                return ""
+
         # --- Case 1: Original Only (dub_volume == 0) ---
-        if dub_volume <= 0:
+        if dub_volume <= 0 and original_volume > 0:
             if bg_path and os.path.exists(bg_path):
-                print(f"[Export] Dub volume=0, using original audio only: {bg_path}")
-                return bg_path
+                if original_volume == 100:
+                    print(f"[Export] Dub volume=0, using original audio only (100%): {bg_path}")
+                    return bg_path
+                try:
+                    original_gain_db = self.gui._percent_to_db(original_volume) if hasattr(self.gui, '_percent_to_db') else 0.0
+                    from audio_mixer import _ffmpeg_path
+                    ffmpeg = _ffmpeg_path()
+                    command = [
+                        ffmpeg, "-y", "-loglevel", "error", "-i", bg_path,
+                        "-af", f"volume={original_gain_db:.2f}dB",
+                        "-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1", output_path
+                    ]
+                    import subprocess
+                    from runtime_paths import subprocess_text_kwargs
+                    subprocess.run(command, check=True, **subprocess_text_kwargs())
+                    print(f"[Export] Dub volume=0, scaled original audio to {original_volume}%: {output_path}")
+                    return output_path
+                except Exception as e:
+                    print(f"[Export] Scaled original fallback to raw audio: {e}")
+                    return bg_path
             print("[Export] Dub volume=0 but no original audio found, returning empty")
             return ""
 
         # --- Case 2: Dub Only (original_volume == 0) ---
-        if original_volume <= 0:
+        if original_volume <= 0 and dub_volume > 0:
             if voice_path and os.path.exists(voice_path):
-                print(f"[Export] Original volume=0, using voice only: {voice_path}")
-                return voice_path
+                if dub_volume == 100:
+                    print(f"[Export] Original volume=0, using voice only (100%): {voice_path}")
+                    return voice_path
+                try:
+                    dub_gain_db = self.gui._percent_to_db(dub_volume) if hasattr(self.gui, '_percent_to_db') else 0.0
+                    from audio_mixer import _ffmpeg_path
+                    ffmpeg = _ffmpeg_path()
+                    command = [
+                        ffmpeg, "-y", "-loglevel", "error", "-i", voice_path,
+                        "-af", f"volume={dub_gain_db:.2f}dB",
+                        "-c:a", "pcm_s16le", "-ar", "16000", "-ac", "1", output_path
+                    ]
+                    import subprocess
+                    from runtime_paths import subprocess_text_kwargs
+                    subprocess.run(command, check=True, **subprocess_text_kwargs())
+                    print(f"[Export] Original volume=0, scaled dub audio to {dub_volume}%: {output_path}")
+                    return output_path
+                except Exception as e:
+                    print(f"[Export] Scaled dub fallback to raw voice: {e}")
+                    return voice_path
             print("[Export] Original volume=0 but no voice file found, returning empty")
             return ""
 
@@ -968,7 +1037,16 @@ class PreviewController:
         if str(mode or "").strip().lower() != "subtitle":
             return 0.0
         try:
+            a1_muted = False
+            if hasattr(self.gui, "_is_audio_track_muted"):
+                a1_muted = bool(self.gui._is_audio_track_muted("A1 Audio") or self.gui._is_audio_track_muted("A1"))
+            if not a1_muted and hasattr(self.gui, "_mute_original"):
+                a1_muted = bool(self.gui._mute_original)
+            if a1_muted:
+                return -60.0
             percent = int(self.gui.audio_a1_volume_slider.value())
+            if percent <= 0:
+                return -60.0
             return float(self.gui._percent_to_db(percent))
         except Exception:
             return 0.0
@@ -1694,6 +1772,9 @@ class PreviewController:
         self.gui.preview_thread.finished.connect(
             lambda preview_path, error: self.gui.on_preview_ready(preview_path, error, styled_signature)
         )
+        pipeline_controller = getattr(self.gui, "pipeline_controller", None)
+        if pipeline_controller is not None and hasattr(self.gui.preview_thread, "progress"):
+            self.gui.preview_thread.progress.connect(pipeline_controller.on_preview_progress)
         self.gui.log("[Preview] Starting preview thread")
         self.gui.preview_thread.start()
 

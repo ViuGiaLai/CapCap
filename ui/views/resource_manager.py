@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -94,6 +95,12 @@ def open_resource_manager(workspace_root: str = None, parent=None,
             font-weight: 700;
         }
         QPushButton#primaryBtn:hover { background-color: #059669; }
+        QProgressBar {
+            min-height: 16px; max-height: 16px; border: 1px solid #334155;
+            border-radius: 6px; background: #0f1420; color: #f8fafc;
+            text-align: center; font-size: 10px; font-weight: 700;
+        }
+        QProgressBar::chunk { background-color: #10b981; border-radius: 5px; }
         QScrollBar:vertical {
             border: none;
             background: #0e1118;
@@ -163,31 +170,63 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         worker.setParent(dialog)
 
         dialog._download_workers[resource_id] = worker
+        close_button = getattr(dialog, "_resource_close_btn", None)
+        if close_button is not None:
+            close_button.setEnabled(False)
         install_btn = row.get("install_btn")
         if install_btn is not None:
             install_btn.setEnabled(False)
             install_btn.setText("Installing…")
         progress_label = row.get("progress_label")
+        progress_bar = row.get("progress_bar")
+        if progress_bar is not None:
+            progress_bar.setRange(0, 100)
+            progress_bar.setValue(0)
+            progress_bar.setFormat("0%")
+            progress_bar.show()
 
         def _on_progress(percent: int, message: str):
             if progress_label is not None:
-                progress_label.setText(f"{message} ({percent}%)" if percent >= 0 else str(message))
+                progress_label.setText(str(message))
+            if progress_bar is not None:
+                if percent >= 0:
+                    progress_bar.setRange(0, 100)
+                    progress_bar.setValue(max(0, min(100, percent)))
+                    progress_bar.setFormat(f"{max(0, min(100, percent))}%")
+                else:
+                    progress_bar.setRange(0, 0)
+                    progress_bar.setFormat("Working…")
 
         def _on_finished(done_id: str, error: str):
-            if progress_label is not None:
-                progress_label.setText("Install failed: " + str(error).splitlines()[0] if error else "Installed — refreshing…")
-            if error:
+            verified = not error and service.is_resource_installed(done_id)
+            if error or not verified:
+                message = str(error).splitlines()[0] if error else "Installation finished but verification failed."
+                if progress_label is not None:
+                    progress_label.setText("Install failed: " + message)
+                if progress_bar is not None:
+                    progress_bar.setRange(0, 100)
+                    progress_bar.setFormat("Failed")
                 if install_btn is not None:
                     install_btn.setEnabled(True)
                     install_btn.setText("Retry")
             else:
+                if progress_label is not None:
+                    progress_label.setText("Installed and verified.")
+                if progress_bar is not None:
+                    progress_bar.setRange(0, 100)
+                    progress_bar.setValue(100)
+                    progress_bar.setFormat("100%")
                 if install_btn is not None:
+                    install_btn.setEnabled(False)
                     install_btn.setText("Installed")
                 _refresh()
-            release_thread_when_stopped(
-                worker,
-                on_released=lambda: dialog._download_workers.pop(resource_id, None),
-            )
+            def _release_row_worker():
+                dialog._download_workers.pop(resource_id, None)
+                close_button = getattr(dialog, "_resource_close_btn", None)
+                if close_button is not None:
+                    close_button.setEnabled(not dialog._download_workers)
+
+            release_thread_when_stopped(worker, on_released=_release_row_worker)
 
         worker.progress.connect(_on_progress)
         worker.finished.connect(_on_finished)
@@ -268,6 +307,11 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         progress_label = QLabel("", dialog)
         progress_label.setStyleSheet("color: #8ea3bb; font-size: 10px; background: transparent;")
         progress_label.setWordWrap(True)
+        progress_bar = QProgressBar(dialog)
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(0)
+        progress_bar.setFormat("0%")
+        progress_bar.hide()
         if bool(item.get("auto_download_supported")) and str(item.get("status", "")).lower() != "installed":
             install_btn = QPushButton("Install", dialog)
             install_btn.setObjectName("primaryBtn")
@@ -318,6 +362,7 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         outer.addLayout(button_row)
         if install_btn is not None:
             outer.addWidget(progress_label)
+            outer.addWidget(progress_bar)
 
         target_layout.addWidget(card)
         dialog._resource_rows[item["id"]] = {
@@ -327,6 +372,7 @@ def open_resource_manager(workspace_root: str = None, parent=None,
             "header_row": header_row,
             "install_btn": install_btn,
             "progress_label": progress_label,
+            "progress_bar": progress_bar,
         }
 
     def _make_section(title_text, expanded):
@@ -369,6 +415,11 @@ def open_resource_manager(workspace_root: str = None, parent=None,
             row["item"] = item
             status = str(item.get("status", "missing")).strip().lower()
             _show_status_pill(row, status, str(item.get("status_label", "") or ""))
+            install_btn = row.get("install_btn")
+            if install_btn is not None and resource_id not in dialog._download_workers:
+                installed = status == "installed"
+                install_btn.setEnabled(not installed)
+                install_btn.setText("Installed" if installed else "Install")
 
     def _populate():
         for i in reversed(range(content_layout.count())):
@@ -423,6 +474,7 @@ def open_resource_manager(workspace_root: str = None, parent=None,
     footer_row.addWidget(refresh_btn)
 
     close_btn = QPushButton("Close", dialog)
+    dialog._resource_close_btn = close_btn
     close_btn.clicked.connect(dialog.accept)
     footer_row.addWidget(close_btn)
 

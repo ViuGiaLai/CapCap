@@ -410,12 +410,18 @@ class PreviewConfigurationMixin:
         return str(self.output_ratio_combo.currentText() or "source").strip().lower() or "source"
 
     def get_output_scale_mode_key(self):
-        if not hasattr(self, "output_scale_mode_combo"):
-            return "fit"
-        value = self.output_scale_mode_combo.currentData()
-        if value:
-            return str(value).strip().lower()
-        return str(self.output_scale_mode_combo.currentText() or "fit").strip().lower() or "fit"
+        if hasattr(self, "video_view") and hasattr(self.video_view, "preview_scale_mode"):
+            view_mode = str(getattr(self.video_view, "preview_scale_mode", "") or "").strip().lower()
+            if view_mode in ("fit", "fill"):
+                return view_mode
+        if hasattr(self, "output_scale_mode_combo"):
+            value = self.output_scale_mode_combo.currentData()
+            if value:
+                return str(value).strip().lower()
+            text_val = str(self.output_scale_mode_combo.currentText() or "").strip().lower()
+            if text_val in ("fit", "fill"):
+                return text_val
+        return "fit"
 
     def get_output_fill_focus(self):
         if hasattr(self, "video_view") and hasattr(self.video_view, "get_preview_fill_focus"):

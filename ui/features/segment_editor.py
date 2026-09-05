@@ -94,13 +94,19 @@ class SegmentEditorMixin:
             original_text = str(
                 translated.get("source_text", "")
                 or translated.get("original_text", "")
+                or translated.get("original", "")
                 or base.get("original_text", "")
+                or base.get("original", "")
                 or base.get("text", "")
                 or model_original
                 or timeline_text_by_index.get(idx, "")
                 or ""
             )
-            shown_text = str(translated.get("text", "") or original_text)
+            shown_text = str(
+                translated.get("text", "")
+                or translated.get("translated", "")
+                or original_text
+            )
             rows.append(
                 {
                     "segment_index": idx,
@@ -412,6 +418,16 @@ class SegmentEditorMixin:
         self.set_selected_segment_index(index, sync_ui=True)
         if hasattr(self, "timeline"):
             self.timeline.set_active_segment_index(index)
+        segments = self.get_active_segments() or getattr(self, "live_preview_segments", [])
+        if segments and 0 <= index < len(segments):
+            try:
+                start_s = float(segments[index].get("start", 0.0) or 0.0)
+                target_pos_ms = max(0, int(round(start_s * 1000.0)))
+                current_pos = int(getattr(self.media_player, "position", lambda: 0)() or 0)
+                if abs(current_pos - target_pos_ms) > 100:
+                    self.set_position(target_pos_ms)
+            except Exception:
+                pass
 
     def _show_default_inspector(self):
         self._switch_inspector("default")
@@ -1186,11 +1202,19 @@ class SegmentEditorMixin:
         if not isinstance(track.metadata, dict):
             track.metadata = {}
         track.metadata["_muted"] = bool(checked)
+        track.muted = bool(checked)
+        if track_name in ("A1 Audio", "A1"):
+            self._mute_original = bool(checked)
+        elif track_name in ("A2 Dub", "A2", "TS1"):
+            self._mute_dubbed = bool(checked)
         if hasattr(self, "audio_inspector_mute_btn"):
             self.audio_inspector_mute_btn.setText(
                 "Unmute Track" if checked else "Mute Track"
             )
+        if hasattr(self, "track_label_bar"):
+            self.track_label_bar.set_muted(track_name, bool(checked))
         self._apply_audio_track_settings(track_name)
+        self.schedule_timeline_project_persist()
 
     def on_audio_inspector_solo_toggled(self, checked: bool):
         track, track_name = self._current_audio_track_for_inspector()
@@ -1199,7 +1223,9 @@ class SegmentEditorMixin:
         if not isinstance(track.metadata, dict):
             track.metadata = {}
         track.metadata["_solo"] = bool(checked)
+        track.solo = bool(checked)
         self._apply_audio_track_settings(track_name)
+        self.schedule_timeline_project_persist()
 
     def _refresh_audio_inspector_dub_voice_buttons(self):
         """Enable/disable Dub Voice buttons and populate shared/tabs."""
@@ -1412,6 +1438,9 @@ class SegmentEditorMixin:
         for t in self.timeline._timeline.tracks:
             if t.name == track_name:
                 t.muted = is_muted
+                if not isinstance(t.metadata, dict):
+                    t.metadata = {}
+                t.metadata["_muted"] = bool(is_muted)
 
         muted = bool(is_muted)
         if track_name == "A1 Audio":
@@ -1432,10 +1461,26 @@ class SegmentEditorMixin:
         if hasattr(self, "track_label_bar"):
             self.track_label_bar.set_muted(track_name, muted)
 
+        if hasattr(self, "audio_inspector_mute_btn"):
+            try:
+                curr_track, curr_name = self._current_audio_track_for_inspector()
+                if curr_name == track_name:
+                    self.audio_inspector_mute_btn.blockSignals(True)
+                    self.audio_inspector_mute_btn.setChecked(muted)
+                    self.audio_inspector_mute_btn.setText("Unmute Track" if muted else "Mute Track")
+                    self.audio_inspector_mute_btn.blockSignals(False)
+            except Exception:
+                pass
+
+        self.schedule_timeline_project_persist()
         self.schedule_timeline_visual_refresh(waveform=True, thumbnails=False)
 
     def on_track_blur_toggled(self, track_name: str, is_on: bool):
         """Handle B1 track label click - toggle blur effect."""
+        if hasattr(self, "timeline") and self.timeline._timeline:
+            for track in self.timeline._timeline.tracks:
+                if track.name == track_name or track.name == "B1":
+                    track.visible = bool(is_on)
         if not hasattr(self, "blur_area_btn"):
             return
         self.blur_area_btn.blockSignals(True)
@@ -1450,6 +1495,10 @@ class SegmentEditorMixin:
     def on_track_logo_toggled(self, track_name: str, is_shown: bool):
         """Handle L1 track label click - hide or show the logo overlay."""
         self._logo_track_preview_visible = bool(is_shown)
+        if hasattr(self, "timeline") and self.timeline._timeline:
+            for track in self.timeline._timeline.tracks:
+                if track.name == track_name or track.name == "L1 Logo":
+                    track.visible = bool(is_shown)
         if hasattr(self, "video_view") and hasattr(self.video_view, "set_logo_track_visible"):
             self.video_view.set_logo_track_visible(self._logo_track_preview_visible)
         # Force the next timed refresh to respect the new track state even if
@@ -1470,6 +1519,10 @@ class SegmentEditorMixin:
     def on_track_mask_toggled(self, track_name: str, is_shown: bool):
         """Handle M1 track label click - show or hide the mask filter."""
         self._mask_track_preview_visible = bool(is_shown)
+        if hasattr(self, "timeline") and self.timeline._timeline:
+            for track in self.timeline._timeline.tracks:
+                if track.name == track_name or track.name == "M1":
+                    track.visible = bool(is_shown)
         self.schedule_timeline_project_persist(mask_state=True)
         if not hasattr(self, "media_player"):
             return
@@ -1505,22 +1558,27 @@ class SegmentEditorMixin:
 
     def on_track_text_toggled(self, track_name: str, is_shown: bool):
         """Show or hide every Text layer in the T1 track without changing export data."""
+        self._text_track_preview_visible = bool(is_shown)
         timeline = getattr(self, "timeline", None)
         if timeline is not None and timeline._timeline:
             for track in timeline._timeline.tracks:
-                if track.name == track_name:
-                    self._text_track_preview_visible = bool(is_shown)
-                    timeline._redraw()
-                    self._refresh_text_layer_preview(getattr(timeline, "_selected_layer_id", ""))
-                    if hasattr(self, "track_label_bar"):
-                        self.track_label_bar.set_text_shown(track_name, bool(is_shown))
-                    self.log(f"[Timeline] {'Shown' if is_shown else 'Hidden'} text track: {track_name}")
-                    self.schedule_timeline_project_persist()
-                    return
+                if track.name == track_name or track.name == "T1 Text":
+                    track.visible = bool(is_shown)
+            timeline._redraw()
+            self._refresh_text_layer_preview(getattr(timeline, "_selected_layer_id", ""))
+            if hasattr(self, "track_label_bar"):
+                self.track_label_bar.set_text_shown(track_name, bool(is_shown))
+            self.log(f"[Timeline] {'Shown' if is_shown else 'Hidden'} text track: {track_name}")
+            self.schedule_timeline_project_persist()
+            return
 
     def on_track_subtitle_toggled(self, track_name: str, is_shown: bool):
         """Temporarily show or hide TS1 subtitle output without deleting data."""
         self._subtitle_track_preview_visible = bool(is_shown)
+        if hasattr(self, "timeline") and self.timeline._timeline:
+            for track in self.timeline._timeline.tracks:
+                if track.name == track_name or track.name == "TS1":
+                    track.visible = bool(is_shown)
         if hasattr(self, "video_view") and hasattr(self.video_view, "set_subtitle_track_visible"):
             self.video_view.set_subtitle_track_visible(self._subtitle_track_preview_visible)
         if not is_shown:
@@ -1570,10 +1628,13 @@ class SegmentEditorMixin:
         a1_muted = False
         a2_muted = False
         for t in self.timeline._timeline.tracks:
+            meta = t.metadata if isinstance(t.metadata, dict) else {}
             if t.name == "A1 Audio":
-                a1_muted = bool(t.muted)
+                a1_muted = bool(t.muted) or bool(meta.get("_muted", False))
+                t.muted = a1_muted
             elif t.name == "A2 Dub":
-                a2_muted = bool(t.muted)
+                a2_muted = bool(t.muted) or bool(meta.get("_muted", False))
+                t.muted = a2_muted
         self._mute_original = a1_muted
         self._mute_dubbed = a2_muted
         if hasattr(self, "media_player"):
@@ -1588,6 +1649,21 @@ class SegmentEditorMixin:
         if hasattr(self, "track_label_bar"):
             self.track_label_bar.set_muted("A1 Audio", a1_muted)
             self.track_label_bar.set_muted("A2 Dub", a2_muted)
+        if hasattr(self, "audio_inspector_mute_btn"):
+            try:
+                curr_track, curr_name = self._current_audio_track_for_inspector()
+                if curr_name == "A1 Audio":
+                    self.audio_inspector_mute_btn.blockSignals(True)
+                    self.audio_inspector_mute_btn.setChecked(a1_muted)
+                    self.audio_inspector_mute_btn.setText("Unmute Track" if a1_muted else "Mute Track")
+                    self.audio_inspector_mute_btn.blockSignals(False)
+                elif curr_name == "A2 Dub":
+                    self.audio_inspector_mute_btn.blockSignals(True)
+                    self.audio_inspector_mute_btn.setChecked(a2_muted)
+                    self.audio_inspector_mute_btn.setText("Unmute Track" if a2_muted else "Mute Track")
+                    self.audio_inspector_mute_btn.blockSignals(False)
+            except Exception:
+                pass
 
     def _is_active_timeline_audio_track_muted(self) -> bool:
         track_mutes = self._timeline_audio_track_mutes()

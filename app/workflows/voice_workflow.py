@@ -1331,7 +1331,12 @@ class VoiceWorkflow:
                     f"pending={len(pending_jobs)}, cache_hits={cache_hits}, workers={worker_count}, native_speed={provider_speed:.2f}"
                 )
             if on_progress:
-                on_progress(f"Synthesizing {len(pending_jobs)} subtitle segments (using {worker_count} workers)...")
+                total_count = max(1, len(segments))
+                initial_percent = int(cache_hits * 100 / total_count)
+                on_progress(
+                    f"TTS {cache_hits}/{total_count} ({initial_percent}%) • "
+                    f"Generating {len(pending_jobs)} cues with {worker_count} worker(s)"
+                )
             if not pending_jobs:
                 manifest["segments"] = manifest_segments
                 manifest["by_cache_key"] = manifest_by_cache_key
@@ -1358,7 +1363,6 @@ class VoiceWorkflow:
                     seg_wav = str(job["wav_path"])
                     try:
                         future.result()
-                        completed_count += 1
                     except Exception as exc:
                         preview = " ".join(txt.split())
                         if len(preview) > 120:
@@ -1383,6 +1387,14 @@ class VoiceWorkflow:
                     }
                     manifest_by_cache_key[str(job["cache_key"])] = dict(manifest_segments[str(job["global_idx"])])
                     wavs[idx] = seg_wav
+                    completed_count += 1
+                    if on_progress:
+                        done_count = min(len(segments), cache_hits + completed_count)
+                        percent = int(done_count * 100 / max(1, len(segments)))
+                        on_progress(
+                            f"TTS {done_count}/{len(segments)} ({percent}%) • "
+                            f"Finished cue {int(job['global_idx']) + 1}"
+                        )
         elif log:
             print(f"[Voice Workflow] TTS synth jobs: pending=0, cache_hits={cache_hits}, workers=0, native_speed={provider_speed:.2f}")
 

@@ -50,27 +50,47 @@ class StepWidget(QFrame):
             }
         """)
         
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 11, 14, 11)
+        layout.setSpacing(7)
+        header = QHBoxLayout()
         
         self.indicator = QWidget()
         self.indicator.setFixedSize(8, 8)
         self.indicator.setStyleSheet("background-color: #334155; border-radius: 4px;")
-        layout.addWidget(self.indicator)
-        layout.addSpacing(8)
+        header.addWidget(self.indicator)
+        header.addSpacing(8)
         
         self.name_label = QLabel(name)
         self.name_label.setObjectName("stepName")
-        layout.addWidget(self.name_label)
+        header.addWidget(self.name_label)
         
-        layout.addStretch()
+        header.addStretch()
         
         self.status_label = QLabel("Pending")
         self.status_label.setObjectName("stepStatus")
         self.status_label.setFixedWidth(80)
         self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.status_label.setStyleSheet("color: #64748b;")
-        layout.addWidget(self.status_label)
+        header.addWidget(self.status_label)
+        layout.addLayout(header)
+
+        self.detail_label = QLabel("Waiting for the previous step")
+        self.detail_label.setWordWrap(True)
+        self.detail_label.setStyleSheet("color: #718096; font-size: 11px;")
+        layout.addWidget(self.detail_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background: #0b1020; border: none; border-radius: 2px; }
+            QProgressBar::chunk { background: #3b82f6; border-radius: 2px; }
+        """)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
         
         # Pulse animation for running state
         self.pulse_timer = QTimer(self)
@@ -97,6 +117,9 @@ class StepWidget(QFrame):
                 #stepStatus { font-size: 11px; font-weight: 600; }
             """)
             self.pulse_timer.start()
+            self.progress_bar.show()
+            if self.detail_label.text() == "Waiting for the previous step":
+                self.detail_label.setText("Starting…")
         elif status == "done":
             self.status_label.setText("Completed")
             self.status_label.setStyleSheet("color: #6ee7b7;")
@@ -114,6 +137,11 @@ class StepWidget(QFrame):
                 #stepStatus { font-size: 11px; font-weight: 600; }
             """)
             self.pulse_timer.stop()
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(100)
+            self.progress_bar.show()
+            if self.detail_label.text() in {"Starting…", "Waiting for the previous step"}:
+                self.detail_label.setText("Finished successfully")
         elif status == "failed":
             self.status_label.setText("Failed")
             self.status_label.setStyleSheet("color: #fca5a5;")
@@ -131,11 +159,16 @@ class StepWidget(QFrame):
                 #stepStatus { font-size: 11px; font-weight: 600; }
             """)
             self.pulse_timer.stop()
+            self.progress_bar.show()
         elif status == "skipped":
             self.status_label.setText("Skipped")
             self.status_label.setStyleSheet("color: #fde047;")
             self.indicator.setStyleSheet("background-color: #f59e0b; border-radius: 4px;")
             self.pulse_timer.stop()
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(100)
+            self.progress_bar.show()
+            self.detail_label.setText("Not required for this run")
         else:
             self.status_label.setText("Pending")
             self.status_label.setStyleSheet("color: #64748b;")
@@ -152,6 +185,26 @@ class StepWidget(QFrame):
                 #stepName { font-size: 13px; font-weight: 600; }
                 #stepStatus { font-size: 11px; font-weight: 600; }
             """)
+            self.progress_bar.hide()
+            self.detail_label.setText("Waiting for the previous step")
+
+    def set_progress(self, percent=None, detail=""):
+        if detail:
+            self.detail_label.setText(str(detail).strip())
+        self.progress_bar.show()
+        if percent is None or int(percent) < 0:
+            self.progress_bar.setRange(0, 0)
+            self.status_label.setText("Working")
+            return
+        value = max(0, min(100, int(percent)))
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(value)
+        if self.status == "running":
+            self.status_label.setText(f"{value}%")
+
+    def set_error(self, detail):
+        self.set_status("failed")
+        self.detail_label.setText(str(detail or "Unknown error").strip())
         
     def _toggle_pulse(self):
         self._pulse_state = not self._pulse_state
@@ -166,7 +219,7 @@ class PipelineProgressDialog(QDialog):
         self._stopped = False
         self._drag_pos = None
         self.setWindowTitle("VIUStudio AI Pipeline")
-        self.setFixedSize(580, 680)
+        self.setFixedSize(640, 700)
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
         self.setWindowModality(Qt.NonModal)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -177,7 +230,7 @@ class PipelineProgressDialog(QDialog):
         
         self.main_frame = QFrame(self)
         self.main_frame.setObjectName("mainFrame")
-        self.main_frame.setFixedSize(560, 660)
+        self.main_frame.setFixedSize(620, 680)
         self.main_frame.move(10, 10)
         self.main_frame.setStyleSheet("""
             #mainFrame {
@@ -202,6 +255,14 @@ class PipelineProgressDialog(QDialog):
         self.title_label = QLabel("AI Production Pipeline")
         self.title_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #f8fafc;")
         header_layout.addWidget(self.title_label)
+
+        self.overall_percent_label = QLabel("0%")
+        self.overall_percent_label.setAlignment(Qt.AlignCenter)
+        self.overall_percent_label.setFixedSize(48, 26)
+        self.overall_percent_label.setStyleSheet(
+            "background:#10243d; color:#7dd3fc; border:1px solid #28527a; "
+            "border-radius:13px; font-size:12px; font-weight:700;"
+        )
         
         self.close_btn = QPushButton("✕", self)
         self.close_btn.setFixedSize(28, 28)
@@ -220,11 +281,12 @@ class PipelineProgressDialog(QDialog):
         """)
         self.close_btn.clicked.connect(self.hide)
         header_layout.addStretch()
+        header_layout.addWidget(self.overall_percent_label)
         header_layout.addWidget(self.close_btn)
         layout.addLayout(header_layout)
         
         self.overall_progress = QProgressBar()
-        self.overall_progress.setFixedHeight(6)
+        self.overall_progress.setFixedHeight(8)
         self.overall_progress.setRange(0, 100)
         self.overall_progress.setValue(0)
         self.overall_progress.setTextVisible(False)
@@ -240,6 +302,10 @@ class PipelineProgressDialog(QDialog):
             }
         """)
         layout.addWidget(self.overall_progress)
+
+        self.overall_detail = QLabel("Preparing workflow…")
+        self.overall_detail.setStyleSheet("color:#8292aa; font-size:11px;")
+        layout.addWidget(self.overall_detail)
         
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -258,10 +324,21 @@ class PipelineProgressDialog(QDialog):
         self.step_order = []
         
         self.footer = QLabel("Initializing workflow engine...")
+        self.footer.setWordWrap(True)
         self.footer.setStyleSheet("color: #94a3b8; font-size: 12px;")
         layout.addWidget(self.footer)
 
-        self.total_time_label = QLabel("Total time: 00:00")
+        self.error_label = QLabel("")
+        self.error_label.setWordWrap(True)
+        self.error_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.error_label.setStyleSheet(
+            "background:#29151b; color:#fecaca; border:1px solid #6b2635; "
+            "border-radius:7px; padding:9px; font-size:11px;"
+        )
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
+
+        self.total_time_label = QLabel("Elapsed 00:00  •  Remaining —")
         self.total_time_label.setStyleSheet("color: #cbd5e1; font-size: 12px;")
         layout.addWidget(self.total_time_label)
 
@@ -357,7 +434,32 @@ class PipelineProgressDialog(QDialog):
             idx = self.step_order.index(step_id)
             val = int((idx / len(self.step_order)) * 100)
             self.overall_progress.setValue(val)
+            self.overall_percent_label.setText(f"{val}%")
+            self.overall_detail.setText(
+                f"Step {idx + 1} of {len(self.step_order)}  •  {self.steps[step_id].name_label.text()}"
+            )
             self.footer.setText(f"Stage {idx+1}/{len(self.step_order)}: {self.steps[step_id].name_label.text()}")
+
+    def update_step_progress(self, step_id, percent=None, detail=""):
+        if step_id not in self.steps:
+            return
+        widget = self.steps[step_id]
+        if widget.status != "running":
+            self.start_step(step_id)
+        widget.set_progress(percent, detail)
+        idx = self.step_order.index(step_id)
+        stage_fraction = (
+            0.0 if percent is None or int(percent) < 0
+            else max(0, min(100, int(percent))) / 100.0
+        )
+        overall = int(((idx + stage_fraction) / max(1, len(self.step_order))) * 100)
+        self.overall_progress.setValue(overall)
+        self.overall_percent_label.setText(f"{overall}%")
+        self.overall_detail.setText(
+            f"Step {idx + 1} of {len(self.step_order)}  •  {widget.name_label.text()}"
+        )
+        if detail:
+            self.footer.setText(str(detail).strip())
 
     def finish_step(self, step_id):
         if step_id in self.steps:
@@ -365,6 +467,7 @@ class PipelineProgressDialog(QDialog):
             idx = self.step_order.index(step_id)
             val = int(((idx + 1) / len(self.step_order)) * 100)
             self.overall_progress.setValue(val)
+            self.overall_percent_label.setText(f"{val}%")
 
     def fail_step(self, step_id):
         if step_id in self.steps:
@@ -377,6 +480,20 @@ class PipelineProgressDialog(QDialog):
         if step_id in self.steps:
             self.steps[step_id].set_status("skipped")
 
+    def set_error(self, step_id, reason):
+        step = self.steps.get(step_id)
+        if step is not None:
+            step.set_error(reason)
+            step_name = step.name_label.text()
+        else:
+            step_name = str(step_id or "Current step")
+        message = str(reason or "Unknown error").strip()
+        self.error_label.setText(f"Failed in {step_name}\n{message}")
+        self.error_label.show()
+        self.footer.setText(f"Stopped at: {step_name}")
+        self.footer.setStyleSheet("color:#fca5a5; font-size:12px; font-weight:600;")
+        self._stop_total_timer()
+
     def set_completed(self):
         self.stop_btn.hide()
         for step_id in self.step_order:
@@ -388,6 +505,8 @@ class PipelineProgressDialog(QDialog):
             elif widget.status == "pending":
                 widget.set_status("skipped")
         self.overall_progress.setValue(100)
+        self.overall_percent_label.setText("100%")
+        self.overall_detail.setText("All requested steps completed")
         self.footer.setText("✨ Pipeline execution complete! Video is ready.")
         self.footer.setStyleSheet("color: #00FF88; font-weight: bold; font-size: 14px; margin-top: 15px;")
         self._stop_total_timer()
@@ -399,10 +518,17 @@ class PipelineProgressDialog(QDialog):
         mins = elapsed // 60
         secs = elapsed % 60
         hours, mins = divmod(mins, 60)
-        if hours > 0:
-            self.total_time_label.setText(f"Total time: {hours}:{mins:02d}:{secs:02d}")
+        elapsed_text = (
+            f"{hours}:{mins:02d}:{secs:02d}" if hours > 0
+            else f"{mins:02d}:{secs:02d}"
+        )
+        value = self.overall_progress.value()
+        if 1 <= value < 100:
+            remaining = max(0, int(elapsed * (100 - value) / value))
+            eta_text = f"{remaining // 60:02d}:{remaining % 60:02d}"
         else:
-            self.total_time_label.setText(f"Total time: {mins:02d}:{secs:02d}")
+            eta_text = "—"
+        self.total_time_label.setText(f"Elapsed {elapsed_text}  •  Remaining {eta_text}")
 
     def _stop_total_timer(self):
         if self.total_timer.isActive():
@@ -413,10 +539,12 @@ class PipelineProgressDialog(QDialog):
         mins = elapsed // 60
         secs = elapsed % 60
         hours, mins = divmod(mins, 60)
-        if hours > 0:
-            self.total_time_label.setText(f"Total time: {hours}:{mins:02d}:{secs:02d}")
-        else:
-            self.total_time_label.setText(f"Total time: {mins:02d}:{secs:02d}")
+        elapsed_text = (
+            f"{hours}:{mins:02d}:{secs:02d}" if hours > 0
+            else f"{mins:02d}:{secs:02d}"
+        )
+        remaining_text = "00:00" if self.overall_progress.value() >= 100 else "—"
+        self.total_time_label.setText(f"Elapsed {elapsed_text}  •  Remaining {remaining_text}")
         self.workflow_start_time = None
 
     def _on_stop(self):

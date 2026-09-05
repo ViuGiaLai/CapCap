@@ -357,7 +357,7 @@ class RuntimeMediaMixin:
 
         if include_voice and not is_remote_profile():
             voice_name = self.get_active_voice_name()
-            if voice_name and not str(voice_name).startswith("edge:") and not str(voice_name).startswith("f5:"):
+            if voice_name and not str(voice_name).startswith(("edge:", "f5:", "zerotts:")):
                 resource_id = f"voice:{voice_name}"
                 if not service.is_resource_installed(resource_id):
                     voice_label = voice_name
@@ -370,7 +370,7 @@ class RuntimeMediaMixin:
             missing.extend(service.validate_ocr_runtime())
 
         if include_voice and not is_remote_profile():
-            missing.extend(service.validate_piper_voice_runtime(self.get_active_voice_name()))
+            missing.extend(service.validate_tts_voice_runtime(self.get_active_voice_name()))
 
         if validate_pipeline_runtime and not is_remote_profile():
             missing.extend(service.validate_pipeline_runtime())
@@ -534,6 +534,22 @@ class RuntimeMediaMixin:
         audio_mode_key = str(self.get_audio_handling_mode() or "fast").strip().lower()
         original_volume = int(self.audio_a1_volume_slider.value()) if hasattr(self, "audio_a1_volume_slider") else 50
         dub_volume = int(self.audio_a2_volume_slider.value()) if hasattr(self, "audio_a2_volume_slider") else 100
+
+        a1_muted = False
+        if hasattr(self, "_is_audio_track_muted"):
+            a1_muted = bool(self._is_audio_track_muted("A1 Audio") or self._is_audio_track_muted("A1"))
+        if not a1_muted and hasattr(self, "_mute_original"):
+            a1_muted = bool(self._mute_original)
+        if a1_muted:
+            original_volume = 0
+
+        a2_muted = False
+        if hasattr(self, "_is_audio_track_muted"):
+            a2_muted = bool(self._is_audio_track_muted("A2 Dub") or self._is_audio_track_muted("A2"))
+        if not a2_muted and hasattr(self, "_mute_dubbed"):
+            a2_muted = bool(self._mute_dubbed)
+        if a2_muted:
+            dub_volume = 0
         signature_payload = {
             "voice": os.path.abspath(voice_only),
             "voice_size": int(voice_stat.st_size),

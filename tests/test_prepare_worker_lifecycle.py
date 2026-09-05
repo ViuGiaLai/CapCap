@@ -1,7 +1,9 @@
 import os
+import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import Mock, patch
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -33,6 +35,22 @@ class _GuiHarness:
 
 
 class PrepareWorkerLifecycleTests(unittest.TestCase):
+    def test_local_worker_never_inherits_gui_console_handles(self):
+        controller = PipelineController(_GuiHarness())
+        process = Mock()
+        process.poll.return_value = None
+        with patch.object(controller, "_stop_local_worker_server"), \
+             patch.object(controller, "_find_free_local_port", return_value=32123), \
+             patch.object(controller, "_wait_for_local_worker_server"), \
+             patch("controllers.pipeline_controller.subprocess_hidden_kwargs", return_value={}), \
+             patch("controllers.pipeline_controller.subprocess.Popen", return_value=process) as popen:
+            controller._start_local_worker_server("cpu")
+
+        kwargs = popen.call_args.kwargs
+        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertIs(kwargs["stdout"], subprocess.DEVNULL)
+        self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
+
     def test_result_does_not_release_qthread_before_native_finished(self):
         app = QCoreApplication.instance() or QCoreApplication([])
         gui = _GuiHarness()
