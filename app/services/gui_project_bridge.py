@@ -118,6 +118,25 @@ class GUIProjectBridge:
         if not state:
             return context
 
+        # Older transcript-only runs incorrectly registered a translated SRT
+        # even though translation was explicitly skipped.  Repair that state
+        # on load so existing projects stop restoring a stale translation.
+        if str(state.steps.get("translate_raw", "") or "").strip().lower() == "skipped":
+            removed_stale_translation = False
+            for artifact_name in (
+                "translation_raw",
+                "translation_refined",
+                "translation_final",
+                "subtitle_translated_srt",
+                "srt_translated",
+            ):
+                if state.artifacts.pop(artifact_name, None) is not None:
+                    removed_stale_translation = True
+            if state.settings.pop("translation_signature", None) is not None:
+                removed_stale_translation = True
+            if removed_stale_translation:
+                self.project_service.save_project(state)
+
         context["artifacts"] = dict(state.artifacts)
         context["last_original_srt_path"] = state.artifacts.get("subtitle_original_srt") or state.artifacts.get("srt_original") or ""
         context["last_translated_srt_path"] = state.artifacts.get("subtitle_translated_srt") or state.artifacts.get("srt_translated") or ""
