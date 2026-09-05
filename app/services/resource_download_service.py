@@ -476,10 +476,12 @@ class ResourceDownloadService:
                 # OCR as the subtitle source.
                 ("sensevoice:model", "SenseVoice model"),
                 ("sensevoice:runtime", "SenseVoice runtime"),
+                ("sensevoice:vad", "Silero VAD"),
             ]
         return [
             ("sensevoice:model", "SenseVoice model"),
             ("sensevoice:runtime", "SenseVoice runtime"),
+            ("sensevoice:vad", "Silero VAD"),
             ("cuda:whisper", "CUDA runtime pack"),
             ("nvidia_driver", "NVIDIA driver"),
         ]
@@ -521,10 +523,9 @@ class ResourceDownloadService:
                     {"label": "Download model (237 MB)", "url": self.SENSEVOICE_MODEL_URL},
                     {"label": "Download tokens.txt", "url": self.SENSEVOICE_TOKENS_URL},
                 ],
-                "auto_download_supported": False,
+                "auto_download_supported": True,
                 "description": (
-                    "Required to create a project in CPU Mode. Download both files, "
-                    "save them directly in the target folder, then click Refresh."
+                    "Required for CPU transcription. VIUStudio can download and install both files automatically."
                 ),
             },
             {
@@ -538,10 +539,9 @@ class ResourceDownloadService:
                 "download_links": [
                     {"label": "Download silero_vad.onnx", "url": self.SILERO_VAD_URL},
                 ],
-                "auto_download_supported": False,
+                "auto_download_supported": True,
                 "description": (
-                    "Detects speech segments before SenseVoice transcription. "
-                    "Download this file directly into the target folder, then click Refresh."
+                    "Detects speech segments before transcription. VIUStudio can download it automatically."
                 ),
             },
             {
@@ -774,6 +774,36 @@ class ResourceDownloadService:
                 os.remove(tmp_path)
 
     @staticmethod
+    def _download_file(url: str, target_path: str, progress_cb=None, *, label: str = "Downloading file...") -> str:
+        """Download one model file atomically while reporting 0-100 progress."""
+        import urllib.request
+
+        target = os.path.abspath(str(target_path))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        temporary = f"{target}.part"
+        if progress_cb:
+            progress_cb(0, label)
+
+        def _report(block_num, block_size, total_size):
+            if progress_cb and total_size > 0:
+                progress_cb(min(99, int(block_num * block_size * 100 / total_size)), label)
+
+        try:
+            urllib.request.urlretrieve(url, temporary, reporthook=_report)
+            if not os.path.isfile(temporary) or os.path.getsize(temporary) <= 0:
+                raise IOError(f"Downloaded file is empty: {url}")
+            os.replace(temporary, target)
+            if progress_cb:
+                progress_cb(100, f"{label} ready")
+            return target
+        finally:
+            if os.path.exists(temporary):
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
+
+    @staticmethod
     def _safe_extract_zip(zip_ref, extract_to: str) -> None:
         """Extract a trusted resource archive without allowing path escapes.
 
@@ -827,6 +857,31 @@ class ResourceDownloadService:
                 shutil.copyfileobj(source, output, length=1024 * 1024)
 
     def download_resource(self, resource_id: str, progress_cb=None) -> None:
+        if resource_id == "sensevoice:model":
+            target_dir = models_path("sensevoice")
+            self._download_file(
+                self.SENSEVOICE_MODEL_URL,
+                os.path.join(target_dir, "model.int8.onnx"),
+                progress_cb,
+                label="Downloading SenseVoice model",
+            )
+            self._download_file(
+                self.SENSEVOICE_TOKENS_URL,
+                os.path.join(target_dir, "tokens.txt"),
+                progress_cb,
+                label="Downloading SenseVoice tokens",
+            )
+            return
+
+        if resource_id == "sensevoice:vad":
+            self._download_file(
+                self.SILERO_VAD_URL,
+                bin_path("silero_vad.onnx"),
+                progress_cb,
+                label="Downloading Silero VAD",
+            )
+            return
+
         if resource_id.startswith("whisper:"):
             raise ValueError(
                 "Whisper models are downloaded manually. Use Open Download Page, then extract the ZIP into models/faster_whisper."

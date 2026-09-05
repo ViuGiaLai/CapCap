@@ -1633,9 +1633,9 @@ def build_preview_panel(gui):
 
     # --- Blur Opacity ---
     blur_opacity_row = QHBoxLayout()
-    blur_opacity_label = QLabel("Opacity (Transparency)")
+    blur_opacity_label = QLabel("Opacity")
     blur_opacity_label.setObjectName("sectionTitle")
-    blur_opacity_label.setFixedWidth(140)
+    blur_opacity_label.setFixedWidth(90)
     blur_opacity_row.addWidget(blur_opacity_label)
     gui.blur_inspector_opacity_slider = QSlider(Qt.Horizontal)
     gui.blur_inspector_opacity_slider.setRange(0, 100)

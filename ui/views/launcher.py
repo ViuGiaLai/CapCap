@@ -135,11 +135,11 @@ def _get_video_duration(video_path: str) -> float:
 
 
 MSG_STYLE = """
-    QMessageBox { background-color: #141824; }
+    QMessageBox { background-color: #0d121c; }
     QLabel { color: #f1f5f9; font-size: 12px; }
-    QPushButton { background-color: #1c2230; color: #f8fbff; border: 1px solid #2b354a;
+    QPushButton { background-color: #121826; color: #f8fbff; border: 1px solid #1e283a;
         border-radius: 6px; padding: 6px 16px; font-weight: 600; font-size: 11px; }
-    QPushButton:hover { background-color: #262e42; border-color: #3b82f6; }
+    QPushButton:hover { background-color: #1c273c; border-color: #6366f1; }
 """
 
 
@@ -157,13 +157,13 @@ class ProjectCard(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("""
             QFrame#projectCard {
-                background-color: #0f1c2b;
-                border: 1px solid #1e3047;
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
                 border-radius: 12px;
             }
             QFrame#projectCard:hover {
-                border: 1px solid #3a90d0;
-                background-color: #132438;
+                border: 1px solid #6366f1;
+                background-color: #172033;
             }
         """)
 
@@ -175,21 +175,21 @@ class ProjectCard(QFrame):
         self.thumb_label.setMinimumSize(200, 120)
         self.thumb_label.setFixedHeight(125)
         self.thumb_label.setAlignment(Qt.AlignCenter)
-        self.thumb_label.setStyleSheet("background-color: #070d14; border-radius: 8px; color: #475569; font-size: 11px;")
+        self.thumb_label.setStyleSheet("background-color: #06080d; border-radius: 8px; color: #64748b; font-size: 11px;")
         self.thumb_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self.thumb_label)
 
         self.name_label = QLabel(display_name or os.path.basename(video_path) or "Untitled Project")
         self.name_label.setWordWrap(True)
         self.name_label.setMaximumHeight(34)
-        self.name_label.setStyleSheet("color: #eaf4ff; font-size: 12px; font-weight: 600; line-height: 1.2em;")
+        self.name_label.setStyleSheet("color: #f8fafc; font-size: 12px; font-weight: 600; line-height: 1.2em;")
         layout.addWidget(self.name_label)
 
         stage_text, stage_color = _project_pipeline_status(video_path, project_state_path)
         self.stage_badge = QLabel(stage_text)
         self.stage_badge.setAlignment(Qt.AlignCenter)
         self.stage_badge.setStyleSheet(
-            f"background-color: #0b1420; color: {stage_color}; border: 1px solid #1e3047; "
+            f"background-color: #080b11; color: {stage_color}; border: 1px solid #1e293b; "
             "border-radius: 999px; padding: 4px 10px; font-size: 10px; font-weight: 700;"
         )
         layout.addWidget(self.stage_badge)
@@ -378,23 +378,23 @@ class LauncherWindow(QDialog):
         self.setMinimumSize(860, 560)
         self.setStyleSheet("""
             QDialog {
-                background-color: #0b1118;
+                background-color: #080b11;
                 color: #cdd9e5;
                 font-family: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
             }
             #headerCard {
-                background-color: #0e1520;
-                border: 1px solid #1a2536;
+                background-color: #0d121c;
+                border: 1px solid #1e293b;
                 border-radius: 14px;
             }
             #projectCard {
-                background-color: #0f1c2b;
-                border: 1px solid #1e3047;
+                background-color: #0f172a;
+                border: 1px solid #1e293b;
                 border-radius: 12px;
             }
             #projectCard:hover {
-                border: 1px solid #3a90d0;
-                background-color: #132438;
+                border: 1px solid #6366f1;
+                background-color: #172033;
             }
             QScrollArea {
                 border: none;
@@ -402,43 +402,43 @@ class LauncherWindow(QDialog):
             }
             QScrollBar:vertical {
                 border: none;
-                background: #0b1118;
-                width: 8px;
+                background: #080b11;
+                width: 7px;
                 margin: 0px;
             }
             QScrollBar::handle:vertical {
-                background: #1e3555;
+                background: #1e293b;
                 min-height: 28px;
-                border-radius: 4px;
+                border-radius: 3px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #2a4e7a;
+                background: #334155;
             }
             QFrame#launcherAside {
-                background: #1d1824;
-                border: 1px solid #3a2d45;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0d121c, stop:1 #080b11);
+                border: 1px solid #1e293b;
                 border-radius: 18px;
             }
             QLabel#launcherEyebrow {
-                color: #f0b35c; font-size: 10px; font-weight: 800;
+                color: #818cf8; font-size: 10px; font-weight: 800;
                 letter-spacing: 1.4px;
             }
             QLabel#launcherHero {
-                color: #fff4e6; font-size: 27px; font-weight: 900;
+                color: #f8fafc; font-size: 27px; font-weight: 900;
             }
-            QLabel#launcherAsideBody { color: #bcaec6; font-size: 12px; line-height: 1.4em; }
+            QLabel#launcherAsideBody { color: #94a3b8; font-size: 12px; line-height: 1.4em; }
             QLabel#launcherStep {
-                color: #d9cadd; font-size: 12px; font-weight: 700;
-                background: #2a2031; border: 1px solid #493653;
+                color: #cbd5e1; font-size: 12px; font-weight: 700;
+                background: #131926; border: 1px solid #1e293b;
                 border-radius: 10px; padding: 10px;
             }
             QLabel#launcherInstallState {
-                color: #9edbc9; font-size: 11px; font-weight: 700;
-                background: #162a29; border: 1px solid #2f6658;
+                color: #34d399; font-size: 11px; font-weight: 700;
+                background: #064e3b; border: 1px solid #059669;
                 border-radius: 10px; padding: 10px;
             }
-            QFrame#launcherMainColumn { background: #111217; border: none; }
-            QLabel#launcherSectionLabel { color: #f0b35c; font-size: 12px; font-weight: 800; letter-spacing: 1px; }
+            QFrame#launcherMainColumn { background: #080b11; border: none; }
+            QLabel#launcherSectionLabel { color: #818cf8; font-size: 12px; font-weight: 800; letter-spacing: 1px; }
         """)
 
         self._build_ui()
@@ -492,9 +492,9 @@ class LauncherWindow(QDialog):
         header.setSpacing(16)
 
         title = QLabel("VIUStudio")
-        title.setStyleSheet("font-size: 24px; font-weight: 800; color: #eaf4ff; letter-spacing: 0.3px;")
+        title.setStyleSheet("font-size: 24px; font-weight: 800; color: #f8fafc; letter-spacing: 0.3px;")
         subtitle = QLabel("Video Translation & Voiceover Studio")
-        subtitle.setStyleSheet("font-size: 12px; color: #7a8fa8; font-weight: 500;")
+        subtitle.setStyleSheet("font-size: 12px; color: #94a3b8; font-weight: 500;")
 
         header_text = QVBoxLayout()
         header_text.setSpacing(4)
@@ -515,7 +515,7 @@ class LauncherWindow(QDialog):
         self._missing_label.setWordWrap(True)
         self._missing_label.setStyleSheet(
             "font-size: 11px; color: #fca5a5; padding: 4px 8px;"
-            " background-color: #2a141a; border: 1px solid #4a1f26; border-radius: 6px;"
+            " background-color: #271418; border: 1px solid #4c1d24; border-radius: 6px;"
         )
         self._missing_label.hide()
         header_text.addWidget(self._missing_label)
@@ -533,18 +533,18 @@ class LauncherWindow(QDialog):
 
         btn_style = """
             QPushButton {
-                color: #7a8fa8; border: 1px solid #1e3047; padding: 5px 14px;
+                color: #94a3b8; border: 1px solid #1e293b; padding: 5px 14px;
                 font-size: 11px; font-weight: 700; border-radius: 0;
-                background-color: #0d1825;
+                background-color: #0d121c;
             }
             QPushButton:hover {
-                background-color: #162436; color: #c8d6e6;
+                background-color: #151d2c; color: #f1f5f9;
             }
             QPushButton:checked {
-                background-color: #1a3550; color: #4da6e8; border-color: #3a90d0;
+                background-color: #1e1b4b; color: #818cf8; border-color: #6366f1;
             }
             QPushButton:disabled {
-                color: #3d5068; border-color: #162030; background-color: #0b1420;
+                color: #334155; border-color: #131926; background-color: #080b11;
             }
         """
         self.cpu_btn.setStyleSheet(btn_style + "QPushButton { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }")
@@ -589,28 +589,29 @@ class LauncherWindow(QDialog):
         self.new_btn.setStyleSheet("""
             QPushButton {
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #2dbd9a, stop:1 #1e9078);
-                color: #071210;
+                    stop:0 #10b981, stop:1 #059669);
+                color: #ffffff;
                 font-weight: 700;
                 font-size: 13px;
                 border-radius: 8px;
-                border: none;
-                border-bottom: 2px solid #136754;
+                border: 1px solid #34d399;
                 padding: 6px 16px;
                 letter-spacing: 0.2px;
             }
             QPushButton:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #40d4ae, stop:1 #25a98d);
+                    stop:0 #34d399, stop:1 #10b981);
+                border-color: #6ee7b7;
             }
             QPushButton:pressed {
-                border-bottom: 1px solid #0e4d3c;
+                background-color: #047857;
+                border-color: #059669;
                 padding-top: 7px;
             }
             QPushButton:disabled {
-                background-color: #0e1824;
-                color: #3d5068;
-                border-color: #1a2a3a;
+                background-color: #112620;
+                color: #3b5f54;
+                border-color: #1b3830;
             }
         """)
         self.new_btn.clicked.connect(self._on_new_project)
@@ -618,22 +619,22 @@ class LauncherWindow(QDialog):
 
         sec_btn_style = """
             QPushButton {
-                background-color: #142032;
-                color: #c8dcf0;
+                background-color: #121826;
+                color: #cbd5e1;
                 font-weight: 600;
                 font-size: 12px;
                 border-radius: 8px;
-                border: 1px solid #2e5070;
-                border-bottom: 2px solid #1e3d58;
+                border: 1px solid #1e283a;
                 padding: 6px 14px;
             }
             QPushButton:hover {
-                background-color: #1a2d44;
-                border-color: #4480b0;
-                color: #e8f4ff;
+                background-color: #1c273c;
+                border-color: #6366f1;
+                color: #ffffff;
             }
             QPushButton:pressed {
-                border-bottom: 1px solid #1a3248;
+                background-color: #4f46e5;
+                border-color: #818cf8;
                 padding-top: 7px;
             }
         """
@@ -669,21 +670,21 @@ class LauncherWindow(QDialog):
         self.clean_video_btn.setCursor(Qt.PointingHandCursor)
         self.clean_video_btn.setStyleSheet("""
             QPushButton {
-                background-color: #1a1218;
+                background-color: #271418;
                 color: #fca5a5;
                 font-weight: 600;
                 font-size: 12px;
                 border-radius: 8px;
-                border: 1px solid #3d1e26;
-                border-bottom: 2px solid #2a1218;
+                border: 1px solid #4c1d24;
                 padding: 6px 12px;
             }
             QPushButton:hover {
-                background-color: #261620;
+                background-color: #3d1b22;
                 border-color: #ef4444;
+                color: #ffffff;
             }
             QPushButton:pressed {
-                border-bottom: 1px solid #200e14;
+                background-color: #1f0f12;
                 padding-top: 7px;
             }
         """)
@@ -705,7 +706,7 @@ class LauncherWindow(QDialog):
         main_column.addWidget(header_frame)
 
         self.section_label = QLabel("Recent Projects")
-        self.section_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #4da6e8; letter-spacing: 0.5px; text-transform: uppercase;")
+        self.section_label.setStyleSheet("font-size: 12px; font-weight: 800; color: #818cf8; letter-spacing: 0.8px; text-transform: uppercase;")
         self.section_label.setObjectName("launcherSectionLabel")
         main_column.addWidget(self.section_label)
 
@@ -725,13 +726,13 @@ class LauncherWindow(QDialog):
 
         self.empty_label = QLabel("No recent projects. Click \"+ New Project\" to start.")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.setStyleSheet("color: #556677; font-size: 13px;")
+        self.empty_label.setStyleSheet("color: #64748b; font-size: 13px;")
         self.empty_label.hide()
         main_column.addWidget(self.empty_label)
 
         self.loading_label = QLabel("Preparing video...")
         self.loading_label.setAlignment(Qt.AlignCenter)
-        self.loading_label.setStyleSheet("color: #4ecdc4; font-size: 16px; font-weight: 700; padding: 20px;")
+        self.loading_label.setStyleSheet("color: #34d399; font-size: 15px; font-weight: 700; padding: 20px;")
         self.loading_label.hide()
         main_column.addWidget(self.loading_label)
 

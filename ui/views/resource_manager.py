@@ -119,9 +119,8 @@ def open_resource_manager(workspace_root: str = None, parent=None,
     layout.addWidget(title)
 
     hint = QLabel(
-        "Each resource shows its target folder and download link. "
-        "Download the file yourself and drop it into the target folder. "
-        "Use 'Refresh' to re-check status.",
+        "Use Install for supported resources; VIUStudio downloads, extracts, and verifies them automatically. "
+        "Manual download links and storage folders are kept for advanced or external resources.",
         dialog,
     )
     hint.setObjectName("resourceHint")
@@ -148,6 +147,51 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         row["status_pill"].deleteLater()
         row["status_pill"] = new_pill
         row["status_pill"].show()
+
+    dialog._download_workers = {}
+
+    def _start_resource_install(resource_id: str):
+        row = dialog._resource_rows.get(resource_id)
+        item = row.get("item", {}) if row else {}
+        if not row or str(item.get("status", "")).lower() == "installed":
+            return
+        if resource_id in dialog._download_workers:
+            return
+        from ui.worker_adapters.processing_workers import ResourceDownloadWorker
+        from utils.thread_lifecycle import release_thread_when_stopped
+        worker = ResourceDownloadWorker(workspace_root, resource_id)
+        worker.setParent(dialog)
+
+        dialog._download_workers[resource_id] = worker
+        install_btn = row.get("install_btn")
+        if install_btn is not None:
+            install_btn.setEnabled(False)
+            install_btn.setText("Installing…")
+        progress_label = row.get("progress_label")
+
+        def _on_progress(percent: int, message: str):
+            if progress_label is not None:
+                progress_label.setText(f"{message} ({percent}%)" if percent >= 0 else str(message))
+
+        def _on_finished(done_id: str, error: str):
+            if progress_label is not None:
+                progress_label.setText("Install failed: " + str(error).splitlines()[0] if error else "Installed — refreshing…")
+            if error:
+                if install_btn is not None:
+                    install_btn.setEnabled(True)
+                    install_btn.setText("Retry")
+            else:
+                if install_btn is not None:
+                    install_btn.setText("Installed")
+                _refresh()
+            release_thread_when_stopped(
+                worker,
+                on_released=lambda: dialog._download_workers.pop(resource_id, None),
+            )
+
+        worker.progress.connect(_on_progress)
+        worker.finished.connect(_on_finished)
+        worker.start()
 
     def _add_card(item, target_layout):
         card = QFrame(dialog)
@@ -220,12 +264,24 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         button_row.setSpacing(8)
         button_row.addStretch(1)
 
+        install_btn = None
+        progress_label = QLabel("", dialog)
+        progress_label.setStyleSheet("color: #8ea3bb; font-size: 10px; background: transparent;")
+        progress_label.setWordWrap(True)
+        if bool(item.get("auto_download_supported")) and str(item.get("status", "")).lower() != "installed":
+            install_btn = QPushButton("Install", dialog)
+            install_btn.setObjectName("primaryBtn")
+            install_btn.clicked.connect(
+                lambda _checked=False, rid=item["id"]: _start_resource_install(rid)
+            )
+            button_row.addWidget(install_btn)
+
         # Most resources have one archive/download page.  SenseVoice is
         # intentionally represented as two direct files, so let resource
         # definitions expose separate buttons instead of making users find
         # the required pair themselves on Hugging Face.
         download_links = item.get("download_links") or []
-        if download_links:
+        if download_links and install_btn is None and str(item.get("status", "")).lower() != "installed":
             for link in download_links:
                 if not isinstance(link, dict):
                     continue
@@ -240,7 +296,7 @@ def open_resource_manager(workspace_root: str = None, parent=None,
                     lambda _checked=False, target_url=url: _open_url(target_url)
                 )
                 button_row.addWidget(download_btn)
-        else:
+        elif not install_btn:
             download_url = str(item.get("download_url", "")).strip()
             download_btn = QPushButton("Open Download Page", dialog)
             download_btn.setObjectName("primaryBtn")
@@ -260,6 +316,8 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         button_row.addWidget(open_folder_btn)
 
         outer.addLayout(button_row)
+        if install_btn is not None:
+            outer.addWidget(progress_label)
 
         target_layout.addWidget(card)
         dialog._resource_rows[item["id"]] = {
@@ -267,6 +325,8 @@ def open_resource_manager(workspace_root: str = None, parent=None,
             "name_label": name_label,
             "status_pill": status_pill,
             "header_row": header_row,
+            "install_btn": install_btn,
+            "progress_label": progress_label,
         }
 
     def _make_section(title_text, expanded):
@@ -351,7 +411,7 @@ def open_resource_manager(workspace_root: str = None, parent=None,
     footer_row = QHBoxLayout()
     footer_row.setSpacing(8)
     footer_hint = QLabel(
-        "Tip: target folders are created automatically when you open them.",
+        "Tip: start with Setup & Resources for a guided first-time installation.",
         dialog,
     )
     footer_hint.setObjectName("resourceHint")

@@ -19,7 +19,10 @@ VIUStudio được thiết kế linh hoạt để có thể vận hành ổn đ�
 
 ## 2. Danh mục Tài nguyên Mô hình AI
 
-Toàn bộ các mô hình AI có thể được tải tự động thông qua hộp thoại **Manage Resources** trong ứng dụng:
+Mở **Setup & Resources** ở Launcher trong lần chạy đầu tiên. Chọn cấu hình,
+VIUStudio sẽ tự tải, giải nén, kiểm tra file và báo tiến trình cho các tài nguyên hỗ
+trợ tự động. **Advanced Resources** vẫn giữ các nút nhập model/scan thủ công
+cho người dùng nâng cao.
 
 ![Manage Resources](assets/screenshots/resource_manager.png)
 
@@ -33,6 +36,19 @@ Toàn bộ các mô hình AI có thể được tải tự động thông qua h�
 | **Piper Voice (Tiếng Việt)** | Giọng đọc thuyết minh tự nhiên (Ngọc Huyền, Tuấn Khang) | ~60 MB / giọng | `models/piper/` |
 | **Sherpa-ONNX Diarization** | Nhận diện phân tách người nói | ~40 MB | `models/pyannote/` |
 | **PP-OCRv4 (ONNX)** | Nhận diện chữ phụ đề trên khung hình video | ~30 MB | `models/ocr/` |
+
+Whisper archives and the llama.cpp engine are currently **advanced/manual
+resources**; the setup wizard does not download them silently.
+
+### Cấu hình đề xuất
+
+- **Basic CPU**: SenseVoice + `tokens.txt` + Silero VAD (đủ để bắt đầu).
+- **Local AI**: Basic CPU + Piper tiếng Việt; llama.cpp/GGUF được nhập khi
+  người dùng chọn nhà cung cấp local.
+- **GPU acceleration**: Basic CPU + CUDA runtime pack và NVIDIA driver.
+
+Tài nguyên tùy chọn chỉ được kiểm tra khi workflow tương ứng được chạy, nên
+thiếu Piper, Whisper, OCR hoặc diarization không ngăn mở project.
 
 ---
 
