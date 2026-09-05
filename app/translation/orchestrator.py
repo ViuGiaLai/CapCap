@@ -105,9 +105,14 @@ class TranslationOrchestrator:
         polish_batch_size: int = 80,
         style_instruction: str = "",
         batch_callback=None,
+        on_progress: callable = None,
+        cancellation_check: callable = None,
     ) -> TranslationResult:
         if not segments:
             return TranslationResult(success=False, errors=["No segments to translate."], stage="input")
+
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Translation cancelled by user")
 
         source_texts = [self._segment_source_text(s) for s in segments]
         ai_source_texts = [self._build_timed_ai_source(seg, index) for index, seg in enumerate(segments)]
@@ -138,6 +143,8 @@ class TranslationOrchestrator:
                         target_lang=target_lang,
                         style_instruction=merged_style,
                         polish_batch_size=polish_batch_size,
+                        on_progress=on_progress,
+                        cancellation_check=cancellation_check,
                     )
                     warnings.extend(batch_warnings)
 
@@ -186,6 +193,20 @@ class TranslationOrchestrator:
                     warnings.extend(quality_warnings)
                     print(f"[AI Translation] Success: completed via {', '.join(providers_used) or 'AI'}")
                     final_segments = clone_with_texts(segments, translated_texts, provider=provider_type, polished=True)
+                    if on_progress:
+                        try:
+                            from app.core.models.progress import ProgressEvent
+                            on_progress(ProgressEvent(
+                                workflow="translate",
+                                stage="translation",
+                                substage="complete",
+                                current=100.0,
+                                total=100.0,
+                                percent=100,
+                                message="Translation completed successfully",
+                            ))
+                        except Exception:
+                            on_progress("Translation completed successfully")
                     return TranslationResult(
                         success=True,
                         segments=final_segments,
@@ -227,7 +248,27 @@ class TranslationOrchestrator:
         try:
             translated_texts = []
             offset = 0
-            for batch in split_text_batches(source_texts, ms_batch_size):
+            all_batches = list(split_text_batches(source_texts, ms_batch_size))
+            total_b = max(1, len(all_batches))
+            for b_idx, batch in enumerate(all_batches):
+                if cancellation_check and cancellation_check():
+                    raise InterruptedError("Translation cancelled by user")
+                if on_progress:
+                    pct = int(b_idx * 100 / total_b)
+                    msg = f"Translating batch {b_idx + 1}/{total_b} (Google Web)..."
+                    try:
+                        from app.core.models.progress import ProgressEvent
+                        on_progress(ProgressEvent(
+                            workflow="translate",
+                            stage="translation",
+                            substage="batch",
+                            current=float(b_idx + 1),
+                            total=float(total_b),
+                            percent=pct,
+                            message=msg,
+                        ))
+                    except Exception:
+                        on_progress(msg)
                 translated_batch = self.google_web.translate_batch(
                     batch,
                     src_lang=normalized_src,
@@ -255,6 +296,20 @@ class TranslationOrchestrator:
             warnings.extend(quality_warnings)
             print("[Translation] Success: Google web translate completed.")
             final_segments = clone_with_texts(segments, translated_texts, provider="google-web", polished=False)
+            if on_progress:
+                try:
+                    from app.core.models.progress import ProgressEvent
+                    on_progress(ProgressEvent(
+                        workflow="translate",
+                        stage="translation",
+                        substage="complete",
+                        current=100.0,
+                        total=100.0,
+                        percent=100,
+                        message="Translation completed successfully",
+                    ))
+                except Exception:
+                    on_progress("Translation completed successfully")
             return TranslationResult(
                 success=True,
                 segments=final_segments,
@@ -456,6 +511,8 @@ class TranslationOrchestrator:
         target_lang: str,
         style_instruction: str,
         polish_batch_size: int,
+        on_progress: callable = None,
+        cancellation_check: callable = None,
     ) -> tuple[list[str], list[str], list[str]]:
         # Modern cloud models benefit from enough neighbouring subtitle cues
         # to keep terminology, names, and tone consistent.  Do not rely only
@@ -504,6 +561,8 @@ class TranslationOrchestrator:
                 target_lang=target_lang,
                 style_instruction=style_instruction,
                 max_workers=1,
+                on_progress=on_progress,
+                cancellation_check=cancellation_check,
             )
         except TranslationValidationError as exc:
             if not full_context_request:
@@ -528,6 +587,8 @@ class TranslationOrchestrator:
                     target_lang=target_lang,
                     style_instruction=style_instruction,
                     max_workers=1,
+                    on_progress=on_progress,
+                    cancellation_check=cancellation_check,
                 )
                 print("[AI Translation] Batch translation completed successfully.")
                 return recovered
@@ -562,6 +623,8 @@ class TranslationOrchestrator:
                     target_lang=target_lang,
                     style_instruction=style_instruction,
                     max_workers=1,
+                    on_progress=on_progress,
+                    cancellation_check=cancellation_check,
                 )
                 print("[AI Translation] Smaller-batch retry completed successfully.")
                 return recovered
@@ -860,11 +923,12 @@ class TranslationOrchestrator:
             ]
 
     @staticmethod
-    def _run_ai_batch_requests(*, polisher, batches, src_lang, target_lang, style_instruction, max_workers):
+    def _run_ai_batch_requests(*, polisher, batches, src_lang, target_lang, style_instruction, max_workers, on_progress=None, cancellation_check=None):
         """Submit validated ordered batches and merge their results by index."""
         warnings = []
         providers_used = set()
         translated_texts_map = {}
+        total_batches = max(1, len(batches))
         if max_workers == 1:
             recent_pairs: list[tuple[str, str]] = []
 
@@ -878,6 +942,8 @@ class TranslationOrchestrator:
                 in half and retry each half so only genuinely broken
                 single-cue replies surface.
                 """
+                if cancellation_check and cancellation_check():
+                    raise InterruptedError("Translation cancelled by user")
                 total = len(source_batch)
                 try:
                     batch_result, batch_warnings, provider_name = polisher.polish_batch(
@@ -933,6 +999,24 @@ class TranslationOrchestrator:
                     )
 
             for idx, (source_batch, translated_batch, max_tokens) in enumerate(batches):
+                if cancellation_check and cancellation_check():
+                    raise InterruptedError("Translation cancelled by user")
+                if on_progress:
+                    pct = int(idx * 100 / total_batches)
+                    msg = f"Translating batch {idx + 1}/{total_batches} (AI)..."
+                    try:
+                        from app.core.models.progress import ProgressEvent
+                        on_progress(ProgressEvent(
+                            workflow="translate",
+                            stage="translation",
+                            substage="batch",
+                            current=float(idx + 1),
+                            total=float(total_batches),
+                            percent=pct,
+                            message=msg,
+                        ))
+                    except Exception:
+                        on_progress(msg)
                 context_before = [
                     f"{source} => {translation}"
                     for source, translation in recent_pairs[-5:]
@@ -973,7 +1057,12 @@ class TranslationOrchestrator:
                 )
                 future_to_idx[future] = idx
 
+            completed_count = 0
             for future in concurrent.futures.as_completed(future_to_idx):
+                if cancellation_check and cancellation_check():
+                    for f in future_to_idx:
+                        f.cancel()
+                    raise InterruptedError("Translation cancelled by user")
                 idx = future_to_idx[future]
                 try:
                     batch_result, batch_warnings, provider_name = future.result()
@@ -981,6 +1070,23 @@ class TranslationOrchestrator:
                     warnings.extend(batch_warnings)
                     if provider_name:
                         providers_used.add(provider_name)
+                    completed_count += 1
+                    if on_progress:
+                        pct = int(completed_count * 100 / total_batches)
+                        msg = f"Translating batch {completed_count}/{total_batches} (AI)..."
+                        try:
+                            from app.core.models.progress import ProgressEvent
+                            on_progress(ProgressEvent(
+                                workflow="translate",
+                                stage="translation",
+                                substage="batch",
+                                current=float(completed_count),
+                                total=float(total_batches),
+                                percent=pct,
+                                message=msg,
+                            ))
+                        except Exception:
+                            on_progress(msg)
                 except Exception as exc:
                     if isinstance(exc, TranslationValidationError):
                         raise

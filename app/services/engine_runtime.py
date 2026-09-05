@@ -139,6 +139,8 @@ class EngineRuntime:
         enable_polish: bool = True,
         optimize_subtitles: bool = False,
         style_instruction: str = "",
+        on_progress=None,
+        cancellation_check=None,
     ) -> str:
         return self.translator.translate_srt(
             srt_text,
@@ -148,6 +150,8 @@ class EngineRuntime:
             enable_polish=enable_polish,
             optimize_subtitles=optimize_subtitles,
             style_instruction=style_instruction,
+            on_progress=on_progress,
+            cancellation_check=cancellation_check,
         )
 
     def translate_segments(
@@ -161,6 +165,8 @@ class EngineRuntime:
         optimize_subtitles: bool = False,
         style_instruction: str = "",
         batch_callback=None,
+        on_progress=None,
+        cancellation_check=None,
     ):
         return self.translator.translate_segments(
             segments,
@@ -171,6 +177,8 @@ class EngineRuntime:
             optimize_subtitles=optimize_subtitles,
             style_instruction=style_instruction,
             batch_callback=batch_callback,
+            on_progress=on_progress,
+            cancellation_check=cancellation_check,
         )
 
     def rewrite_translation_segments(self, source_segments, translated_segments, *, model_path=None, src_lang: str = "auto", style_instruction: str = ""):
@@ -182,7 +190,7 @@ class EngineRuntime:
             style_instruction=style_instruction,
         )
 
-    def embed_subtitles(self, video_path: str, srt_path: str, output_path: str, *, subtitle_style=None, mask_regions=None, logo_layers=None, text_ass_path="", text_image_layers=None, target_width=None, target_height=None, output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, output_fps=None, video_filter_state=None, audio_gain_db=0.0, fast=False) -> bool:
+    def embed_subtitles(self, video_path: str, srt_path: str, output_path: str, *, subtitle_style=None, mask_regions=None, logo_layers=None, text_ass_path="", text_image_layers=None, target_width=None, target_height=None, output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, output_fps=None, video_filter_state=None, audio_gain_db=0.0, fast=False, progress_callback=None, cancellation_check=None) -> bool:
         return self.ffmpeg.embed_subtitles(
             video_path,
             srt_path,
@@ -201,9 +209,11 @@ class EngineRuntime:
             video_filter_state=video_filter_state,
             audio_gain_db=audio_gain_db,
             fast=fast,
+            progress_callback=progress_callback,
+            cancellation_check=cancellation_check,
         )
 
-    def embed_ass_subtitles(self, video_path: str, ass_path: str, output_path: str, *, blur_region=None, mask_regions=None, logo_layers=None, text_ass_path="", text_image_layers=None, target_width=None, target_height=None, output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, output_fps=None, video_filter_state=None, audio_gain_db=0.0, fast=False) -> bool:
+    def embed_ass_subtitles(self, video_path: str, ass_path: str, output_path: str, *, blur_region=None, mask_regions=None, logo_layers=None, text_ass_path="", text_image_layers=None, target_width=None, target_height=None, output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, output_fps=None, video_filter_state=None, audio_gain_db=0.0, fast=False, progress_callback=None, cancellation_check=None) -> bool:
         return self.ffmpeg.embed_ass_subtitles(
             video_path,
             ass_path,
@@ -222,6 +232,8 @@ class EngineRuntime:
             video_filter_state=video_filter_state,
             audio_gain_db=audio_gain_db,
             fast=fast,
+            progress_callback=progress_callback,
+            cancellation_check=cancellation_check,
         )
 
     def get_video_dimensions(self, video_path: str):

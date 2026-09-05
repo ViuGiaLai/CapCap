@@ -1246,6 +1246,7 @@ class VoiceWorkflow:
         provider_speed: float = 1.0,
         voice_provider: str = '',
         on_progress: callable = None,
+        cancellation_check: callable = None,
         index_offset: int = 0,
         log: bool = True,
     ):
@@ -1332,11 +1333,24 @@ class VoiceWorkflow:
                 )
             if on_progress:
                 total_count = max(1, len(segments))
-                initial_percent = int(cache_hits * 100 / total_count)
-                on_progress(
+                initial_percent = int(cache_hits * 75 / total_count)
+                msg = (
                     f"TTS {cache_hits}/{total_count} ({initial_percent}%) • "
                     f"Generating {len(pending_jobs)} cues with {worker_count} worker(s)"
                 )
+                try:
+                    from app.core.models.progress import ProgressEvent
+                    on_progress(ProgressEvent(
+                        workflow="tts",
+                        stage="voiceover",
+                        substage="cue_tts",
+                        current=float(cache_hits),
+                        total=float(total_count),
+                        percent=initial_percent,
+                        message=msg,
+                    ))
+                except Exception:
+                    on_progress(msg)
             if not pending_jobs:
                 manifest["segments"] = manifest_segments
                 manifest["by_cache_key"] = manifest_by_cache_key
@@ -1357,6 +1371,13 @@ class VoiceWorkflow:
                 }
                 completed_count = 0
                 for future in as_completed(future_map):
+                    if cancellation_check and cancellation_check():
+                        for f in future_map:
+                            f.cancel()
+                        manifest["segments"] = manifest_segments
+                        manifest["by_cache_key"] = manifest_by_cache_key
+                        self._save_manifest(tmp_dir, manifest)
+                        raise InterruptedError("TTS synthesis cancelled by user")
                     job = future_map[future]
                     idx = int(job["idx"])
                     txt = str(job["text"])
@@ -1390,11 +1411,24 @@ class VoiceWorkflow:
                     completed_count += 1
                     if on_progress:
                         done_count = min(len(segments), cache_hits + completed_count)
-                        percent = int(done_count * 100 / max(1, len(segments)))
-                        on_progress(
+                        percent = int(done_count * 75 / max(1, len(segments)))
+                        msg = (
                             f"TTS {done_count}/{len(segments)} ({percent}%) • "
                             f"Finished cue {int(job['global_idx']) + 1}"
                         )
+                        try:
+                            from app.core.models.progress import ProgressEvent
+                            on_progress(ProgressEvent(
+                                workflow="tts",
+                                stage="voiceover",
+                                substage="cue_tts",
+                                current=float(done_count),
+                                total=float(len(segments)),
+                                percent=percent,
+                                message=msg,
+                            ))
+                        except Exception:
+                            on_progress(msg)
         elif log:
             print(f"[Voice Workflow] TTS synth jobs: pending=0, cache_hits={cache_hits}, workers=0, native_speed={provider_speed:.2f}")
 
@@ -1412,6 +1446,7 @@ class VoiceWorkflow:
         voice_speed: float = 1.0,
         index_offset: int = 0,
         on_progress: callable = None,
+        cancellation_check: callable = None,
         quiet: bool = False,
     ) -> list[str]:
         os.makedirs(tmp_dir, exist_ok=True)
@@ -1442,6 +1477,7 @@ class VoiceWorkflow:
             provider_speed=provider_speed,
             voice_provider=voice_provider,
             on_progress=on_progress,
+            cancellation_check=cancellation_check,
             index_offset=index_offset,
             log=not quiet,
         )
@@ -1464,7 +1500,10 @@ class VoiceWorkflow:
         dubbing_style_instruction: str = "",
         source_language: str = "auto",
         on_progress: callable = None,
+        cancellation_check: callable = None,
     ):
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Voice workflow cancelled by user")
         workflow_started = time.perf_counter()
         state = self._load_state(project_state_path)
         self._mark_started(state, with_background=bool(background_path))
@@ -1506,7 +1545,26 @@ class VoiceWorkflow:
             provider_speed=provider_speed,
             voice_provider=voice_provider,
             on_progress=on_progress,
+            cancellation_check=cancellation_check,
         )
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Voice workflow cancelled by user")
+
+        if on_progress:
+            try:
+                from app.core.models.progress import ProgressEvent
+                on_progress(ProgressEvent(
+                    workflow="tts",
+                    stage="voiceover",
+                    substage="timing_align",
+                    current=78.0,
+                    total=100.0,
+                    percent=78,
+                    message="Aligning voice duration with subtitles (Smart Fit)...",
+                ))
+            except Exception:
+                on_progress("Aligning voice duration with subtitles (Smart Fit)...")
+
         self._update_manifest_entries(
             tmp_dir=tmp_dir,
             segments=segments,
@@ -1523,6 +1581,24 @@ class VoiceWorkflow:
             sync_mode=timing_sync_mode,
         )
         self._log_segment_fit_metrics(segments=segments, wavs=wavs)
+
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Voice workflow cancelled by user")
+
+        if on_progress:
+            try:
+                from app.core.models.progress import ProgressEvent
+                on_progress(ProgressEvent(
+                    workflow="tts",
+                    stage="voiceover",
+                    substage="window_enforce",
+                    current=85.0,
+                    total=100.0,
+                    percent=85,
+                    message="Resolving voice boundary collisions...",
+                ))
+            except Exception:
+                on_progress("Resolving voice boundary collisions...")
 
         segments, wavs = self._apply_deficit_timing_polish(
             segments=segments,
@@ -1547,6 +1623,24 @@ class VoiceWorkflow:
             f"requested={safe_voice_speed:.2f}, native={provider_speed:.2f}, residual={residual_speed:.2f}"
         )
 
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Voice workflow cancelled by user")
+
+        if on_progress:
+            try:
+                from app.core.models.progress import ProgressEvent
+                on_progress(ProgressEvent(
+                    workflow="tts",
+                    stage="voiceover",
+                    substage="track_assembly",
+                    current=92.0,
+                    total=100.0,
+                    percent=92,
+                    message="Assembling final voice track (voice_vi.wav)...",
+                ))
+            except Exception:
+                on_progress("Assembling final voice track (voice_vi.wav)...")
+
         voice_track = os.path.join(tmp_dir, "voice_vi.wav")
         build_started = time.perf_counter()
         self.engine_runtime.build_voice_track(
@@ -1556,6 +1650,9 @@ class VoiceWorkflow:
             gain_db=0.0,
         )
         build_elapsed = time.perf_counter() - build_started
+
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Voice workflow cancelled by user")
 
         # Skip mixed audio creation - will be generated at export time with current volumes
         mixed = ""
@@ -1577,6 +1674,21 @@ class VoiceWorkflow:
             f"mix={mix_elapsed:.2f}s, "
             f"total={workflow_elapsed:.2f}s"
         )
+
+        if on_progress:
+            try:
+                from app.core.models.progress import ProgressEvent
+                on_progress(ProgressEvent(
+                    workflow="tts",
+                    stage="voiceover",
+                    substage="complete",
+                    current=100.0,
+                    total=100.0,
+                    percent=100,
+                    message="Voice generation completed successfully",
+                ))
+            except Exception:
+                on_progress("Voice generation completed successfully")
 
         return {
             "voice_track": voice_track,

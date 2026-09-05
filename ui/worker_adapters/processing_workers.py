@@ -167,6 +167,7 @@ class AlternateRangeTranscriptionWorker(QThread):
 
 class TranslationWorker(QThread):
     finished = Signal(str, str, str)
+    progress = Signal(object)
 
     def __init__(self, srt_text, model_path, src_lang, target_lang, enable_polish):
         super().__init__()
@@ -188,6 +189,8 @@ class TranslationWorker(QThread):
                     src_lang=self.src_lang,
                     target_lang=self.target_lang,
                     enable_polish=self.enable_polish,
+                    on_progress=self.progress.emit,
+                    cancellation_check=self.isInterruptionRequested,
                 )
                 if not result.success:
                     raise RuntimeError("; ".join(result.errors) or "Translation failed.")
@@ -196,6 +199,9 @@ class TranslationWorker(QThread):
             except Exception:
                 raise
             self.finished.emit(translated_srt, "", fallback_notice)
+        except InterruptedError:
+            print("[TranslationWorker] Cancelled by user.")
+            self.finished.emit("", "Operation cancelled by user", "")
         except Exception as exc:
             print(f"Translation Thread Error: {exc}")
             self.finished.emit("", str(exc), "")
@@ -736,7 +742,7 @@ class PrepareWorkflowWorker(QThread):
 
 class VoiceOverWorker(QThread):
     finished = Signal(str, str, object, str)
-    progress = Signal(str)  # New signal for progress messages
+    progress = Signal(object)
 
     def __init__(self, workspace_root, segments, output_dir, background_path, audio_handling_mode, voice_name, voice_speed, timing_sync_mode, original_volume, dub_volume, project_state_path="", project_temp_dir="", ai_rewrite_dubbing=False, dubbing_style_instruction="", source_language="auto"):
         super().__init__()
@@ -811,6 +817,7 @@ class VoiceOverWorker(QThread):
                     dubbing_style_instruction=self.dubbing_style_instruction,
                     source_language=self.source_language,
                     on_progress=self.progress.emit,
+                    cancellation_check=self.isInterruptionRequested,
                 )
                 self.finished.emit(
                     result.get("voice_track", ""),
@@ -818,6 +825,9 @@ class VoiceOverWorker(QThread):
                     result.get("segments", []),
                     "",
                 )
+        except InterruptedError:
+            print("[VoiceOverWorker] Cancelled by user.")
+            self.finished.emit("", "", [], "Operation cancelled by user")
         except Exception as exc:
             print(f"[VoiceOverWorker ERROR] {str(exc)}")
             self.finished.emit("", "", [], str(exc))
@@ -1021,9 +1031,13 @@ class FinalExportWorker(QThread):
                     project_state_path=self.project_state_path,
                     project_temp_dir=self.project_temp_dir,
                     on_progress=self.progress.emit,
+                    cancellation_check=self.isInterruptionRequested,
                     timeline_clips=self.timeline_clips,
                 )
                 self.finished.emit(output_path, "")
+        except InterruptedError:
+            print("[FinalExportWorker] Cancelled by user.")
+            self.finished.emit("", "Operation cancelled by user")
         except Exception as exc:
             self.finished.emit("", str(exc))
 

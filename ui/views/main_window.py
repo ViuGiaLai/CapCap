@@ -66,6 +66,10 @@ def build_main_window_ui(gui):
     gui.right_panel = right_panel
     workspace_layout.addLayout(content_layout, 1)
 
+    from widgets.progress_dialog import MiniProgressStatusBar
+    gui.mini_status_bar = MiniProgressStatusBar(gui)
+    workspace_layout.addWidget(gui.mini_status_bar)
+
     body_layout = QHBoxLayout()
     body_layout.setContentsMargins(0, 0, 0, 0)
     body_layout.setSpacing(14)
@@ -592,6 +596,22 @@ def _connect_ui_signals(gui):
     # add_layer_btn uses QMenu (connected via actions in preview_panel.py)
 
     gui.on_advanced_toggled(bool(getattr(gui, "toggle_advanced_btn", None) and gui.toggle_advanced_btn.isChecked()))
+
+    if hasattr(gui, "mini_status_bar") and gui.mini_status_bar is not None:
+        def _on_mini_show_dialog():
+            pc = getattr(gui, "pipeline_controller", None)
+            if pc and getattr(pc, "progress_dialog", None):
+                pc.progress_dialog.show()
+                pc.progress_dialog.raise_()
+                pc.progress_dialog.activateWindow()
+
+        def _on_mini_stop_requested():
+            pc = getattr(gui, "pipeline_controller", None)
+            if pc and hasattr(pc, "_on_pipeline_stop"):
+                pc._on_pipeline_stop()
+
+        gui.mini_status_bar.show_dialog_requested.connect(_on_mini_show_dialog)
+        gui.mini_status_bar.stop_requested.connect(_on_mini_stop_requested)
 
 
 def _initialize_ui_state(gui):

@@ -239,12 +239,30 @@ class PipelineController:
         self.gui._pipeline_active = False
         self.gui._pipeline_step = ""
         self.prepare_run_id += 1
-        recap_worker = getattr(self.gui, "auto_recap_worker", None)
-        if recap_worker is not None:
-            try:
-                recap_worker.requestInterruption()
-            except RuntimeError:
-                pass
+        # Interrupt all active pipeline worker threads
+        worker_names = [
+            "auto_recap_worker",
+            "voice_thread",
+            "preview_thread",
+            "export_thread",
+            "quick_preview_thread",
+            "frame_preview_thread",
+            "translation_thread",
+            "prepare_workflow_thread",
+            "transcription_thread",
+            "vocal_thread",
+            "extraction_thread",
+            "split_video_worker",
+        ]
+        for name in worker_names:
+            worker = getattr(self.gui, name, None)
+            if worker is not None:
+                try:
+                    if getattr(worker, "isRunning", lambda: False)():
+                        worker.requestInterruption()
+                except Exception:
+                    pass
+
         self._stop_prepare_status_polling()
         self._mark_running_project_steps_stopped()
         self._stop_local_worker_server()
@@ -261,6 +279,8 @@ class PipelineController:
             self.gui.progress_bar.setRange(0, 100)
             self.gui.progress_bar.setValue(0)
         self.gui.refresh_ui_state()
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            self.gui.mini_status_bar.set_stopped()
         self.gui.log("[Pipeline] Stop requested. Local worker process killed.")
 
     
@@ -324,6 +344,11 @@ class PipelineController:
             self.progress_dialog = None
         self.progress_dialog = PipelineProgressDialog(self.gui)
         self.progress_dialog.stop_requested.connect(self._on_pipeline_stop)
+        self.progress_dialog.retry_requested.connect(self._on_pipeline_retry)
+        self.progress_dialog.settings_requested.connect(self._on_pipeline_settings)
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            wf_title = "Auto Edit Recap" if workflow == "recap" else ("Original Transcript" if target_stage == "transcript" else "AI Production Pipeline")
+            self.gui.mini_status_bar.set_active(wf_title, "Starting workflow…")
         if hasattr(self.gui, "_register_progress_dialog"):
             self.gui._register_progress_dialog(self.progress_dialog)
         if workflow == "recap":
@@ -635,23 +660,43 @@ class PipelineController:
 
     def on_voiceover_progress(self, message):
         """Surface real TTS cue progress instead of writing it only to Logs."""
-        text = str(message or "").strip()
+        from models.progress import ProgressEvent
+        substage_chip = ""
+        if isinstance(message, ProgressEvent):
+            percent = int(message.percent) if message.percent is not None else None
+            text = message.message
+            substage_chip = message.substage or ""
+        else:
+            text = str(message or "").strip()
+            match = re.search(r"(\d+)\s*/\s*(\d+)", text)
+            percent_match = re.search(r"(?:\(|\b)(\d{1,3})%(?:\)|\b)", text)
+            percent = None
+            if match and int(match.group(2)) > 0:
+                percent = int(int(match.group(1)) * 100 / int(match.group(2)))
+            elif percent_match:
+                percent = int(percent_match.group(1))
         if text:
             self.gui.log(text)
-        if not self.progress_dialog:
-            return
-        match = re.search(r"(\d+)\s*/\s*(\d+)", text)
-        percent_match = re.search(r"(?:\(|\b)(\d{1,3})%(?:\)|\b)", text)
-        percent = None
-        if match and int(match.group(2)) > 0:
-            percent = int(int(match.group(1)) * 100 / int(match.group(2)))
-        elif percent_match:
-            percent = int(percent_match.group(1))
-        self.progress_dialog.update_step_progress("voiceover", percent, text or "Generating voice audio…")
+        if self.progress_dialog:
+            self.progress_dialog.update_step_progress("voiceover", percent, text or "Generating voice audio…")
+            if substage_chip and "voiceover" in self.progress_dialog.steps:
+                self.progress_dialog.steps["voiceover"].set_substage_chip(substage_chip)
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            self.gui.mini_status_bar.set_progress(
+                percent=self.progress_dialog.overall_progress.value() if self.progress_dialog else percent,
+                detail=text,
+                chip=substage_chip,
+            )
 
     def on_preview_progress(self, percent, message):
         if self.progress_dialog:
             self.progress_dialog.update_step_progress("preview", percent, message)
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            self.gui.mini_status_bar.set_progress(
+                percent=self.progress_dialog.overall_progress.value() if self.progress_dialog else percent,
+                detail=str(message or "Rendering preview…"),
+                chip="Preview",
+            )
 
     def on_prepare_workflow_finished(self, project_state_path, error, run_id=None):
         """Callback when the background PrepareWorkflow finishes completely."""
@@ -921,6 +966,8 @@ class PipelineController:
         if hasattr(self.gui, "progress_bar") and self.gui.progress_bar is not None:
             self.gui.progress_bar.setRange(0, 100)
             self.gui.progress_bar.setValue(0)
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            self.gui.mini_status_bar.set_error(str(reason or "Pipeline failed"))
         self.gui.refresh_ui_state()
 
     def pipeline_done(self):
@@ -940,7 +987,26 @@ class PipelineController:
         if hasattr(self.gui, "progress_bar") and self.gui.progress_bar is not None:
             self.gui.progress_bar.setRange(0, 100)
             self.gui.progress_bar.setValue(100)
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            self.gui.mini_status_bar.set_done("✨ Video is ready!")
         self.gui.refresh_ui_state()
         # Generate prepares the project. Export remains an explicit action so
         # the user can select a destination; never fill workspace/output
         # silently.
+
+    def _on_pipeline_retry(self, step_id: str):
+        self.gui.log(f"[Pipeline] Retrying step: {step_id}")
+        if step_id in ("voiceover", "voice"):
+            if hasattr(self.gui, "run_voiceover"):
+                self.gui.run_voiceover()
+        elif step_id in ("preview",):
+            if hasattr(self.gui, "preview_video"):
+                self.gui.preview_video()
+        else:
+            if hasattr(self.gui, "run_all_pipeline"):
+                self.gui.run_all_pipeline()
+
+    def _on_pipeline_settings(self):
+        if hasattr(self.gui, "toggle_advanced_btn"):
+            if not self.gui.toggle_advanced_btn.isChecked():
+                self.gui.toggle_advanced_btn.setChecked(True)

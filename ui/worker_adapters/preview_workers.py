@@ -69,9 +69,16 @@ class PreviewMuxWorker(QThread):
                 )
                 self.progress.emit(55, "Voice track combined successfully")
 
+            if self.isInterruptionRequested():
+                raise InterruptedError("Preview generation cancelled by user")
+
             if self.render_subtitles and self.mode in ("subtitle", "both") and self.srt_path and os.path.exists(self.srt_path):
                 self.progress.emit(60, "Rendering subtitles and visual layers…")
                 engine = EngineRuntime()
+                def _on_sub_prog(cur, tot, pct):
+                    scaled = int(60 + (pct / 100.0) * 38)
+                    self.progress.emit(scaled, f"Rendering preview subtitles ({pct}%)")
+
                 ok = engine.embed_subtitles(
                     current_video,
                     self.srt_path,
@@ -86,6 +93,8 @@ class PreviewMuxWorker(QThread):
                     output_fill_focus_y=self.output_fill_focus_y,
                     video_filter_state=self.video_filter_state,
                     fast=True,
+                    progress_callback=_on_sub_prog,
+                    cancellation_check=self.isInterruptionRequested,
                 )
                 if not ok:
                     raise RuntimeError("Failed to render subtitle preview video.")
@@ -96,8 +105,14 @@ class PreviewMuxWorker(QThread):
                     shutil.copyfile(current_video, self.output_path)
                 output = self.output_path
 
+            if self.isInterruptionRequested():
+                raise InterruptedError("Preview generation cancelled by user")
+
             self.progress.emit(100, "Preview is ready")
             self.finished.emit(output, "")
+        except InterruptedError:
+            print("[PreviewMuxWorker] Cancelled by user.")
+            self.finished.emit("", "Operation cancelled by user")
         except Exception as exc:
             self.finished.emit("", str(exc))
         finally:

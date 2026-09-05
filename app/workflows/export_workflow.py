@@ -7,9 +7,25 @@ from services import EngineRuntime, ProjectService
 
 
 class ExportWorkflow:
-    def _emit_progress(self, on_progress, percent: int, message: str):
+    def _emit_progress(self, on_progress, percent: int, message: str, stage: str = "export", substage: str = ""):
         if callable(on_progress):
-            on_progress(int(percent), str(message or "Exporting video..."))
+            try:
+                from app.core.models.progress import ProgressEvent
+                event = ProgressEvent(
+                    workflow="export",
+                    stage=stage,
+                    substage=substage or stage,
+                    current=float(percent),
+                    total=100.0,
+                    percent=int(percent),
+                    message=str(message or "Exporting video..."),
+                )
+                on_progress(event)
+            except Exception:
+                try:
+                    on_progress(int(percent), str(message or "Exporting video..."))
+                except TypeError:
+                    on_progress(str(message or "Exporting video..."))
 
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root
@@ -158,6 +174,8 @@ class ExportWorkflow:
         text_ass_path="",
         text_image_layers=None,
         original_audio_gain_db=0.0,
+        progress_callback=None,
+        cancellation_check=None,
     ):
         print(f"[Export] _export_subtitle_video: mask_regions={mask_regions}, logo_layers={logo_layers}")
         print(f"[Export] ass_path={ass_path}, exists={os.path.exists(ass_path) if ass_path else False}")
@@ -181,6 +199,8 @@ class ExportWorkflow:
                 output_fps=output_fps,
                 video_filter_state=video_filter_state,
                 audio_gain_db=original_audio_gain_db,
+                progress_callback=progress_callback,
+                cancellation_check=cancellation_check,
             )
         else:
             ok = self.engine_runtime.embed_subtitles(
@@ -199,6 +219,8 @@ class ExportWorkflow:
                 output_fps=output_fps,
                 video_filter_state=video_filter_state,
                 audio_gain_db=original_audio_gain_db,
+                progress_callback=progress_callback,
+                cancellation_check=cancellation_check,
             )
         if not ok:
             raise RuntimeError("Failed to burn subtitles into the output video.")
@@ -663,6 +685,7 @@ class ExportWorkflow:
         project_state_path: str = "",
         project_temp_dir: str = "",
         on_progress=None,
+        cancellation_check: callable = None,
         timeline_clips=None,
     ) -> str:
         subtitle_style = subtitle_style or {}
@@ -799,7 +822,15 @@ class ExportWorkflow:
                 raise
 
         tmp_mux_path = ""
+        def _make_ffmpeg_progress_cb(start_pct: int, end_pct: int, label: str):
+            def _cb(cur, tot, pct):
+                scaled = int(start_pct + (pct / 100.0) * (end_pct - start_pct))
+                self._emit_progress(on_progress, scaled, f"{label} ({pct}%)", substage="ffmpeg_encode")
+            return _cb
+
         try:
+            if cancellation_check and cancellation_check():
+                raise InterruptedError("Export cancelled by user")
             if mode == "original" and not has_visible_overlays:
                 self._emit_progress(on_progress, 30, "Copying source video...")
                 if os.path.abspath(video_path) == os.path.abspath(output_path):
@@ -827,6 +858,8 @@ class ExportWorkflow:
                     blur_regions=blur_regions,
                     text_image_layers=text_image_layers,
                     original_audio_gain_db=original_audio_gain_db,
+                    progress_callback=_make_ffmpeg_progress_cb(20, 95, "Burning subtitles into video"),
+                    cancellation_check=cancellation_check,
                 )
             elif mode == "voice":
                 self._emit_progress(on_progress, 25, "Muxing Vietnamese audio into the video...")
@@ -854,6 +887,8 @@ class ExportWorkflow:
                     output_fps=None if voice_output != output_path else target_fps,
                     video_filter_state={} if voice_output != output_path else video_filter_state,
                 )
+                if cancellation_check and cancellation_check():
+                    raise InterruptedError("Export cancelled by user")
                 if voice_output != output_path:
                     self._export_subtitle_video(
                         video_path=voice_output,
@@ -872,6 +907,8 @@ class ExportWorkflow:
                         logo_layers=logo_layers,
                         blur_regions=blur_regions,
                         text_image_layers=text_image_layers,
+                        progress_callback=_make_ffmpeg_progress_cb(40, 95, "Rendering visual overlays"),
+                        cancellation_check=cancellation_check,
                     )
             elif mode == "both":
                 tmp_mux_path = self._build_temp_mux_path(project_temp_dir)
@@ -886,7 +923,9 @@ class ExportWorkflow:
                     focus_y=output_fill_focus_y,
                     output_fps=target_fps,
                 )
-                self._emit_progress(on_progress, 62, "Burning styled subtitles into the final video...")
+                if cancellation_check and cancellation_check():
+                    raise InterruptedError("Export cancelled by user")
+                self._emit_progress(on_progress, 40, "Burning styled subtitles into the final video...")
                 self._export_subtitle_video(
                     video_path=tmp_mux_path,
                     srt_path=srt_path,
@@ -904,11 +943,16 @@ class ExportWorkflow:
                     logo_layers=logo_layers,
                     blur_regions=blur_regions,
                     text_image_layers=text_image_layers,
+                    progress_callback=_make_ffmpeg_progress_cb(40, 95, "Burning styled subtitles into final video"),
+                    cancellation_check=cancellation_check,
                 )
             else:
                 raise ValueError(f"Unsupported export mode: {mode}")
 
-            self._emit_progress(on_progress, 95, "Finalizing exported video...")
+            if cancellation_check and cancellation_check():
+                raise InterruptedError("Export cancelled by user")
+
+            self._emit_progress(on_progress, 98, "Finalizing exported video...")
             self._mark_completed(state, output_path)
             self._emit_progress(on_progress, 100, "Export completed.")
             return output_path

@@ -765,6 +765,198 @@ def get_video_dimensions(video_path):
         return 1920, 1080
 
 
+def get_video_duration(video_path: str) -> float:
+    """Return duration of video in seconds using ffprobe."""
+    ffprobe = _ffprobe_path()
+    if not os.path.exists(ffprobe) or not os.path.exists(video_path):
+        return 0.0
+    try:
+        result = subprocess.run(
+            [
+                ffprobe, '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                video_path,
+            ],
+            capture_output=True, check=True,
+            **_text_subprocess_run_kwargs(),
+        )
+        return max(0.0, float(result.stdout.strip() or 0.0))
+    except Exception:
+        return 0.0
+
+
+def run_ffmpeg_with_progress(
+    command: list,
+    total_duration_seconds: float = 0.0,
+    progress_callback=None,
+    cancellation_check=None,
+    output_path_to_clean: str = "",
+) -> tuple[bool, str, str]:
+    """Execute FFmpeg with real-time stdout progress parsing and cancellation support.
+
+    Returns (success, stdout_output, stderr_output).
+    """
+    cmd = list(command)
+    # Insert -progress pipe:1 -nostats after executable
+    if "-progress" not in cmd:
+        cmd.insert(1, "-progress")
+        cmd.insert(2, "pipe:1")
+        cmd.insert(3, "-nostats")
+
+    kwargs = _subprocess_run_kwargs()
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            **kwargs,
+        )
+    except Exception as exc:
+        return False, "", str(exc)
+
+    stdout_lines = []
+    stderr_lines = []
+
+    def _read_stderr():
+        try:
+            if proc.stderr is not None:
+                for err_line in proc.stderr:
+                    stderr_lines.append(err_line)
+        except Exception:
+            pass
+
+    err_thread = threading.Thread(target=_read_stderr, daemon=True)
+    err_thread.start()
+
+    last_percent = 0
+
+    def _invoke_prog(pct, msg, cur=0.0, tot=0.0):
+        if not callable(progress_callback):
+            return
+        from app.core.models.progress import ProgressEvent
+        ev = ProgressEvent(
+            workflow="ffmpeg",
+            stage="render",
+            substage="encode",
+            current=float(cur),
+            total=float(tot),
+            percent=int(pct),
+            message=msg,
+        )
+        try:
+            progress_callback(ev)
+        except TypeError:
+            try:
+                progress_callback(cur, tot, pct)
+            except TypeError:
+                try:
+                    progress_callback(pct, msg)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _check_cancelled():
+        if cancellation_check is None:
+            return False
+        try:
+            return cancellation_check() if callable(cancellation_check) else bool(getattr(cancellation_check, "is_set", lambda: False)())
+        except Exception:
+            return False
+
+    try:
+        if proc.stdout is not None:
+            for line in proc.stdout:
+                line_str = line.strip()
+                stdout_lines.append(line)
+
+                if _check_cancelled():
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    if output_path_to_clean and os.path.exists(output_path_to_clean):
+                        try:
+                            os.remove(output_path_to_clean)
+                        except OSError:
+                            pass
+                    raise InterruptedError("Operation cancelled by user.")
+
+                if "=" in line_str:
+                    key, _, val = line_str.partition("=")
+                    key = key.strip()
+                    val = val.strip()
+                    if key in ("out_time", "out_time_us", "out_time_ms"):
+                        try:
+                            sec = 0.0
+                            if key == "out_time":
+                                parts = val.split(":")
+                                if len(parts) == 3:
+                                    sec = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                            elif key in ("out_time_us", "out_time_ms"):
+                                sec = float(val) / 1000000.0
+
+                            if total_duration_seconds > 0 and sec > 0:
+                                pct = max(1, min(99, int(sec * 100.0 / total_duration_seconds)))
+                                if pct > last_percent:
+                                    last_percent = pct
+                                _invoke_prog(last_percent, f"Rendering video… {sec:.1f}s / {total_duration_seconds:.1f}s ({last_percent}%)", cur=sec, tot=total_duration_seconds)
+                                if _check_cancelled():
+                                    try:
+                                        proc.terminate()
+                                        proc.wait(timeout=2.0)
+                                    except Exception:
+                                        try:
+                                            proc.kill()
+                                        except Exception:
+                                            pass
+                                    if output_path_to_clean and os.path.exists(output_path_to_clean):
+                                        try:
+                                            os.remove(output_path_to_clean)
+                                        except OSError:
+                                            pass
+                                    raise InterruptedError("Operation cancelled by user.")
+                        except InterruptedError:
+                            raise
+                        except Exception:
+                            pass
+                    elif key == "progress" and val == "end":
+                        _invoke_prog(100, "Rendering video… 100%", cur=total_duration_seconds, tot=total_duration_seconds)
+
+        proc.wait()
+        err_thread.join(timeout=2.0)
+    except InterruptedError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise
+    except Exception as exc:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return False, "".join(stdout_lines), str(exc)
+
+    success = (proc.returncode == 0)
+    if not success and output_path_to_clean and os.path.exists(output_path_to_clean):
+        try:
+            os.remove(output_path_to_clean)
+        except OSError:
+            pass
+    return success, "".join(stdout_lines), "".join(stderr_lines)
+
+
+
 # ---------------------------------------------------------------------------
 # SRT → ASS conversion
 # ---------------------------------------------------------------------------
@@ -1703,7 +1895,7 @@ def _append_text_image_filter_parts(filter_parts, current_label, text_image_laye
     return current_label
 
 
-def embed_ass_subtitles(video_path, ass_path, output_path, ffmpeg_path=None, blur_region=None, mask_regions=None, logo_layers=None, text_ass_path="", text_image_layers=None, target_width=None, target_height=None, output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, output_fps=None, video_filter_state=None, audio_gain_db=0.0, fast=False):
+def embed_ass_subtitles(video_path, ass_path, output_path, ffmpeg_path=None, blur_region=None, mask_regions=None, logo_layers=None, text_ass_path="", text_image_layers=None, target_width=None, target_height=None, output_scale_mode="fit", output_fill_focus_x=0.5, output_fill_focus_y=0.5, output_fps=None, video_filter_state=None, audio_gain_db=0.0, fast=False, progress_callback=None, cancellation_check=None):
     """Burn subtitles into video using an already-prepared ASS file."""
     print(f"[FFmpeg] embed_ass_subtitles called with mask_regions={mask_regions}, logo_layers={logo_layers}")
     ffmpeg = _ffmpeg_path(ffmpeg_path)
@@ -1848,16 +2040,23 @@ def embed_ass_subtitles(video_path, ass_path, output_path, ffmpeg_path=None, blu
     encoder_name = 'libx264' if 'libx264' in ' '.join(command) else 'h264_nvenc'
     print(f"Executing ({encoder_name}): {' '.join(command)}")
 
-    try:
-        result = subprocess.run(command, capture_output=True, check=True, **_text_subprocess_run_kwargs())
-        font_selects = re.findall(r".*fontselect:.*", result.stderr or "", flags=re.IGNORECASE)
+    video_duration = get_video_duration(video_path)
+    ok, stdout_txt, stderr_txt = run_ffmpeg_with_progress(
+        command,
+        total_duration_seconds=video_duration,
+        progress_callback=progress_callback,
+        cancellation_check=cancellation_check,
+        output_path_to_clean=output_path,
+    )
+    if ok:
+        font_selects = re.findall(r".*fontselect:.*", stderr_txt or "", flags=re.IGNORECASE)
         if font_selects:
             print(f"[Subtitle Font] libass selected: {font_selects[-1].strip()}")
         else:
             print("[Subtitle Font] libass did not report a selected face; check FFmpeg/libass build diagnostics.")
         print(f"ASS subtitles embedded successfully using {encoder_name}.")
         return True
-    except subprocess.CalledProcessError as e:
+    else:
         if encoder_name != 'libx264':
             # Retry with libx264
             command = [c if c != 'h264_nvenc' else 'libx264' for c in command]
@@ -1871,18 +2070,24 @@ def embed_ass_subtitles(video_path, ass_path, output_path, ffmpeg_path=None, blu
                 if idx + 1 < len(command):
                     command[idx + 1] = '18'
             
-            print(f"NVENC failed, retrying with libx264. Error:\n{e.stderr}")
-            try:
-                result = subprocess.run(command, capture_output=True, check=True, **_text_subprocess_run_kwargs())
-                font_selects = re.findall(r".*fontselect:.*", result.stderr or "", flags=re.IGNORECASE)
+            print(f"NVENC failed, retrying with libx264. Error:\n{stderr_txt}")
+            fb_ok, fb_stdout, fb_stderr = run_ffmpeg_with_progress(
+                command,
+                total_duration_seconds=video_duration,
+                progress_callback=progress_callback,
+                cancellation_check=cancellation_check,
+                output_path_to_clean=output_path,
+            )
+            if fb_ok:
+                font_selects = re.findall(r".*fontselect:.*", fb_stderr or "", flags=re.IGNORECASE)
                 if font_selects:
                     print(f"[Subtitle Font] libass selected: {font_selects[-1].strip()}")
                 print("ASS subtitles embedded successfully using libx264 fallback.")
                 return True
-            except subprocess.CalledProcessError as fallback_error:
-                print(f"Error during fallback:\n{fallback_error.stderr}")
+            else:
+                print(f"Error during fallback:\n{fb_stderr}")
                 return False
-        print(f"Error during ASS embedding:\n{e.stderr}")
+        print(f"Error during ASS embedding:\n{stderr_txt}")
         return False
 
 
@@ -2109,7 +2314,9 @@ def embed_subtitles(video_path, srt_path, output_path,
                      ffmpeg_path=None,
                     video_filter_state=None,
                     audio_gain_db=0.0,
-                    fast=False):
+                    fast=False,
+                    progress_callback=None,
+                    cancellation_check=None):
     """Burn subtitles into video using a properly-styled ASS file.
 
     Workflow:
@@ -2177,6 +2384,8 @@ def embed_subtitles(video_path, srt_path, output_path,
         video_filter_state=video_filter_state,
         audio_gain_db=audio_gain_db,
         fast=fast,
+        progress_callback=progress_callback,
+        cancellation_check=cancellation_check,
     )
 
     # Step 4: clean up temp ASS

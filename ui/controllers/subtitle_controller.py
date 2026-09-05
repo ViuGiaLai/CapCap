@@ -16,52 +16,53 @@ class SubtitleController:
         self.gui = gui
 
     def _show_translation_progress(self, *, is_retranslation: bool):
-        """Show elapsed time for both first-time and repeated translation."""
+        """Show unified progress dialog with live batch and cue tracking."""
         self._close_translation_progress()
+        from widgets.progress_dialog import PipelineProgressDialog
         provider = self.gui._selected_ai_provider_label() if hasattr(self.gui, "_selected_ai_provider_label") else "selected provider"
         action = "Re-translating" if is_retranslation else "Translating"
-        dialog = QProgressDialog(
-            f"{action} subtitles with {provider}...\nElapsed: 00:00",
-            None,
-            0,
-            0,
-            self.gui,
-        )
-        dialog.setWindowTitle(f"{action} Subtitles")
-        dialog.setWindowModality(Qt.NonModal)
-        dialog.setAutoClose(False)
-        dialog.setAutoReset(False)
-        dialog.setMinimumDuration(0)
-        dialog.setMinimumWidth(430)
-        dialog.setValue(0)
-        dialog.setStyleSheet(
-            "QProgressDialog { background-color: #101826; color: #e6eef9; }"
-            "QLabel { color: #e6eef9; }"
-            "QPushButton { background: #22344c; color: #e6eef9; border: 1px solid #36516f; border-radius: 6px; padding: 5px 14px; }"
-        )
-        started = time.monotonic()
-        timer = QTimer(dialog)
-
-        def update_elapsed():
-            elapsed = int(time.monotonic() - started)
-            dialog.setLabelText(
-                f"{action} subtitles with {provider}...\n"
-                f"Elapsed: {elapsed // 60:02d}:{elapsed % 60:02d}\n"
-                "Large subtitle projects can take a few minutes."
-            )
-
-        timer.setInterval(1000)
-        timer.timeout.connect(update_elapsed)
-        timer.start()
+        dialog = PipelineProgressDialog(self.gui)
+        dialog.title_label.setText(f"{action} Subtitles")
+        dialog.add_step("translation", f"{action} subtitles with {provider}")
+        dialog.start_step("translation")
+        dialog.stop_requested.connect(self._on_cancel_translation)
         self.gui._translation_progress_dialog = dialog
-        self.gui._translation_progress_timer = timer
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            self.gui.mini_status_bar.set_active("Translation", f"{action} subtitles…")
         dialog.show()
 
+    def _on_cancel_translation(self):
+        worker = getattr(self.gui, "translation_thread", None)
+        if worker is not None:
+            try:
+                worker.requestInterruption()
+            except Exception:
+                pass
+        self._close_translation_progress()
+        self.gui.translate_btn.setEnabled(True)
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            self.gui.mini_status_bar.set_stopped()
+
+    def _on_translation_progress(self, progress):
+        from models.progress import ProgressEvent
+        dialog = getattr(self.gui, "_translation_progress_dialog", None)
+        if isinstance(progress, ProgressEvent):
+            percent = progress.percent
+            detail = progress.message
+            chip = progress.substage or ""
+        else:
+            detail = str(progress or "")
+            percent = None
+            chip = ""
+        if dialog is not None:
+            if hasattr(dialog, "update_step_progress"):
+                dialog.update_step_progress("translation", percent, detail)
+                if chip and "translation" in dialog.steps:
+                    dialog.steps["translation"].set_substage_chip(chip)
+        if hasattr(self.gui, "mini_status_bar") and self.gui.mini_status_bar is not None:
+            self.gui.mini_status_bar.set_progress(percent=percent, detail=detail, chip=chip)
+
     def _close_translation_progress(self):
-        timer = getattr(self.gui, "_translation_progress_timer", None)
-        if timer is not None:
-            timer.stop()
-        self.gui._translation_progress_timer = None
         dialog = getattr(self.gui, "_translation_progress_dialog", None)
         self.gui._translation_progress_dialog = None
         if dialog is not None:
@@ -192,6 +193,7 @@ class SubtitleController:
             srt_source, model_path, src_lang, self.gui.get_target_language_code(), enable_polish
         )
         worker = self.gui.translation_thread
+        worker.progress.connect(self._on_translation_progress)
         worker.finished.connect(self.gui.on_translation_finished)
         worker.finished.connect(
             lambda *_args, worker=worker: release_thread_when_stopped(

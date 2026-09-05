@@ -7,7 +7,7 @@ import shutil
 import re
 import tempfile
 
-from PySide6.QtCore import QMetaObject, QSettings, Qt, QTimer
+from PySide6.QtCore import QMetaObject, QSettings, Qt, QTimer, QThread, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -356,6 +356,35 @@ def _prepare_timeline_visual_cache(video_path: str, temp_root: str) -> None:
         print(f"[Launcher] Timeline visuals prepared: waveform={len(waveform)}, thumbnails={len(thumbnails)}")
     except Exception as exc:
         print(f"[Launcher] Timeline visual preparation skipped: {exc}")
+
+
+class _SplitVideoWorker(QThread):
+    progress = Signal(int, str)
+    finished_result = Signal(bool, str)
+
+    def __init__(self, cmd, total_duration, parent=None):
+        super().__init__(parent)
+        self.cmd = cmd
+        self.total_duration = total_duration
+
+    def run(self):
+        from video_processor import run_ffmpeg_with_progress
+        try:
+            def _prog(event):
+                pct = int(event.percent or 0)
+                self.progress.emit(pct, f"Splitting… {pct}%")
+
+            ok, _, err = run_ffmpeg_with_progress(
+                self.cmd,
+                self.total_duration,
+                progress_callback=_prog,
+                cancellation_check=self.isInterruptionRequested,
+            )
+            self.finished_result.emit(ok, "" if ok else (err or "FFmpeg process returned non-zero code"))
+        except InterruptedError:
+            self.finished_result.emit(False, "Cancelled by user")
+        except Exception as e:
+            self.finished_result.emit(False, str(e))
 
 
 class LauncherWindow(QDialog):
@@ -1343,34 +1372,39 @@ class LauncherWindow(QDialog):
         if reply.exec() != QMessageBox.Yes:
             return
 
-        progress = QProgressDialog("Splitting video...", None, 0, 0, self)
-        progress.setWindowTitle("Split Video")
-        progress.setModal(True)
-        progress.setCancelButton(None)
-        progress.show()
+        from widgets.progress_dialog import PipelineProgressDialog
+        progress = PipelineProgressDialog(self)
+        progress.title_label.setText("Split Long Video")
+        progress.add_step("split", f"Splitting into {seg_minutes}-minute segments")
+        progress.start_step("split")
+
+        cmd = [
+            _ffmpeg_path(), "-y", "-i", path, "-c", "copy",
+            "-f", "segment", "-segment_time", str(seg_seconds),
+            "-reset_timestamps", "1", out_pattern,
+        ]
+        worker = _SplitVideoWorker(cmd, duration, self)
+        progress.stop_requested.connect(worker.requestInterruption)
+
         split_result = {"ok": False, "error": ""}
 
-        import subprocess
-        import threading
+        def _on_prog(pct, msg):
+            progress.update_step_progress("split", pct, msg)
 
-        def _do_split():
-            try:
-                result = subprocess.run(
-                    [_ffmpeg_path(), "-y", "-i", path, "-c", "copy",
-                     "-f", "segment", "-segment_time", str(seg_seconds),
-                     "-reset_timestamps", "1", out_pattern],
-                    capture_output=True, timeout=3600, **subprocess_hidden_kwargs(),
-                )
-                split_result["ok"] = result.returncode == 0
-                if not split_result["ok"]:
-                    split_result["error"] = (result.stderr or result.stdout or "").strip()
-                QMetaObject.invokeMethod(progress, "accept", Qt.QueuedConnection)
-            except Exception as e:
-                split_result["error"] = str(e)
-                QMetaObject.invokeMethod(progress, "accept", Qt.QueuedConnection)
-                print(f"[Split] Error: {e}")
+        def _on_done(ok, err):
+            split_result["ok"] = ok
+            split_result["error"] = err
+            if ok:
+                progress.finish_step("split")
+                progress.set_completed()
+            else:
+                progress.set_error("split", err or "Split failed")
+            QTimer.singleShot(600, progress.accept)
 
-        threading.Thread(target=_do_split, daemon=True).start()
+        worker.progress.connect(_on_prog)
+        worker.finished_result.connect(_on_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
         progress.exec()
 
         if not split_result["ok"]:
