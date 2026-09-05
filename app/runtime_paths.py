@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -105,3 +106,17 @@ def subprocess_text_kwargs() -> dict:
         "errors": "replace",
         **subprocess_hidden_kwargs(),
     }
+
+
+def sanitize_ffmpeg_diagnostics(text: object) -> str:
+    """Keep real FFmpeg errors while removing repetitive AAC ``illegal icc`` lines."""
+    value = str(text or "")
+    if not value:
+        return ""
+    value = re.sub(
+        r"^.*\[aac[^\r\n]*\]\s*illegal icc\s*\r?$",
+        "",
+        value,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    return re.sub(r"\n{3,}", "\n\n", value).strip()

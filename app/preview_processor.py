@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-from runtime_paths import bin_path, subprocess_text_kwargs
+from runtime_paths import bin_path, sanitize_ffmpeg_diagnostics, subprocess_text_kwargs
 from video_filter_chain import build_video_filter_chain, normalize_video_filter_state
 
 
@@ -103,7 +103,7 @@ def _run_ffmpeg_with_h264_fallback(
             return
         raise RuntimeError(fallback_proc.stderr or fallback_proc.stdout or error_message)
 
-    raise RuntimeError(proc.stderr or proc.stdout or error_message)
+    raise RuntimeError(sanitize_ffmpeg_diagnostics(proc.stderr) or proc.stdout or error_message)
 
 
 def _build_canvas_vf(target_width=None, target_height=None, scale_mode: str = "fit", focus_x: float = 0.5, focus_y: float = 0.5) -> str:

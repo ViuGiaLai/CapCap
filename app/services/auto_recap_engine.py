@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from runtime_paths import subprocess_hidden_kwargs
+from runtime_paths import sanitize_ffmpeg_diagnostics, subprocess_hidden_kwargs
 
 
 @dataclass
@@ -749,7 +749,7 @@ class AutoRecapEngine:
             else:
                 error_handle.seek(0)
                 error_text = error_handle.read().decode("utf-8", errors="replace").strip()
-                self.last_render_error = error_text[-4000:] or f"FFmpeg exited with code {proc.returncode}."
+                self.last_render_error = sanitize_ffmpeg_diagnostics(error_text)[-4000:] or f"FFmpeg exited with code {proc.returncode}."
             if success and on_progress:
                 on_progress(100)
             return success

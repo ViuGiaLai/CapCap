@@ -13,11 +13,18 @@ for p in [ROOT_DIR, APP_DIR, UI_DIR]:
         sys.path.insert(0, p)
 
 from app.core.models.progress import ProgressEvent, MonotonicProgressTracker
+from app.runtime_paths import sanitize_ffmpeg_diagnostics
 from app.video_processor import run_ffmpeg_with_progress, get_video_duration
 from ui.utils.progress_protocol import format_duration_clock, parse_progress_update
 
 
 class TestProgressCore:
+    def test_ffmpeg_illegal_icc_diagnostics_are_collapsed(self):
+        raw = "[aac @ 1] illegal icc\n" * 20 + "real decode failure"
+        cleaned = sanitize_ffmpeg_diagnostics(raw)
+        assert "illegal icc" not in cleaned.lower()
+        assert "real decode failure" in cleaned
+
     def test_progress_event_model(self):
         event = ProgressEvent(
             workflow="test_workflow",

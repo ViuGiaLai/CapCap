@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 import wave
 
-from runtime_paths import bin_path, subprocess_text_kwargs
+from runtime_paths import bin_path, sanitize_ffmpeg_diagnostics, subprocess_text_kwargs
 
 
 VOICE_TRACK_IN_MEMORY_MAX_SECONDS = 30 * 60
@@ -115,7 +115,7 @@ def extract_audio_from_video(video_path: str, output_wav_path: str, sample_rate:
     proc = subprocess.run(cmd, capture_output=True, **subprocess_text_kwargs())
     if proc.returncode != 0:
         raise RuntimeError(
-            f"FFmpeg audio extraction failed:\n{proc.stderr or proc.stdout}"
+            f"FFmpeg audio extraction failed:\n{sanitize_ffmpeg_diagnostics(proc.stderr) or proc.stdout}"
         )
     return output_wav_path
 

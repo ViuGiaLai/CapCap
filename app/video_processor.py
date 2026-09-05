@@ -7,7 +7,7 @@ import threading
 from functools import lru_cache
 
 from new_highlight_selector import auto_select_matches
-from runtime_paths import asset_path, bin_path, temp_path
+from runtime_paths import asset_path, bin_path, sanitize_ffmpeg_diagnostics, temp_path
 from video_filter_chain import (
     build_video_color_chain,
     build_video_filter_chain,
@@ -953,7 +953,7 @@ def run_ffmpeg_with_progress(
             os.remove(output_path_to_clean)
         except OSError:
             pass
-    return success, "".join(stdout_lines), "".join(stderr_lines)
+    return success, "".join(stdout_lines), sanitize_ffmpeg_diagnostics("".join(stderr_lines))
 
 
 
@@ -2270,7 +2270,7 @@ def extract_audio(video_path, audio_output_path, ffmpeg_path=None):
         print("Audio extraction successful.")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Error during audio extraction: {e.stderr}")
+        print(f"Error during audio extraction: {sanitize_ffmpeg_diagnostics(e.stderr)}")
         return False
 
 

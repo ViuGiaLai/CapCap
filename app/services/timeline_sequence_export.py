@@ -5,7 +5,7 @@ import subprocess
 import time
 import tempfile
 
-from app.runtime_paths import subprocess_text_kwargs
+from app.runtime_paths import sanitize_ffmpeg_diagnostics, subprocess_text_kwargs
 
 
 def _atempo(speed: float) -> str:
@@ -255,7 +255,7 @@ def export_timeline_sequence(
         **subprocess_text_kwargs(),
     )
     if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg Timeline export failed: {(result.stderr or '')[-1800:]}")
+        raise RuntimeError(f"FFmpeg Timeline export failed: {sanitize_ffmpeg_diagnostics(result.stderr)[-1800:]}")
     if not os.path.isfile(output_path) or os.path.getsize(output_path) <= 0:
         raise RuntimeError("FFmpeg did not create the Timeline output file.")
     return output_path
