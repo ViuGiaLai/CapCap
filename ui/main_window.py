@@ -292,6 +292,21 @@ QLabel#previewStatePill {
     letter-spacing: .8px;
     padding: 3px 8px;
 }
+QPushButton#previewScaleBtn {
+    background: #151f30;
+    border: 1px solid #283950;
+    border-radius: 8px;
+    color: #38bdf8;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .8px;
+    padding: 3px 8px;
+}
+QPushButton#previewScaleBtn:hover {
+    background: #1e2f47;
+    color: #7dd3fc;
+    border-color: #38bdf8;
+}
 QPushButton#workflowTabBtn {
     min-height: 36px;
     background-color: #121826;

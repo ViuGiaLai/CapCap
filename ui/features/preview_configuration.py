@@ -547,13 +547,40 @@ class PreviewConfigurationMixin:
         self.refresh_ui_state()
 
     def on_output_scale_mode_changed(self, *_args):
+        scale_key = self.get_output_scale_mode_key()
         if hasattr(self, "video_view") and hasattr(self.video_view, "set_preview_scale_mode"):
-            self.video_view.set_preview_scale_mode(self.get_output_scale_mode_key())
+            self.video_view.set_preview_scale_mode(scale_key)
+        self._sync_preview_scale_btn(scale_key)
         self._sync_preview_framing_to_player()
         self._sync_preview_output_canvas_dimensions()
         self.update_subtitle_preview_style()
         self._refresh_text_layer_preview(getattr(getattr(self, "timeline", None), "_selected_layer_id", ""))
         self.apply_preview_blur_region()
+        self.refresh_ui_state()
+
+    def _sync_preview_scale_btn(self, scale_mode: str = ""):
+        btn = getattr(self, "preview_scale_btn", None)
+        if btn is not None:
+            mode = str(scale_mode or self.get_output_scale_mode_key() or "fit").strip().upper()
+            btn.setText("FILL" if mode == "FILL" else "FIT")
+
+    def toggle_preview_scale_mode(self):
+        current = self.get_output_scale_mode_key()
+        target = "fill" if current == "fit" else "fit"
+        combo = getattr(self, "output_scale_mode_combo", None)
+        if combo is not None:
+            idx = combo.findData(target)
+            if idx < 0:
+                idx = combo.findText(target.capitalize())
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+                return
+        if hasattr(self, "video_view") and hasattr(self.video_view, "set_preview_scale_mode"):
+            self.video_view.set_preview_scale_mode(target)
+        self._sync_preview_scale_btn(target)
+        self._sync_preview_framing_to_player()
+        self._sync_preview_output_canvas_dimensions()
+        self.update_subtitle_preview_style()
         self.refresh_ui_state()
 
     def on_preview_framing_changed(self, *_args):

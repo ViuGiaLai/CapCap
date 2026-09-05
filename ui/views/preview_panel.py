@@ -792,6 +792,10 @@ def build_preview_panel(gui):
     gui.frame_preview_image_label.hide()
 
     gui.video_view = MpvVideoView() if is_mpv_backend_available() else VideoView()
+    if hasattr(gui.video_view, "scaleModeToggleRequested"):
+        gui.video_view.scaleModeToggleRequested.connect(
+            lambda: gui.toggle_preview_scale_mode() if hasattr(gui, "toggle_preview_scale_mode") else None
+        )
     # The vertical workspace is splitter-resizable.  Keep a practical but
     # compact minimum so the transport row always has its own space when the
     # user gives more room to the timeline.
@@ -850,6 +854,14 @@ def build_preview_panel(gui):
     preview_state = QLabel("SOURCE MONITOR")
     preview_state.setObjectName("previewStatePill")
     preview_header.addWidget(preview_state)
+
+    gui.preview_scale_btn = QPushButton("FIT")
+    gui.preview_scale_btn.setObjectName("previewScaleBtn")
+    gui.preview_scale_btn.setCursor(Qt.PointingHandCursor)
+    gui.preview_scale_btn.setToolTip("Chế độ xem trước: FIT (chuẩn 100% gốc) hoặc FILL (tràn viền 100%). Nhấp đúp chuột vào màn hình để chuyển nhanh.")
+    gui.preview_scale_btn.clicked.connect(lambda: gui.toggle_preview_scale_mode() if hasattr(gui, "toggle_preview_scale_mode") else None)
+    preview_header.addWidget(gui.preview_scale_btn)
+
     preview_card_layout.addLayout(preview_header)
     preview_card_layout.addWidget(gui.preview_context_label)
     preview_card_layout.addWidget(gui.frame_preview_status_label)

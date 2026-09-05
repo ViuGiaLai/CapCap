@@ -1407,6 +1407,7 @@ class MpvVideoView(QWidget):
     maskEditFinished = Signal()
     textLayerSelected = Signal(str)
     textLayerMoved = Signal(str, float, float)
+    scaleModeToggleRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1744,6 +1745,12 @@ class MpvVideoView(QWidget):
         if not canvas_ratio:
             return QRectF(0, 0, view_w, view_h)
 
+        scale_mode = str(getattr(self, "preview_scale_mode", "fit") or "fit").strip().lower()
+        aspect_key = str(getattr(self, "preview_aspect_key", "source") or "source").strip().lower()
+        source_aspect = (self.video_source_width / self.video_source_height) if self.video_source_width and self.video_source_height else None
+        if scale_mode == "fill" and (aspect_key == "source" or (source_aspect and canvas_ratio and abs(source_aspect - canvas_ratio) < 0.05)):
+            return QRectF(0.0, 0.0, view_w, view_h)
+
         view_ratio = view_w / view_h if view_h else canvas_ratio
         if canvas_ratio > view_ratio:
             content_w = view_w
@@ -1928,6 +1935,13 @@ class MpvVideoView(QWidget):
             return
         super().mouseReleaseEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.scaleModeToggleRequested.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def paintEvent(self, event):
         super().paintEvent(event)
         canvas_rect = self.get_preview_canvas_rect()
@@ -1941,8 +1955,8 @@ class MpvVideoView(QWidget):
         inner.addRect(canvas_rect)
         matte = outer.subtracted(inner)
         if not matte.isEmpty():
-            painter.fillPath(matte, QColor(4, 6, 12, 230))
-        painter.setPen(QPen(QColor(30, 41, 59, 180), 1.0))
+            painter.fillPath(matte, QColor(9, 13, 22, 240))
+        painter.setPen(QPen(QColor(38, 52, 74, 180), 1.0))
         painter.drawRect(canvas_rect)
 
     def set_blur_edit_enabled(self, enabled: bool):

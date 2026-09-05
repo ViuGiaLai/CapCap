@@ -727,7 +727,20 @@ def build_start_group(gui, left_layout):
     voice_card, voice_layout = _build_collapsible_section("Voice")
     gui.voice_section_card = voice_card
     gui.voice_engine_combo = QComboBox()
-    gui.voice_engine_combo.addItem("Fast Voice", "fast")
+    # Keep the legacy ``fast`` value for project compatibility; it now means
+    # the offline Piper engine. New projects start with no forced engine so
+    # users can choose the TTS model explicitly.
+    gui.voice_engine_combo.addItem("Select TTS engine…", "")
+    gui.voice_engine_combo.addItem("Piper (Fast · Offline)", "fast")
+    gui.voice_engine_combo.addItem("ZeroTTS (Natural · Not installed)", "zerotts")
+    gui.voice_engine_combo.addItem("KorvaTTS (Natural / Local · Not installed)", "korvatts")
+    gui.voice_engine_combo.addItem("Kokoro-82M (Natural · Not installed)", "kokoro")
+    gui.voice_engine_combo.setToolTip(
+        "Choose the engine explicitly. Engines marked Not installed require their runtime/model before generation."
+    )
+    gui.voice_language_label = QLabel("Output language follows Language → Translate to")
+    gui.voice_language_label.setObjectName("helperLabel")
+    gui.voice_language_label.setWordWrap(True)
     gui.free_voice_combo = QComboBox()
     gui.voice_gender_combo = QComboBox()
     gui.voice_gender_combo.addItems(["Any", "Male", "Female"])
@@ -817,6 +830,7 @@ def build_start_group(gui, left_layout):
     voice_setup_title = QLabel("Voice Setup")
     voice_setup_title.setObjectName("sectionTitle")
     voice_setup_layout.addWidget(voice_setup_title)
+    voice_setup_layout.addWidget(gui.voice_language_label)
     voice_setup_layout.addWidget(QLabel("Voice engine"))
     voice_setup_layout.addWidget(gui.voice_engine_combo)
     gui.fast_voice_panel = QWidget()

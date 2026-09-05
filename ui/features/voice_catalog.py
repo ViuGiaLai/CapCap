@@ -145,8 +145,12 @@ class VoiceCatalogMixin:
     def _current_voice_engine_key(self) -> str:
         combo = getattr(self, "voice_engine_combo", None)
         if combo is None:
-            return "fast"
-        return str(combo.currentData() or "fast").strip().lower() or "fast"
+            return "piper"
+        value = str(combo.currentData() or "").strip().lower()
+        if not value:
+            return ""
+        # ``fast`` is the legacy persisted value for the offline Piper engine.
+        return "piper" if value == "fast" else value
 
     def get_transcription_engine(self) -> str:
         """Return the recognition source for the open project, never a stale global preference."""
@@ -201,6 +205,8 @@ class VoiceCatalogMixin:
         button.setToolTip("Transcribe the Selection Range with custom Whisper or OCR settings")
 
     def _resolve_active_voice_name(self, *, persist_new_clone: bool = False) -> str:
+        if self._current_voice_engine_key() not in {"piper", "edge"}:
+            return ""
         free_value = str(self.free_voice_combo.currentData() or "").strip() if hasattr(self, "free_voice_combo") else ""
         if free_value and free_value.startswith("edge:"):
             return free_value
@@ -220,8 +226,30 @@ class VoiceCatalogMixin:
                 return fallback_entry_id
         return ""
 
-    def on_voice_engine_changed(self):
+    def on_voice_engine_changed(self, _index: int = -1):
         self._voiceover_force_refresh = True
+        # The voice list is derived from the same catalog as Setup/Resources.
+        # Refreshing here keeps engine, language and selected voice in sync.
+        if getattr(self, "voice_catalog_entries_all", None):
+            self.refresh_voice_catalog_combos()
+        self._update_voice_language_hint()
+
+    def _update_voice_language_hint(self) -> None:
+        label = getattr(self, "voice_language_label", None)
+        if label is None:
+            return
+        engine_key = self._current_voice_engine_key()
+        if engine_key in {"zerotts", "korvatts", "kokoro"}:
+            label.setText(
+                "This engine is listed for planning only; its runtime is not integrated in this build."
+            )
+            return
+        language = str(self.get_target_language_code() or "").strip().lower()
+        language_name = {
+            "vi": "Vietnamese",
+            "en": "English",
+        }.get(language, language.upper() or "the selected language")
+        label.setText(f"Output language: {language_name} (synced from Language → Translate to)")
 
     def load_voice_preview_catalog(self):
         self._auto_sync_piper_voices_to_catalog()
@@ -231,6 +259,7 @@ class VoiceCatalogMixin:
             self.voice_preview_dialog.close()
             self.voice_preview_dialog = None
         self.refresh_voice_catalog_combos()
+        self._update_voice_language_hint()
 
     def _load_piper_voice_meta(self) -> dict:
         meta_path = models_path("piper", "voices_meta.json")
@@ -461,6 +490,7 @@ class VoiceCatalogMixin:
     def refresh_voice_catalog_combos(self):
         self.voice_catalog_entries = []
         target_language = self.get_target_language_code()
+        engine_key = self._current_voice_engine_key()
         for entry in (self.voice_catalog_entries_all or []):
             if not entry or not isinstance(entry, dict):
                 continue
@@ -468,6 +498,11 @@ class VoiceCatalogMixin:
                 continue
             provider = str(entry.get("provider", "")).strip().lower()
             if provider not in {"piper", "edge"}:
+                continue
+            if engine_key in {"piper", "edge"} and provider != engine_key:
+                continue
+            if engine_key not in {"piper", "edge"}:
+                # Planned engines do not have runtime-backed catalog entries.
                 continue
             entry_language = str(entry.get("language", "")).strip().lower().split("-", 1)[0]
             if entry_language and entry_language != target_language:
@@ -515,6 +550,7 @@ class VoiceCatalogMixin:
         self._voiceover_force_refresh = True
         if getattr(self, "voice_catalog_entries_all", None):
             self.refresh_voice_catalog_combos()
+        self._update_voice_language_hint()
 
     def on_translation_engine_changed(self, _index: int = -1):
         """Update Translation Engine UI fields based on selected provider."""

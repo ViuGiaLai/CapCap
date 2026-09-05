@@ -201,7 +201,13 @@ class VoiceSubtitlePreviewMixin:
 
     def preview_selected_voice_sample(self):
         if not (self.voice_catalog_entries or []):
-            QMessageBox.information(self, "Preview voice", "No local voices are available yet. Please add Piper models to models/piper first.")
+            target_language = str(self.get_target_language_code() if hasattr(self, "get_target_language_code") else "vi").strip().lower()
+            folder = "models/piper-en" if target_language.startswith("en") else "models/piper"
+            QMessageBox.information(
+                self,
+                "Preview voice",
+                f"No local voices are available for the selected language. Install a Piper voice pack in {folder} from Manage Resources first.",
+            )
             return
 
         if not self.ensure_required_resources("Voice preview", include_voice=True):
