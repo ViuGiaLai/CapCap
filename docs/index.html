@@ -1,44 +1,43 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<html lang="vi" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VIUStudio | Windows Desktop Video Localization Editor</title>
+    <title>VIUStudio | Windows Desktop Video Localization & AI Recap Editor</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script>
         tailwind.config = {
+            darkMode: 'class',
             theme: {
                 extend: {
                     fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
                     },
                     colors: {
-                        background: '#000000',
-                        surface: '#0A0A0A',
-                        surfaceHover: '#141414',
-                        border: 'rgba(255, 255, 255, 0.08)',
-                        textMuted: '#888888',
-                        primary: '#FFFFFF',
-                        accent: '#5E6AD2',
-                        accentGlow: 'rgba(94, 106, 210, 0.4)'
+                        canvas: '#06080d',
+                        surface: '#0b0f17',
+                        surfaceElevated: '#111724',
+                        surfaceCard: '#151d2e',
+                        borderSubtle: '#1e293b',
+                        borderAccent: 'rgba(99, 102, 241, 0.3)',
+                        primaryAccent: '#6366f1',
+                        secondaryAccent: '#10b981',
+                        cyanAccent: '#06b6d4',
+                        amberAccent: '#f59e0b',
                     },
-                    animation: {
-                        'float': 'float 6s ease-in-out infinite',
-                        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-                        'fade-in': 'fadeIn 1s ease-out forwards',
-                    },
-                    keyframes: {
-                        float: {
-                            '0%, 100%': { transform: 'translateY(0)' },
-                            '50%': { transform: 'translateY(-20px)' },
-                        },
-                        fadeIn: {
-                            '0%': { opacity: '0', transform: 'translateY(20px)' },
-                            '100%': { opacity: '1', transform: 'translateY(0)' },
-                        }
+                    boxShadow: {
+                        'glow-primary': '0 0 40px -10px rgba(99, 102, 241, 0.35)',
+                        'glow-emerald': '0 0 40px -10px rgba(16, 185, 129, 0.35)',
+                        'glow-cyan': '0 0 40px -10px rgba(6, 182, 212, 0.35)',
                     }
                 }
             }
@@ -46,400 +45,1065 @@
     </script>
     <style>
         body {
-            background-color: #000;
-            color: #fff;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
+            background-color: #06080d;
+            color: #f1f5f9;
+            font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #06080d;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
         }
 
-        /* Ambient Background Glow */
-        .ambient-glow {
+        /* Glassmorphic elements */
+        .glass-panel {
+            background: rgba(11, 15, 23, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .glass-card {
+            background: linear-gradient(180deg, rgba(21, 29, 46, 0.6) 0%, rgba(15, 22, 36, 0.4) 100%);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+        }
+
+        .glass-card:hover {
+            border-color: rgba(99, 102, 241, 0.4);
+            box-shadow: 0 10px 30px -10px rgba(99, 102, 241, 0.2);
+        }
+
+        /* Ambient neon glows */
+        .ambient-violet {
             position: absolute;
-            top: -20%;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 80vw;
+            width: 500px;
             height: 500px;
-            background: radial-gradient(ellipse at top, rgba(94, 106, 210, 0.15) 0%, rgba(0, 0, 0, 0) 70%);
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, rgba(0, 0, 0, 0) 70%);
+            border-radius: 50%;
             pointer-events: none;
             z-index: 0;
         }
 
-        /* Glassmorphism Navigation */
-        .nav-blur {
-            background: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        /* Stunning Gradient Text */
-        .text-gradient {
-            background: linear-gradient(135deg, #FFFFFF 0%, #A5A5A5 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        
-        .text-gradient-accent {
-            background: linear-gradient(135deg, #A8B1FF 0%, #5E6AD2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        /* Premium Buttons */
-        .btn-primary {
-            background: #FFFFFF;
-            color: #000000;
-            border: 1px solid transparent;
-            transition: all 0.2s ease;
-            box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
-        }
-        .btn-primary:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 25px rgba(255, 255, 255, 0.2);
-            background: #F0F0F0;
-        }
-        
-        .btn-secondary {
-            background: rgba(255, 255, 255, 0.03);
-            color: #FFFFFF;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            transition: all 0.2s ease;
-        }
-        .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.08);
-            border-color: rgba(255, 255, 255, 0.2);
-        }
-
-        /* Hero Image Showcase */
-        .hero-showcase {
-            position: relative;
-            border-radius: 12px;
-            padding: 8px;
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 100%);
-            box-shadow: 0 25px 80px -10px rgba(94, 106, 210, 0.3);
-        }
-        .hero-showcase::before {
-            content: '';
+        .ambient-emerald {
             position: absolute;
-            inset: 0;
-            border-radius: 12px;
-            padding: 1px;
-            background: linear-gradient(180deg, rgba(255,255,255,0.2), rgba(255,255,255,0));
-            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-            pointer-events: none;
-        }
-        .hero-showcase img {
-            border-radius: 8px;
-            border: 1px solid rgba(0,0,0,0.8);
-        }
-
-        /* Feature Cards */
-        .feature-card {
-            background: linear-gradient(180deg, #0A0A0A 0%, #050505 100%);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 20px;
-            padding: 32px;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        .feature-card:hover {
-            border-color: rgba(94, 106, 210, 0.3);
-            transform: translateY(-2px);
-        }
-        .feature-card::after {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0; height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
-            opacity: 0;
-            transition: opacity 0.3s;
-        }
-        .feature-card:hover::after {
-            opacity: 1;
-        }
-        
-        .icon-box {
-            width: 48px;
-            height: 48px;
-            border-radius: 12px;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            color: #fff;
-            margin-bottom: 24px;
-        }
-
-        /* Workflow Steps */
-        .workflow-step {
-            position: relative;
-            padding-left: 40px;
-            padding-bottom: 40px;
-        }
-        .workflow-step::before {
-            content: '';
-            position: absolute;
-            left: 11px;
-            top: 30px;
-            bottom: 0;
-            width: 2px;
-            background: rgba(255, 255, 255, 0.1);
-        }
-        .workflow-step:last-child::before {
-            display: none;
-        }
-        .step-dot {
-            position: absolute;
-            left: 0;
-            top: 4px;
-            width: 24px;
-            height: 24px;
+            width: 450px;
+            height: 450px;
+            background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, rgba(0, 0, 0, 0) 70%);
             border-radius: 50%;
-            background: #000;
-            border: 2px solid #5E6AD2;
-            box-shadow: 0 0 10px rgba(94, 106, 210, 0.5);
-            z-index: 1;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .ambient-cyan {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(6, 182, 212, 0.1) 0%, rgba(0, 0, 0, 0) 70%);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Gradient typography */
+        .text-gradient-white {
+            background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .text-gradient-violet {
+            background: linear-gradient(135deg, #a5b4fc 0%, #6366f1 50%, #4338ca 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .text-gradient-emerald {
+            background: linear-gradient(135deg, #6ee7b7 0%, #10b981 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Screenshot frame styling */
+        .screenshot-viewport {
+            position: relative;
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.1);
+        }
+
+        .screenshot-viewport img {
+            display: block;
+            width: 100%;
+            height: auto;
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Active tab button */
+        .tab-btn.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: #818cf8;
+            border-color: rgba(99, 102, 241, 0.5);
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.2);
         }
     </style>
 </head>
-<body class="selection:bg-accent selection:text-white">
+<body class="selection:bg-indigo-500 selection:text-white font-sans antialiased relative overflow-x-hidden min-h-screen">
 
-    <!-- Ambient Glow -->
-    <div class="ambient-glow"></div>
+    <!-- Ambient Glow Backgrounds -->
+    <div class="ambient-violet top-0 left-1/4 -translate-x-1/2"></div>
+    <div class="ambient-cyan top-40 right-0"></div>
+    <div class="ambient-emerald top-[1200px] left-10"></div>
 
-    <!-- Navigation -->
-    <nav class="fixed w-full z-50 nav-blur transition-all duration-300">
-        <div class="max-w-6xl mx-auto px-6">
+    <!-- Navigation Bar -->
+    <header class="fixed top-0 left-0 right-0 z-50 glass-panel border-b border-white/10 transition-all duration-300">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex items-center justify-between h-16">
-                <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 rounded bg-white text-black flex items-center justify-center font-bold text-lg leading-none">
-                        C
-                    </div>
-                    <span class="text-xl font-semibold tracking-tight text-white">VIUStudio</span>
-                </div>
                 
-                <div class="hidden md:flex space-x-8">
-                    <a href="#features" class="text-sm font-medium text-textMuted hover:text-white transition-colors">Features</a>
-                    <a href="#workflow" class="text-sm font-medium text-textMuted hover:text-white transition-colors">Workflow</a>
-                    <a href="https://github.com/ViuGiaLai/VIUStudio" class="text-sm font-medium text-textMuted hover:text-white transition-colors">GitHub</a>
+                <!-- Logo & Brand -->
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-400 flex items-center justify-center font-black text-white text-lg shadow-glow-primary">
+                        V
+                    </div>
+                    <div class="flex flex-col">
+                        <div class="flex items-center gap-2">
+                            <span class="font-extrabold text-lg tracking-tight text-white">VIUStudio</span>
+                            <span class="px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">v1.2.3</span>
+                        </div>
+                        <span class="text-[10px] text-slate-400 font-medium">Video Localization & Recap Editor</span>
+                    </div>
                 </div>
 
-                <div class="flex items-center gap-4">
-                    <a href="https://github.com/ViuGiaLai/VIUStudio" class="hidden md:flex items-center gap-2 btn-primary px-5 py-2 rounded-full font-semibold text-sm">
-                        Download Source
+                <!-- Nav Links -->
+                <nav class="hidden md:flex items-center space-x-1 lg:space-x-2">
+                    <a href="#studio-tour" class="px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                        <i class="fas fa-desktop mr-1.5 text-indigo-400"></i>Giao diện Hệ thống
+                    </a>
+                    <a href="#guided-workflow" class="px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                        <i class="fas fa-route mr-1.5 text-emerald-400"></i>Quy trình 5 Bước
+                    </a>
+                    <a href="#features-grid" class="px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                        <i class="fas fa-bolt mr-1.5 text-cyan-400"></i>Tính năng Đột phá
+                    </a>
+                    <a href="#doc-reader" class="px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                        <i class="fas fa-book-open mr-1.5 text-amber-400"></i>Tài liệu Chi tiết
+                    </a>
+                    <a href="#quick-start" class="px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                        <i class="fas fa-terminal mr-1.5 text-purple-400"></i>Cài đặt
+                    </a>
+                </nav>
+
+                <!-- Right Actions -->
+                <div class="flex items-center gap-3">
+                    <a href="https://github.com/ViuGiaLai/VIUStudio" target="_blank" class="hidden sm:flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 text-white border border-white/10 transition-colors">
+                        <i class="fab fa-github text-sm"></i>
+                        <span>GitHub</span>
+                    </a>
+                    <a href="#quick-start" class="flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white shadow-glow-primary transition-all transform hover:-translate-y-0.5">
+                        <i class="fas fa-download"></i>
+                        <span>Cài đặt ngay</span>
                     </a>
                 </div>
             </div>
         </div>
-    </nav>
+    </header>
 
     <!-- Hero Section -->
-    <section class="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden z-10">
-        <div class="max-w-6xl mx-auto px-6 relative text-center">
+    <section class="relative pt-32 pb-16 lg:pt-40 lg:pb-24 overflow-hidden z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative">
             
-            <div class="animate-fade-in">
-                <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-border bg-white/[0.03] text-xs font-medium text-textMuted mb-8 backdrop-blur-md">
-                    <span class="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
-                    Windows Desktop Video Localization
-                </div>
+            <!-- Badge -->
+            <div class="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 backdrop-blur-md mb-8">
+                <span class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
+                <span class="text-xs font-semibold text-indigo-300 tracking-wide">Trình biên tập Video Recap & Dịch thuật chuyên nghiệp cho Windows</span>
+            </div>
 
-                <h1 class="text-5xl md:text-7xl font-bold tracking-tighter mb-6 leading-[1.1]">
-                    The ultimate editor for <br>
-                    <span class="text-gradient-accent">subtitles & translation</span>
-                </h1>
+            <!-- Main Heading -->
+            <h1 class="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.1] mb-6">
+                Biến Mọi Thước Phim Thành <br class="hidden sm:block">
+                <span class="text-gradient-violet">Lời Thuyết Minh Sống Động</span>
+            </h1>
+
+            <p class="max-w-3xl mx-auto text-base sm:text-lg lg:text-xl text-slate-300 font-normal leading-relaxed mb-10">
+                VIUStudio kết hợp sức mạnh nhận diện giọng nói <strong>Faster-Whisper / SenseVoice</strong>, quét phụ đề <strong>RapidOCR</strong>, trí tuệ nhân tạo dịch thuật <strong>LLaMA Local / Gemini</strong> và lồng tiếng tự nhiên <strong>Piper / Edge TTS</strong> trên một dòng thời gian đa track trực quan.
+            </p>
+
+            <!-- CTA Buttons -->
+            <div class="flex flex-wrap justify-center gap-4 mb-16">
+                <a href="#studio-tour" class="flex items-center gap-2 px-7 py-3.5 rounded-xl bg-white text-black font-bold text-sm hover:bg-slate-100 shadow-xl transition-all transform hover:-translate-y-0.5">
+                    <i class="fas fa-play text-xs text-indigo-600"></i>
+                    Khám phá Giao diện Hệ thống
+                </a>
+                <a href="#guided-workflow" class="flex items-center gap-2 px-7 py-3.5 rounded-xl bg-slate-900/80 text-white font-semibold text-sm border border-slate-700 hover:border-indigo-500 hover:bg-slate-800 transition-all">
+                    <i class="fas fa-sitemap text-emerald-400"></i>
+                    Xem Quy trình 5 Bước
+                </a>
+                <a href="how-to-use.md" class="flex items-center gap-2 px-7 py-3.5 rounded-xl bg-slate-900/80 text-slate-300 font-semibold text-sm border border-slate-700 hover:text-white transition-all">
+                    <i class="fas fa-file-alt text-amber-400"></i>
+                    Cẩm nang Hướng dẫn (Docs)
+                </a>
+            </div>
+
+            <!-- Hero Live System Preview -->
+            <div class="max-w-6xl mx-auto screenshot-viewport group relative">
+                <div class="absolute -top-10 -left-10 w-40 h-40 bg-indigo-500/30 rounded-full blur-3xl pointer-events-none"></div>
+                <div class="absolute -bottom-10 -right-10 w-40 h-40 bg-cyan-500/30 rounded-full blur-3xl pointer-events-none"></div>
                 
-                <p class="text-lg md:text-xl text-textMuted max-w-2xl mx-auto mb-10 leading-relaxed">
-                    VIUStudio is a Windows desktop application for creating Vietnamese or English subtitles, translated video, voice-over, and timed visual layers.
-                </p>
+                <!-- Windows Titlebar Mockup -->
+                <div class="bg-slate-950 px-4 py-2.5 flex items-center justify-between border-b border-white/10 text-xs text-slate-400 font-mono">
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-red-500/80 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-yellow-500/80 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-green-500/80 inline-block"></span>
+                        <span class="ml-2 font-sans font-semibold text-slate-300">VIUStudio — VIUStudio_Project_Recap_01.mp4</span>
+                    </div>
+                    <div class="flex items-center gap-4 text-[11px]">
+                        <span class="text-emerald-400 font-semibold"><i class="fas fa-check-circle mr-1"></i>GPU Accelerated</span>
+                        <span>1600 × 950 px</span>
+                    </div>
+                </div>
 
-                <div class="flex flex-col sm:flex-row justify-center gap-4 mb-20">
-                    <a href="https://github.com/ViuGiaLai/VIUStudio" class="btn-primary px-8 py-3.5 rounded-full font-semibold flex items-center justify-center gap-2 text-base">
-                        <i class="fab fa-windows text-lg"></i>
-                        Run from Source
-                    </a>
-                    <a href="docs/how-to-use.md" class="btn-secondary px-8 py-3.5 rounded-full font-semibold flex items-center justify-center gap-2 text-base">
-                        <i class="fas fa-book text-textMuted"></i>
-                        Read Documentation
-                    </a>
+                <!-- Hero Image -->
+                <img src="assets/screenshots/editor_with_subtitles.png" alt="VIUStudio Workbench Interface" class="w-full h-auto">
+            </div>
+
+            <!-- Key Performance Metrics Strip -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto mt-12 text-left">
+                <div class="glass-card p-4 rounded-xl">
+                    <div class="text-2xl font-black text-indigo-400 font-mono">10,000+</div>
+                    <div class="text-xs text-slate-400 mt-0.5 font-medium">Subtitle Segments ảo hóa không lag</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl">
+                    <div class="text-2xl font-black text-emerald-400 font-mono">100%</div>
+                    <div class="text-xs text-slate-400 mt-0.5 font-medium">Chạy Offline hoàn toàn với CPU / LLaMA</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl">
+                    <div class="text-2xl font-black text-cyan-400 font-mono">&lt; 0.1s</div>
+                    <div class="text-xs text-slate-400 mt-0.5 font-medium">Scrubbing Timeline cực nhạy với libmpv</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl">
+                    <div class="text-2xl font-black text-amber-400 font-mono">5 Trong 1</div>
+                    <div class="text-xs text-slate-400 mt-0.5 font-medium">Tự động: Tách tiếng • Dịch • Lồng tiếng • Mờ</div>
                 </div>
             </div>
 
-            <!-- UI Showcase -->
-            <div class="mx-auto max-w-5xl animate-fade-in" style="animation-delay: 0.2s;">
-                <div class="hero-showcase">
-                    <img src="assets/viustudio_hero_1788057761596.jpg" alt="VIUStudio Editor Timeline Interface" class="w-full h-auto object-cover opacity-90 hover:opacity-100 transition-opacity">
-                </div>
-            </div>
         </div>
     </section>
 
-    <!-- Detailed Features Grid -->
-    <section id="features" class="py-24 relative z-10 border-t border-border bg-surface">
-        <div class="max-w-6xl mx-auto px-6">
-            <div class="mb-16">
-                <h2 class="text-3xl md:text-4xl font-bold tracking-tight mb-4 text-gradient">Everything you need, built-in.</h2>
-                <p class="text-textMuted text-lg max-w-2xl">Advanced transcription, OCR, cloud translation, and powerful TTS engines integrated directly into a professional timeline editor.</p>
+    <!-- SECTION: Interactive Studio Tour (Real Screenshots Tabs) -->
+    <section id="studio-tour" class="py-24 border-t border-white/10 bg-slate-950 relative z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            
+            <div class="text-center max-w-3xl mx-auto mb-14">
+                <span class="text-xs font-bold uppercase tracking-wider text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
+                    Live System Gallery
+                </span>
+                <h2 class="text-3xl sm:text-5xl font-extrabold tracking-tight mt-4 text-gradient-white">
+                    Trải Nghiệm Toàn Diện Giao Diện Hệ Thống
+                </h2>
+                <p class="text-slate-400 mt-3 text-sm sm:text-base">
+                    Ảnh chụp thực tế từ các module phần mềm VIUStudio đang hoạt động. Nhấp vào từng phân hệ để khám phá chi tiết các tính năng biên tập chuyên sâu.
+                </p>
+            </div>
+
+            <!-- Tour Navigation Pills -->
+            <div class="flex flex-wrap justify-center gap-2 mb-10 max-w-5xl mx-auto" id="tour-tabs">
+                <button onclick="switchTourTab('workbench')" id="tab-workbench" class="tab-btn active px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-desktop text-indigo-400"></i>
+                    <span>Studio Workbench</span>
+                </button>
+                <button onclick="switchTourTab('launcher')" id="tab-launcher" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-rocket text-amber-400"></i>
+                    <span>Project Launcher</span>
+                </button>
+                <button onclick="switchTourTab('timeline')" id="tab-timeline" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-stream text-emerald-400"></i>
+                    <span>Multi-Track Timeline</span>
+                </button>
+                <button onclick="switchTourTab('captions')" id="tab-captions" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-closed-captioning text-cyan-400"></i>
+                    <span>Captions & ASR AI</span>
+                </button>
+                <button onclick="switchTourTab('voice')" id="tab-voice" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-microphone-lines text-purple-400"></i>
+                    <span>Voice & TTS Studio</span>
+                </button>
+                <button onclick="switchTourTab('style')" id="tab-style" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-palette text-pink-400"></i>
+                    <span>Subtitle Style Presets</span>
+                </button>
+                <button onclick="switchTourTab('blur')" id="tab-blur" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-eye-slash text-blue-400"></i>
+                    <span>Blur & Mosaic Layers</span>
+                </button>
+                <button onclick="switchTourTab('resource')" id="tab-resource" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-boxes-stacked text-teal-400"></i>
+                    <span>Resource Manager</span>
+                </button>
+                <button onclick="switchTourTab('autorecap')" id="tab-autorecap" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-wand-magic-sparkles text-yellow-400"></i>
+                    <span>Auto Edit Recap</span>
+                </button>
+                <button onclick="switchTourTab('subtable')" id="tab-subtable" class="tab-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all flex items-center gap-2">
+                    <i class="fas fa-table text-green-400"></i>
+                    <span>Subtitle Table Editor</span>
+                </button>
+            </div>
+
+            <!-- Tour Showcase Card with Dynamic Content -->
+            <div class="glass-panel p-6 sm:p-8 rounded-2xl max-w-6xl mx-auto border border-white/10 shadow-2xl">
+                
+                <!-- Display Image Viewport -->
+                <div class="screenshot-viewport mb-6 bg-black" id="tour-img-container">
+                    <img id="tour-screenshot" src="assets/screenshots/editor_with_subtitles.png" alt="System Screen Preview" class="w-full h-auto">
+                </div>
+
+                <!-- Descriptive Information Panel -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-white/10">
+                    <div class="md:col-span-1">
+                        <span id="tour-badge" class="text-[11px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded border border-emerald-500/30">
+                            Workspace Core
+                        </span>
+                        <h3 id="tour-title" class="text-xl font-bold text-white mt-2">
+                            Studio Workbench & Timeline
+                        </h3>
+                        <p id="tour-desc" class="text-xs text-slate-400 mt-2 leading-relaxed">
+                            Không gian làm việc hợp nhất giúp đồng bộ tức thì giữa trình phát video chất lượng cao, dòng thời gian đa track dạng sóng âm thanh và bảng thuộc tính chi tiết.
+                        </p>
+                    </div>
+
+                    <div class="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4" id="tour-features">
+                        <div class="p-3.5 rounded-xl bg-white/[0.03] border border-white/5">
+                            <div class="text-xs font-semibold text-indigo-400 flex items-center gap-2">
+                                <i class="fas fa-layer-group"></i>
+                                <span>Multi-Track Timeline</span>
+                            </div>
+                            <p class="text-[11px] text-slate-300 mt-1 leading-normal">
+                                Quản lý đồng thời video nguồn (V1), audio gốc (A1), phụ đề đã dịch (TS1), và các lớp hiệu ứng che mờ (Blur).
+                            </p>
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-white/[0.03] border border-white/5">
+                            <div class="text-xs font-semibold text-emerald-400 flex items-center gap-2">
+                                <i class="fas fa-keyboard"></i>
+                                <span>Subtitle Inspector</span>
+                            </div>
+                            <p class="text-[11px] text-slate-300 mt-1 leading-normal">
+                                Chỉnh sửa trực tiếp câu dịch tiếng Việt, nghe thử câu thoại, và áp dụng nút bấm AI Rewrite viết lại văn phong kịch tính.
+                            </p>
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-white/[0.03] border border-white/5">
+                            <div class="text-xs font-semibold text-cyan-400 flex items-center gap-2">
+                                <i class="fas fa-play"></i>
+                                <span>Realtime Player & Controls</span>
+                            </div>
+                            <p class="text-[11px] text-slate-300 mt-1 leading-normal">
+                                Nhúng trực tiếp libmpv hỗ trợ tua nhanh 2x, lùi tiến từng khung hình (frame-by-frame) và xem thử vùng che mờ.
+                            </p>
+                        </div>
+                        <div class="p-3.5 rounded-xl bg-white/[0.03] border border-white/5">
+                            <div class="text-xs font-semibold text-amber-400 flex items-center gap-2">
+                                <i class="fas fa-bolt"></i>
+                                <span>Fast Preview (5s)</span>
+                            </div>
+                            <p class="text-[11px] text-slate-300 mt-1 leading-normal">
+                                Kết xuất nhanh 5 giây video thành phẩm ngay lập tức để kiểm tra font chữ, vị trí phụ đề và độ khớp âm thanh trước khi xuất.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+    </section>
+
+    <!-- SECTION: The 5-Step Guided Workflow -->
+    <section id="guided-workflow" class="py-24 border-t border-white/10 bg-canvas relative z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            
+            <div class="text-center max-w-3xl mx-auto mb-16">
+                <span class="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
+                    Linear Architecture
+                </span>
+                <h2 class="text-3xl sm:text-5xl font-extrabold tracking-tight mt-4 text-gradient-white">
+                    Quy Trình 5 Bước Chuẩn Hóa Recap
+                </h2>
+                <p class="text-slate-400 mt-3 text-sm sm:text-base">
+                    VIUStudio tinh gọn quy trình sản xuất video từ lúc nạp dữ liệu thô cho tới khi hoàn thiện thành phẩm thông qua 5 công đoạn tuyến tính chặt chẽ.
+                </p>
+            </div>
+
+            <!-- Workflow Visual Timeline Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 relative">
+                
+                <!-- Step 1 -->
+                <div class="glass-card p-5 rounded-2xl border-t-2 border-t-indigo-500 hover:transform hover:-translate-y-1 transition-all">
+                    <div class="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-sm mb-4 border border-indigo-500/30">
+                        1
+                    </div>
+                    <h3 class="text-base font-bold text-white mb-2">Prepare</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed mb-4">
+                        Nạp video gốc, phân tích kích thước và tự động đồng bộ hóa tỷ lệ khung hình 16:9 hoặc 9:16 (Shorts/TikTok).
+                    </p>
+                    <div class="text-[10px] font-mono text-indigo-300 bg-indigo-950/40 p-2 rounded border border-indigo-800/40">
+                        FFmpeg Probe • Multi-clip Ingestion • LUFS Normalization
+                    </div>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="glass-card p-5 rounded-2xl border-t-2 border-t-cyan-500 hover:transform hover:-translate-y-1 transition-all">
+                    <div class="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-sm mb-4 border border-cyan-500/30">
+                        2
+                    </div>
+                    <h3 class="text-base font-bold text-white mb-2">Transcript</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed mb-4">
+                        Trích xuất văn bản từ giọng nói qua Faster-Whisper/SenseVoice hoặc quét chữ từ khung hình bằng RapidOCR.
+                    </p>
+                    <div class="text-[10px] font-mono text-cyan-300 bg-cyan-950/40 p-2 rounded border border-cyan-800/40">
+                        Silero VAD • Speaker Diarization • ONNX Engine
+                    </div>
+                </div>
+
+                <!-- Step 3 -->
+                <div class="glass-card p-5 rounded-2xl border-t-2 border-t-emerald-500 hover:transform hover:-translate-y-1 transition-all">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm mb-4 border border-emerald-500/30">
+                        3
+                    </div>
+                    <h3 class="text-base font-bold text-white mb-2">Translate</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed mb-4">
+                        Chuyển ngữ sang tiếng Việt bằng mô hình LLaMA GGUF offline hoặc Google Gemini với văn phong kịch tính chuẩn recap.
+                    </p>
+                    <div class="text-[10px] font-mono text-emerald-300 bg-emerald-950/40 p-2 rounded border border-emerald-800/40">
+                        Llama.cpp • Qwen3-4B • Context Aware Batching
+                    </div>
+                </div>
+
+                <!-- Step 4 -->
+                <div class="glass-card p-5 rounded-2xl border-t-2 border-t-purple-500 hover:transform hover:-translate-y-1 transition-all">
+                    <div class="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm mb-4 border border-purple-500/30">
+                        4
+                    </div>
+                    <h3 class="text-base font-bold text-white mb-2">TTS Voice</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed mb-4">
+                        Tạo giọng đọc thuyết minh tự nhiên với Piper Neural TTS (Ngọc Huyền, Tuấn Khang) hoặc Microsoft Edge TTS.
+                    </p>
+                    <div class="text-[10px] font-mono text-purple-300 bg-purple-950/40 p-2 rounded border border-purple-800/40">
+                        Smart Timing Sync • Ducking -12dB • Multi-Speaker
+                    </div>
+                </div>
+
+                <!-- Step 5 -->
+                <div class="glass-card p-5 rounded-2xl border-t-2 border-t-amber-500 hover:transform hover:-translate-y-1 transition-all">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm mb-4 border border-amber-500/30">
+                        5
+                    </div>
+                    <h3 class="text-base font-bold text-white mb-2">Export</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed mb-4">
+                        Render video hoàn chỉnh với phụ đề nhúng cứng, vùng che mờ logo chống bản quyền và âm thanh hòa trộn chuyên nghiệp.
+                    </p>
+                    <div class="text-[10px] font-mono text-amber-300 bg-amber-950/40 p-2 rounded border border-amber-800/40">
+                        H.264 / NVENC • ASS Subtitle Styles • Auto Pacing
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Workflow Interactive Deep-Dive Banner -->
+            <div class="mt-12 glass-panel p-6 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-6 border border-white/10">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 text-2xl">
+                        <i class="fas fa-graduation-cap"></i>
+                    </div>
+                    <div>
+                        <h4 class="text-base font-bold text-white">Bạn muốn tìm hiểu chi tiết các mẹo làm video triệu view?</h4>
+                        <p class="text-xs text-slate-400 mt-0.5">Khám phá cẩm nang đầy đủ các phương pháp chống bản quyền và cân chỉnh âm thanh phòng thu.</p>
+                    </div>
+                </div>
+                <a href="workflow-guide.md" class="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/20 transition-all flex items-center gap-2 whitespace-nowrap">
+                    <span>Đọc Cẩm nang Workflow</span>
+                    <i class="fas fa-arrow-right text-[10px]"></i>
+                </a>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- SECTION: Features Grid -->
+    <section id="features-grid" class="py-24 border-t border-white/10 bg-slate-950 relative z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            
+            <div class="text-center max-w-3xl mx-auto mb-16">
+                <span class="text-xs font-bold uppercase tracking-wider text-cyan-400 bg-cyan-500/10 px-3 py-1 rounded-full border border-cyan-500/20">
+                    Cutting-Edge Modules
+                </span>
+                <h2 class="text-3xl sm:text-5xl font-extrabold tracking-tight mt-4 text-gradient-white">
+                    Trang Bị Toàn Diện Cho Nhà Sáng Tạo
+                </h2>
+                <p class="text-slate-400 mt-3 text-sm sm:text-base">
+                    Tất cả các công cụ bạn từng phải kết hợp qua 4-5 phần mềm khác nhau nay đều quy tụ trong một ứng dụng duy nhất.
+                </p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 
                 <!-- Feature 1 -->
-                <div class="feature-card group">
-                    <div class="icon-box group-hover:border-accent transition-colors">
+                <div class="glass-card p-6 rounded-2xl">
+                    <div class="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-lg mb-4 border border-indigo-500/30">
                         <i class="fas fa-wave-square"></i>
                     </div>
-                    <h3 class="text-xl font-semibold mb-3">AI Audio Transcription</h3>
-                    <p class="text-textMuted leading-relaxed">
-                        Powered by <strong>Faster-Whisper</strong> or <strong>SenseVoice</strong>. Extracts highly accurate text from audio with built-in optional speaker diarization.
+                    <h3 class="text-lg font-bold text-white mb-2">Faster-Whisper & SenseVoice</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Tích hợp hai công nghệ nhận diện giọng nói hàng đầu. Tự động nhận biết tiếng Trung, tiếng Anh, tiếng Nhật, tiếng Hàn và gắn nhãn thời gian chuẩn đến từng mili-giây.
                     </p>
                 </div>
 
                 <!-- Feature 2 -->
-                <div class="feature-card group">
-                    <div class="icon-box group-hover:border-accent transition-colors">
+                <div class="glass-card p-6 rounded-2xl">
+                    <div class="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-lg mb-4 border border-cyan-500/30">
                         <i class="fas fa-closed-captioning"></i>
                     </div>
-                    <h3 class="text-xl font-semibold mb-3">OCR Subtitle Extraction</h3>
-                    <p class="text-textMuted leading-relaxed">
-                        Dealing with hard-coded subtitles? VIUStudio's OCR engine scans video frames to extract burned-in text seamlessly.
+                    <h3 class="text-lg font-bold text-white mb-2">Trích xuất phụ đề cứng (OCR)</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Với các video nước ngoài đã bị nhúng phụ đề trực tiếp vào video, công nghệ RapidOCR PP-OCRv4 sẽ quét từng frame để bóc tách toàn bộ phụ đề mà không sót một từ.
                     </p>
                 </div>
 
                 <!-- Feature 3 -->
-                <div class="feature-card group">
-                    <div class="icon-box group-hover:border-accent transition-colors">
-                        <i class="fas fa-language"></i>
+                <div class="glass-card p-6 rounded-2xl">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-lg mb-4 border border-emerald-500/30">
+                        <i class="fas fa-brain"></i>
                     </div>
-                    <h3 class="text-xl font-semibold mb-3">Cloud Translation</h3>
-                    <p class="text-textMuted leading-relaxed">
-                        Integrates premium Cloud/API translation providers, with Google Translate as a reliable fallback for global localization.
+                    <h3 class="text-lg font-bold text-white mb-2">Dịch thuật LLaMA Local & Cloud</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Chạy mô hình LLaMA GGUF offline hoàn toàn trên máy tính cá nhân hoặc kết nối Google AI Studio (Gemini 2.5 Flash), OpenAI, Ollama để có bản dịch văn phong cuốn hút.
                     </p>
                 </div>
 
                 <!-- Feature 4 -->
-                <div class="feature-card group lg:col-span-2 flex flex-col md:flex-row gap-8 items-center bg-[url('assets/viustudio_timeline_bg.jpg')] bg-cover bg-center">
-                    <!-- We use the existing translation image as a visual asset here -->
-                    <div class="w-full md:w-1/2">
-                        <img src="assets/viustudio_translation_1788057782441.jpg" class="rounded-xl border border-border w-full opacity-80" alt="TTS Voices">
+                <div class="glass-card p-6 rounded-2xl">
+                    <div class="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center text-lg mb-4 border border-purple-500/30">
+                        <i class="fas fa-microphone-lines"></i>
                     </div>
-                    <div class="w-full md:w-1/2 z-10">
-                        <div class="icon-box">
-                            <i class="fas fa-microphone-lines"></i>
-                        </div>
-                        <h3 class="text-2xl font-semibold mb-3">Advanced TTS & Voice Assignment</h3>
-                        <p class="text-textMuted leading-relaxed mb-4">
-                            Includes <strong>Piper</strong> and <strong>Edge TTS</strong> natively. You can configure optional speaker diarization and assign specific AI voices per speaker for realistic dialogue.
-                        </p>
-                    </div>
+                    <h3 class="text-lg font-bold text-white mb-2">Piper TTS & Edge Voiceover</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Lồng tiếng thuyết minh bằng giọng đọc AI cảm xúc chuẩn tiếng Việt (Ngọc Huyền, Tuấn Khang, Hoài My). Tự động khớp tốc độ đọc vào độ dài từng phân đoạn.
+                    </p>
                 </div>
 
                 <!-- Feature 5 -->
-                <div class="feature-card group">
-                    <div class="icon-box group-hover:border-accent transition-colors">
-                        <i class="fas fa-sliders-h"></i>
+                <div class="glass-card p-6 rounded-2xl">
+                    <div class="w-10 h-10 rounded-xl bg-pink-500/20 text-pink-400 flex items-center justify-center text-lg mb-4 border border-pink-500/30">
+                        <i class="fas fa-user-tag"></i>
                     </div>
-                    <h3 class="text-xl font-semibold mb-3">Editor Timeline</h3>
-                    <p class="text-textMuted leading-relaxed text-sm">
-                        A robust timeline supporting: subtitles, blur, logo, mask, text overlays, selection ranges, track locks, and real-time Fast Preview.
+                    <h3 class="text-lg font-bold text-white mb-2">Speaker Diarization</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Tự động phân biệt và đánh dấu giọng nói của từng nhân vật trong phim. Cho phép gán giọng nam/nữ riêng biệt cho từng người nói để tạo video kịch tính như phim điện ảnh.
+                    </p>
+                </div>
+
+                <!-- Feature 6 -->
+                <div class="glass-card p-6 rounded-2xl">
+                    <div class="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-lg mb-4 border border-blue-500/30">
+                        <i class="fas fa-shield-halved"></i>
+                    </div>
+                    <h3 class="text-lg font-bold text-white mb-2">Lớp che mờ Blur & Mosaic</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        Bảo vệ video khỏi quét bản quyền tự động bằng cách vẽ vùng mờ trực tiếp lên logo nhà đài, kênh nguồn hoặc vùng phụ đề cũ. Hỗ trợ hiệu ứng ô vuông mosaic điện ảnh.
                     </p>
                 </div>
 
             </div>
+
         </div>
     </section>
 
-    <!-- Guided Workflow -->
-    <section id="workflow" class="py-24 relative z-10 border-t border-border bg-[#030303]">
-        <div class="max-w-6xl mx-auto px-6 flex flex-col lg:flex-row gap-16">
+    <!-- SECTION: Built-in Interactive Documentation Reader -->
+    <section id="doc-reader" class="py-24 border-t border-white/10 bg-canvas relative z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             
-            <div class="lg:w-1/2">
-                <div class="sticky top-32">
-                    <h2 class="text-3xl md:text-4xl font-bold tracking-tight mb-6 text-gradient">The Guided Workflow</h2>
-                    <p class="text-textMuted text-lg mb-8">
-                        VIUStudio follows a strict linear process to ensure the highest quality localization output without the confusion of scattered tools.
-                    </p>
-                    <div class="relative rounded-2xl overflow-hidden border border-border">
-                        <img src="assets/viustudio_transcription_1788057771664.jpg" alt="Transcription Flow" class="w-full h-auto opacity-70">
-                        <div class="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent"></div>
+            <div class="text-center max-w-3xl mx-auto mb-14">
+                <span class="text-xs font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+                    Knowledge Base
+                </span>
+                <h2 class="text-3xl sm:text-5xl font-extrabold tracking-tight mt-4 text-gradient-white">
+                    Tài Liệu Hướng Dẫn Kỹ Thuật Chi Tiết
+                </h2>
+                <p class="text-slate-400 mt-3 text-sm sm:text-base">
+                    Tra cứu trực tiếp các hướng dẫn sử dụng, cấu trúc mã nguồn, yêu cầu phần cứng và xử lý lỗi ngay trên trình duyệt.
+                </p>
+            </div>
+
+            <!-- Doc Switcher Tabs -->
+            <div class="flex flex-wrap justify-center gap-2 mb-8 max-w-5xl mx-auto">
+                <button onclick="loadDocContent('how-to-use')" id="doc-tab-how-to-use" class="doc-btn active px-4 py-2 rounded-xl text-xs font-semibold border border-indigo-500/50 bg-indigo-500/10 text-indigo-300 transition-all">
+                    <i class="fas fa-book mr-1.5"></i>Hướng dẫn Sử dụng
+                </button>
+                <button onclick="loadDocContent('tech-stack')" id="doc-tab-tech-stack" class="doc-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all">
+                    <i class="fas fa-layer-group mr-1.5"></i>Kiến trúc Kỹ thuật
+                </button>
+                <button onclick="loadDocContent('project-structure')" id="doc-tab-project-structure" class="doc-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all">
+                    <i class="fas fa-folder-tree mr-1.5"></i>Cấu trúc Thư mục
+                </button>
+                <button onclick="loadDocContent('requirements')" id="doc-tab-requirements" class="doc-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all">
+                    <i class="fas fa-microchip mr-1.5"></i>Yêu cầu Phần cứng
+                </button>
+                <button onclick="loadDocContent('shortcuts')" id="doc-tab-shortcuts" class="doc-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all">
+                    <i class="fas fa-keyboard mr-1.5"></i>Bảng Phím tắt
+                </button>
+                <button onclick="loadDocContent('troubleshooting')" id="doc-tab-troubleshooting" class="doc-btn px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-all">
+                    <i class="fas fa-wrench mr-1.5"></i>Xử lý Sự cố
+                </button>
+            </div>
+
+            <!-- Doc Reader Container -->
+            <div class="glass-panel p-6 sm:p-10 rounded-2xl max-w-5xl mx-auto border border-white/10 shadow-2xl overflow-hidden">
+                <div class="flex items-center justify-between pb-4 mb-6 border-b border-white/10">
+                    <div class="flex items-center gap-3">
+                        <span class="w-3 h-3 rounded-full bg-indigo-500 animate-pulse"></span>
+                        <span id="doc-filename" class="font-mono text-xs text-indigo-400 font-bold">docs/how-to-use.md</span>
+                    </div>
+                    <a id="doc-direct-link" href="how-to-use.md" class="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1.5">
+                        <i class="fas fa-external-link-alt text-[10px]"></i>
+                        <span>Xem file thô</span>
+                    </a>
+                </div>
+
+                <!-- Rendered Doc Body -->
+                <div id="doc-body" class="prose prose-invert max-w-none text-slate-300 text-sm leading-relaxed space-y-4">
+                    <!-- Dynamic Injected Content -->
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- SECTION: Quick Start & Terminal Installation -->
+    <section id="quick-start" class="py-24 border-t border-white/10 bg-slate-950 relative z-10">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            
+            <div class="text-center mb-12">
+                <span class="text-xs font-bold uppercase tracking-wider text-purple-400 bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20">
+                    Run From Source
+                </span>
+                <h2 class="text-3xl sm:text-5xl font-extrabold tracking-tight mt-4 text-gradient-white">
+                    Khởi Chạy Ứng Dụng Trong 2 Phút
+                </h2>
+                <p class="text-slate-400 mt-2 text-sm sm:text-base">
+                    Chỉ cần máy tính chạy hệ điều hành Windows 10/11 có cài đặt Python 3.11+.
+                </p>
+            </div>
+
+            <!-- Terminal Mockup -->
+            <div class="rounded-2xl bg-black border border-white/15 overflow-hidden shadow-2xl">
+                <div class="bg-slate-900/90 px-4 py-3 flex items-center justify-between border-b border-white/10">
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-yellow-500 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-green-500 inline-block"></span>
+                        <span class="ml-2 font-mono text-xs text-slate-300 font-semibold">PowerShell — VIUStudio Setup</span>
+                    </div>
+                    <button onclick="copyInstallCommands()" class="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-slate-300 hover:text-white flex items-center gap-1.5 transition-colors">
+                        <i class="fas fa-copy text-[11px]" id="copy-icon"></i>
+                        <span id="copy-text">Sao chép lệnh</span>
+                    </button>
+                </div>
+                <div class="p-6 font-mono text-xs sm:text-sm text-slate-300 leading-relaxed overflow-x-auto space-y-2">
+                    <p class="text-slate-500"># 1. Clone kho lưu trữ dự án từ GitHub</p>
+                    <p class="text-emerald-400">git clone https://github.com/ViuGiaLai/VIUStudio.git</p>
+                    <p class="text-emerald-400">cd VIUStudio</p>
+                    
+                    <p class="text-slate-500 pt-2"># 2. Khởi tạo và kích hoạt môi trường ảo Python 3.11</p>
+                    <p class="text-indigo-400">python -m venv venv</p>
+                    <p class="text-indigo-400">venv\Scripts\activate</p>
+                    
+                    <p class="text-slate-500 pt-2"># 3. Cài đặt các gói phụ thuộc xử lý video & AI</p>
+                    <p class="text-cyan-400">pip install -r requirements-local.txt</p>
+                    
+                    <p class="text-slate-500 pt-2"># 4. Khởi chạy giao diện chính</p>
+                    <p class="text-yellow-400">python ui/gui.py</p>
+                </div>
+            </div>
+
+            <!-- Hardware Mode Tips -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
+                <div class="p-4 rounded-xl glass-card flex items-start gap-3">
+                    <i class="fas fa-microchip text-indigo-400 text-lg mt-0.5"></i>
+                    <div>
+                        <div class="text-xs font-bold text-white">Chế độ CPU Mode</div>
+                        <div class="text-[11px] text-slate-400 mt-1">Hoạt động ngay trên mọi laptop văn phòng với mô hình SenseVoice & Piper offline. Không yêu cầu card đồ họa rời.</div>
+                    </div>
+                </div>
+                <div class="p-4 rounded-xl glass-card flex items-start gap-3">
+                    <i class="fas fa-bolt text-emerald-400 text-lg mt-0.5"></i>
+                    <div>
+                        <div class="text-xs font-bold text-white">Chế độ GPU Mode (NVIDIA CUDA)</div>
+                        <div class="text-[11px] text-slate-400 mt-1">Tự động kích hoạt khi có card NVIDIA và gói CUDA runtime. Tốc độ phiên âm tăng tốc gấp 10 lần.</div>
                     </div>
                 </div>
             </div>
 
-            <div class="lg:w-1/2 pt-8">
-                
-                <div class="workflow-step">
-                    <div class="step-dot"></div>
-                    <h3 class="text-2xl font-semibold mb-2">1. Prepare</h3>
-                    <p class="text-textMuted leading-relaxed">Import your source video, set up project directories, and configure your target languages.</p>
-                </div>
-
-                <div class="workflow-step">
-                    <div class="step-dot"></div>
-                    <h3 class="text-2xl font-semibold mb-2">2. Transcript</h3>
-                    <p class="text-textMuted leading-relaxed">Run Faster-Whisper or OCR to extract the original text and timings from the video.</p>
-                </div>
-
-                <div class="workflow-step">
-                    <div class="step-dot"></div>
-                    <h3 class="text-2xl font-semibold mb-2">3. Translate</h3>
-                    <p class="text-textMuted leading-relaxed">Process the transcribed text through Cloud APIs to generate accurate translations (e.g. English to Vietnamese).</p>
-                </div>
-
-                <div class="workflow-step">
-                    <div class="step-dot"></div>
-                    <h3 class="text-2xl font-semibold mb-2">4. TTS (Voice-over)</h3>
-                    <p class="text-textMuted leading-relaxed">Assign Piper or Edge TTS voices to generate synchronized audio for the translated text.</p>
-                </div>
-
-                <div class="workflow-step">
-                    <div class="step-dot"></div>
-                    <h3 class="text-2xl font-semibold mb-2">5. Export</h3>
-                    <p class="text-textMuted leading-relaxed">Render the final video with embedded subtitles, visual layers (blur/mask), and mixed audio tracks.</p>
-                </div>
-
-            </div>
         </div>
     </section>
 
-    <!-- Footer CTA -->
-    <footer class="pt-24 pb-12 border-t border-border relative overflow-hidden bg-black z-10">
-        <div class="ambient-glow" style="top: -50%; opacity: 0.5;"></div>
-        
-        <div class="max-w-4xl mx-auto px-6 text-center mb-20 relative z-10">
-            <h2 class="text-3xl md:text-5xl font-bold mb-6 tracking-tight text-gradient">Start localizing today.</h2>
-            <p class="text-textMuted text-lg mb-10">Clone the repository and run VIUStudio from source on your Windows machine.</p>
-            <div class="flex flex-col items-center gap-4">
-                <a href="https://github.com/ViuGiaLai/VIUStudio" class="btn-primary px-8 py-4 rounded-full font-semibold flex items-center justify-center gap-2 text-lg">
-                    <i class="fab fa-github"></i>
-                    View on GitHub
-                </a>
-                <a href="https://github.com/users/ViuGiaLai/projects/2" class="text-sm text-textMuted hover:text-white transition-colors mt-4">
-                    View Development Roadmap &rarr;
-                </a>
+    <!-- Footer -->
+    <footer class="pt-16 pb-12 border-t border-white/10 bg-black relative z-10 text-xs text-slate-400">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex flex-col md:flex-row justify-between items-center gap-6 pb-10 border-b border-white/10">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white">
+                        V
+                    </div>
+                    <div>
+                        <span class="font-bold text-white text-sm">VIUStudio</span>
+                        <span class="text-slate-500 ml-2">— Open Source Windows Desktop Application</span>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-6 text-slate-400">
+                    <a href="how-to-use.md" class="hover:text-white transition-colors">How to Use</a>
+                    <a href="technical-stack.md" class="hover:text-white transition-colors">Technical Stack</a>
+                    <a href="project-structure.md" class="hover:text-white transition-colors">Project Structure</a>
+                    <a href="requirements.md" class="hover:text-white transition-colors">Requirements</a>
+                    <a href="workflow-guide.md" class="hover:text-white transition-colors">Workflow Guide</a>
+                    <a href="keyboard-shortcuts.md" class="hover:text-white transition-colors">Shortcuts</a>
+                    <a href="troubleshooting.md" class="hover:text-white transition-colors">Troubleshooting</a>
+                </div>
             </div>
-        </div>
 
-        <div class="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-textMuted relative z-10">
-            <div class="flex items-center gap-2">
-                <span class="font-semibold text-white">VIUStudio</span>
-                <span>— Apache License 2.0</span>
-            </div>
-            <div class="flex gap-6">
-                <a href="docs/how-to-use.md" class="hover:text-white transition-colors">Documentation</a>
-                <a href="docs/requirements.md" class="hover:text-white transition-colors">Requirements</a>
-                <a href="docs/technical-stack.md" class="hover:text-white transition-colors">Tech Stack</a>
+            <div class="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-slate-500 text-[11px]">
+                <div>
+                    Phát hành theo giấy phép Apache License 2.0. Phát triển bởi cộng đồng sáng tạo nội dung video.
+                </div>
+                <div class="flex items-center gap-4">
+                    <a href="https://github.com/ViuGiaLai/VIUStudio" target="_blank" class="hover:text-slate-300">GitHub Repository</a>
+                    <span>•</span>
+                    <a href="https://github.com/users/ViuGiaLai/projects/2" target="_blank" class="hover:text-slate-300">Roadmap</a>
+                </div>
             </div>
         </div>
     </footer>
 
+    <!-- Interactive Script Logic -->
+    <script>
+        // Tab metadata dictionary
+        const tourData = {
+            workbench: {
+                image: 'assets/screenshots/editor_with_subtitles.png',
+                badge: 'Workspace Core',
+                title: 'Studio Workbench & Multi-Track Editing',
+                desc: 'Không gian làm việc hợp nhất giúp đồng bộ tức thì giữa trình phát video chất lượng cao, dòng thời gian đa track dạng sóng âm thanh và bảng thuộc tính chi tiết.',
+                features: [
+                    { title: 'Multi-Track Timeline', icon: 'fas fa-layer-group', color: 'text-indigo-400', desc: 'Quản lý đồng thời video nguồn (V1), audio gốc (A1), phụ đề đã dịch (TS1), và các lớp hiệu ứng che mờ (Blur).' },
+                    { title: 'Subtitle Inspector', icon: 'fas fa-keyboard', color: 'text-emerald-400', desc: 'Chỉnh sửa trực tiếp câu dịch tiếng Việt, nghe thử câu thoại, và áp dụng nút bấm AI Rewrite viết lại văn phong kịch tính.' },
+                    { title: 'Realtime Player & Controls', icon: 'fas fa-play', color: 'text-cyan-400', desc: 'Nhúng trực tiếp libmpv hỗ trợ tua nhanh 2x, lùi tiến từng khung hình (frame-by-frame) và xem thử vùng che mờ.' },
+                    { title: 'Fast Preview (5s)', icon: 'fas fa-bolt', color: 'text-amber-400', desc: 'Kết xuất nhanh 5 giây video thành phẩm ngay lập tức để kiểm tra font chữ, vị trí phụ đề và độ khớp âm thanh trước khi xuất.' }
+                ]
+            },
+            launcher: {
+                image: 'assets/screenshots/launcher.png',
+                badge: 'Project Hub',
+                title: 'Project Launcher & Hardware Auto-Detection',
+                desc: 'Màn hình khởi động thông minh tự động phát hiện phần cứng (CPU Mode hoặc NVIDIA GPU CUDA), quản lý lịch sử dự án và cung cấp công cụ cắt video nhanh.',
+                features: [
+                    { title: 'Auto Hardware Detection', icon: 'fas fa-microchip', color: 'text-indigo-400', desc: 'Tự động kiểm tra driver NVIDIA và CUDA 12 để kích hoạt GPU mode, fallback an toàn về CPU mode trên máy phổ thông.' },
+                    { title: 'Recent Projects Cards', icon: 'fas fa-clock-rotate-left', color: 'text-emerald-400', desc: 'Hiển thị thẻ dự án kèm hình ảnh thu nhỏ, thời gian mở gần nhất và trạng thái công đoạn (TTS complete, Transcribed).' },
+                    { title: 'Split Video Pre-Processing', icon: 'fas fa-scissors', color: 'text-cyan-400', desc: 'Cắt nhỏ các file video dài thành nhiều phần ngắn để tối ưu hóa bộ nhớ và tăng tốc độ xử lý AI.' },
+                    { title: 'One-Click Project Ingestion', icon: 'fas fa-folder-plus', color: 'text-amber-400', desc: 'Khởi tạo dự án nhanh chóng chỉ bằng cách chọn file MP4/MKV hoặc kéo thả trực tiếp.' }
+                ]
+            },
+            timeline: {
+                image: 'assets/screenshots/timeline_detail.png',
+                badge: 'Precision Editing',
+                title: 'Timeline Đa Track Ảo Hóa Chuyên Sâu',
+                desc: 'Được thiết kế chịu tải hàng chục ngàn câu phụ đề với công nghệ Viewport Virtualization, hiển thị dạng sóng âm thanh chuẩn PCM 16-bit và thước đo khung hình chính xác.',
+                features: [
+                    { title: 'Audio Waveform Cache', icon: 'fas fa-water', color: 'text-indigo-400', desc: 'Dạng sóng âm thanh được trích xuất và lưu cache nhị phân, vẽ vector siêu nhanh mà không phải đọc lại file gốc.' },
+                    { title: 'Track Locking & Solo', icon: 'fas fa-lock', color: 'text-emerald-400', desc: 'Khóa từng track riêng biệt để tránh cắt nhầm clip khi đang biên tập phụ đề hoặc chỉnh sửa vùng mờ.' },
+                    { title: 'Cắt Clip Tức Thì (Hotkey S)', icon: 'fas fa-cut', color: 'text-cyan-400', desc: 'Cắt nhanh phụ đề hoặc video tại vị trí con trỏ playhead chỉ với một phím bấm duy nhất.' },
+                    { title: 'Selection Range Tool', icon: 'fas fa-arrows-left-right', color: 'text-amber-400', desc: 'Chọn một khoảng thời gian trên timeline để chạy nhận diện lại bằng mô hình khác hoặc render Fast Preview.' }
+                ]
+            },
+            captions: {
+                image: 'assets/screenshots/editor_captions_active.png',
+                badge: 'AI Core Engine',
+                title: 'Captions, Whisper ASR & Local LLaMA GGUF',
+                desc: 'Trung tâm cấu hình nhận diện giọng nói và dịch thuật. Hỗ trợ mô hình LLaMA GGUF chạy trực tiếp trên máy không phụ thuộc internet và không tốn phí API.',
+                features: [
+                    { title: 'Llama.cpp Local GGUF Engine', icon: 'fas fa-microchip', color: 'text-indigo-400', desc: 'Chạy trực tiếp các mô hình Qwen3-4B, Gemma ngay trên CPU/GPU của bạn với tốc độ cực nhanh.' },
+                    { title: 'Dual ASR: Whisper & SenseVoice', icon: 'fas fa-language', color: 'text-emerald-400', desc: 'Linh hoạt chuyển đổi giữa Faster-Whisper độ chính xác cao và SenseVoice siêu tốc độ cho phim Trung, Hàn, Nhật.' },
+                    { title: 'Scan Entire PC for Models', icon: 'fas fa-search', color: 'text-cyan-400', desc: 'Tự động quét ổ đĩa máy tính để tìm các file mô hình GGUF có sẵn và tích hợp ngay vào danh sách.' },
+                    { title: 'Cloud Translation Fallback', icon: 'fas fa-cloud', color: 'text-amber-400', desc: 'Hỗ trợ Google AI Studio (Gemini 2.5 Flash), OpenAI GPT-4o-mini, và fallback miễn phí Google Translate.' }
+                ]
+            },
+            voice: {
+                image: 'assets/screenshots/editor_voice_active.png',
+                badge: 'Neural Audio',
+                title: 'Voice & TTS Studio (Lồng Tiếng AI)',
+                desc: 'Phòng thu lồng tiếng AI tự động hóa hoàn toàn. Tự động điều chỉnh tốc độ nói khớp với khung thời gian gốc và hỗ trợ gán giọng riêng cho từng diễn viên.',
+                features: [
+                    { title: 'Piper Neural TTS (Offline)', icon: 'fas fa-volume-high', color: 'text-indigo-400', desc: 'Giọng đọc tiếng Việt truyền cảm (Ngọc Huyền, Tuấn Khang) chạy hoàn toàn trên máy tính không cần mạng.' },
+                    { title: 'Microsoft Edge TTS (Cloud)', icon: 'fas fa-cloud-arrow-up', color: 'text-emerald-400', desc: 'Giọng đọc trực tuyến chất lượng phòng thu với âm sắc tự nhiên như người thật (Hoài My, Nam Minh).' },
+                    { title: 'Per-Speaker Voice Assignment', icon: 'fas fa-users', color: 'text-cyan-400', desc: 'Gán từng giọng đọc nam/nữ riêng cho từng nhân vật sau khi chạy phân tách người nói (Speaker Diarization).' },
+                    { title: 'Voiceover Ducking', icon: 'fas fa-sliders', color: 'text-amber-400', desc: 'Tự động giảm âm lượng nhạc phim khi giọng thuyết minh vang lên để câu chuyện rõ ràng và cuốn hút.' }
+                ]
+            },
+            style: {
+                image: 'assets/screenshots/editor_style_active.png',
+                badge: 'Visual Typography',
+                title: 'Subtitle Style Presets & Tùy Biến Phụ Đề',
+                desc: 'Thư viện mẫu kiểu chữ chuyên biệt cho video ngắn TikTok, YouTube Shorts và Facebook Reels với hiệu ứng đổ bóng, viền chữ dày và tô màu từ khóa.',
+                features: [
+                    { title: 'TikTok & Shorts Presets', icon: 'fab fa-tiktok', color: 'text-indigo-400', desc: 'Mẫu chữ to, viền đen nổi bật, căn giữa màn hình dọc 9:16 giúp giữ chân người xem video ngắn.' },
+                    { title: 'YouTube Landscape Presets', icon: 'fab fa-youtube', color: 'text-emerald-400', desc: 'Mẫu chữ thanh thoát có nền mờ nhẹ tối ưu cho màn hình TV, máy tính và điện thoại xoay ngang.' },
+                    { title: 'Keyword Highlight', icon: 'fas fa-highlighter', color: 'text-cyan-400', desc: 'Tự động bôi màu nổi bật cho các từ khóa kịch tính trong câu tóm tắt phim để tăng tương tác.' },
+                    { title: 'Tùy biến Font & Vị trí', icon: 'fas fa-font', color: 'text-amber-400', desc: 'Chọn font Segoe UI, Inter, Montserrat, tùy chỉnh màu chữ RGB và kéo thả vị trí bất kỳ trên khung hình.' }
+                ]
+            },
+            blur: {
+                image: 'assets/screenshots/editor_blur_inspector.png',
+                badge: 'Copyright Protection',
+                title: 'Lớp Che Mờ Blur, Logo & Hiệu Ứng Mosaic',
+                desc: 'Công cụ đắc lực chống quét bản quyền hình ảnh. Cho phép vẽ vùng che mờ logo kênh gốc, đài truyền hình hoặc phụ đề cũ với hiệu ứng ô vuông mosaic điện ảnh.',
+                features: [
+                    { title: 'Interactive Bounding Box', icon: 'fas fa-vector-square', color: 'text-indigo-400', desc: 'Vẽ và thay đổi kích thước vùng che trực quan ngay trên màn hình xem trước video.' },
+                    { title: 'Blur Radius & Opacity', icon: 'fas fa-droplet', color: 'text-emerald-400', desc: 'Thanh trượt điều chỉnh độ mờ từ nhẹ đến đặc và độ trong suốt của lớp che.' },
+                    { title: 'Cinematic Mosaic Pixelate', icon: 'fas fa-border-all', color: 'text-cyan-400', desc: 'Bật chế độ ô vuông mosaic với thanh trượt tùy biến kích thước hạt từ 4px đến 48px.' },
+                    { title: 'Independent Timing & Split', icon: 'fas fa-clock', color: 'text-amber-400', desc: 'Quy định chính xác thời điểm xuất hiện và kết thúc của vùng mờ trên Timeline độc lập.' }
+                ]
+            },
+            resource: {
+                image: 'assets/screenshots/resource_manager.png',
+                badge: 'Asset Pipeline',
+                title: 'Trình Quản Lý Tài Nguyên AI (Resource Manager)',
+                desc: 'Kiểm soát trạng thái toàn bộ mô hình AI và bộ thư viện phụ thuộc. Tự động kiểm tra tính hợp lệ và hỗ trợ tải về bằng một cú click chuột.',
+                features: [
+                    { title: 'Trạng thái 3 Mức (Ready/Missing/Partial)', icon: 'fas fa-circle-check', color: 'text-indigo-400', desc: 'Nhìn thấy ngay mô hình nào đã sẵn sàng, mô hình nào cần tải thêm trước khi bắt đầu dự án.' },
+                    { title: 'One-Click Model Downloader', icon: 'fas fa-download', color: 'text-emerald-400', desc: 'Tải trực tiếp SenseVoice, Silero VAD, Whisper, Piper voices vào đúng thư mục dự án mà không cần giải nén thủ công.' },
+                    { title: 'Open Storage Folder', icon: 'fas fa-folder-open', color: 'text-cyan-400', desc: 'Nút bấm mở nhanh thư mục lưu trữ trên Windows Explorer để người dùng copy file mô hình offline.' },
+                    { title: 'CUDA 12 Runtime Verification', icon: 'fas fa-bolt', color: 'text-amber-400', desc: 'Tự động kiểm tra thư viện CUDA CTranslate2 để đảm bảo GPU NVIDIA hoạt động tối đa công suất.' }
+                ]
+            },
+            autorecap: {
+                image: 'assets/screenshots/auto_recap_dialog.png',
+                badge: 'Automated Editing',
+                title: 'Auto Edit Recap — Dựng Phim Bằng AI',
+                desc: 'Hệ thống tự động hóa chuyển động camera giúp video recap đạt nhịp điệu lôi cuốn như kênh review phim triệu view mà không cần cắt ghép thủ công từng cảnh.',
+                features: [
+                    { title: 'Smart Zoom & Motion Framing', icon: 'fas fa-magnifying-glass-plus', color: 'text-indigo-400', desc: 'Tự động zoom cận cảnh 105% - 115% vào các khoảnh khắc kịch tính hoặc câu thoại cao trào.' },
+                    { title: 'Pan Reframe Motion', icon: 'fas fa-arrows-up-down-left-right', color: 'text-emerald-400', desc: 'Tạo chuyển động lia máy tự nhiên theo phương ngang hoặc dọc giúp cảnh quay tĩnh trở nên sống động.' },
+                    { title: 'Horizontal Flip Tránh Bản Quyền', icon: 'fas fa-arrows-split-up-and-left', color: 'text-cyan-400', desc: 'Lật gương các cảnh quay lặp lại để tránh quét bản quyền, thông minh bỏ qua các cảnh có chữ.' },
+                    { title: 'Speed Adjustment Ramps', icon: 'fas fa-gauge-high', color: 'text-amber-400', desc: 'Tự động giảm tốc 0.9x ở cao trào và đẩy nhanh 1.15x ở đoạn chuyển cảnh để tạo nhịp điệu cuốn hút.' }
+                ]
+            },
+            subtable: {
+                image: 'assets/screenshots/subtitle_editor_dialog.png',
+                badge: 'Batch Correction',
+                title: 'Subtitle Table Editor — Bảng Biên Tập Phụ Đề Tập Trung',
+                desc: 'Giao diện chỉnh sửa phụ đề dạng bảng phong cách Excel. Hỗ trợ tìm kiếm thay thế hàng loạt, viết lại bằng AI và xuất/nhập file Excel tiện lợi.',
+                features: [
+                    { title: 'Find & Replace Toàn Diện', icon: 'fas fa-magnifying-glass', color: 'text-indigo-400', desc: 'Tìm kiếm và thay thế danh từ riêng, tên nhân vật, thuật ngữ phim trên toàn bộ hàng ngàn câu phụ đề.' },
+                    { title: 'Export & Import Excel (.xlsx)', icon: 'fas fa-file-excel', color: 'text-emerald-400', desc: 'Xuất bảng phụ đề ra file Excel để gửi dịch giả hoặc nạp lại bản dịch đã chỉnh sửa từ bên ngoài.' },
+                    { title: 'Batch AI Rewrite', icon: 'fas fa-wand-magic-sparkles', color: 'text-cyan-400', desc: 'Kêu gọi AI duyệt lại toàn bộ phụ đề để sửa lỗi ngữ pháp, rút gọn câu quá dài và đồng bộ văn phong.' },
+                    { title: 'Bảo Toàn Mốc Thời Gian (Timestamps)', icon: 'fas fa-shield', color: 'text-amber-400', desc: 'Chỉ thay đổi nội dung văn bản mà vẫn giữ nguyên tuyệt đối mốc thời gian Start/End và gán giọng của từng câu.' }
+                ]
+            }
+        };
+
+        function switchTourTab(tabKey) {
+            const data = tourData[tabKey];
+            if (!data) return;
+
+            // Update tab button styles
+            document.querySelectorAll('#tour-tabs .tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            const activeBtn = document.getElementById('tab-' + tabKey);
+            if (activeBtn) activeBtn.classList.add('active');
+
+            // Update Image
+            const img = document.getElementById('tour-screenshot');
+            img.style.opacity = '0';
+            setTimeout(() => {
+                img.src = data.image;
+                img.style.opacity = '1';
+            }, 150);
+
+            // Update Info
+            document.getElementById('tour-badge').innerText = data.badge;
+            document.getElementById('tour-title').innerText = data.title;
+            document.getElementById('tour-desc').innerText = data.desc;
+
+            // Update features grid
+            const container = document.getElementById('tour-features');
+            container.innerHTML = '';
+            data.features.forEach(feat => {
+                const card = document.createElement('div');
+                card.className = 'p-3.5 rounded-xl bg-white/[0.03] border border-white/5';
+                card.innerHTML = `
+                    <div class="text-xs font-semibold ${feat.color} flex items-center gap-2">
+                        <i class="${feat.icon}"></i>
+                        <span>${feat.title}</span>
+                    </div>
+                    <p class="text-[11px] text-slate-300 mt-1 leading-normal">${feat.desc}</p>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        // Markdown Reader Logic
+        const docsData = {
+            'how-to-use': {
+                file: 'docs/how-to-use.md',
+                title: 'Hướng dẫn Sử dụng Chi tiết (User Guide)',
+                content: `
+                    <h3>1. Khởi động & Chọn dự án (Launcher)</h3>
+                    <p>Khởi chạy ứng dụng qua <code>python ui/gui.py</code>. Chọn chế độ <strong>CPU Mode</strong> hoặc <strong>GPU Mode</strong>. Tạo dự án mới qua nút <strong>+ New Project</strong> hoặc chọn lại dự án trong danh sách <strong>Recent Projects</strong>.</p>
+                    
+                    <h3>2. Quy trình làm việc 5 bước (Prepare ➔ Transcript ➔ Translate ➔ Voice ➔ Export)</h3>
+                    <p>Cấu hình video nguồn tại tab <code>01 Source</code>, thiết lập ngôn ngữ và mô hình tại <code>03 Captions</code>, chọn giọng đọc tại <code>04 Voice</code> và bấm <strong>Generate</strong>.</p>
+                    
+                    <h3>3. Chỉnh sửa phụ đề trên Timeline</h3>
+                    <p>Chọn câu phụ đề trên track <strong>TS1</strong> để sửa câu dịch, chỉnh mốc thời gian, hoặc bấm <strong>AI Rewrite</strong> để viết lại kịch tính. Bấm nút <strong>Edit</strong> để mở bảng chỉnh sửa dạng bảng Excel.</p>
+                    
+                    <h3>4. Che mờ logo & chống bản quyền</h3>
+                    <p>Bấm nút <strong>Blur</strong> dưới màn hình video để tạo vùng che. Chỉnh độ mờ và kích thước hạt mosaic trên <strong>Blur Inspector</strong>.</p>
+                `
+            },
+            'tech-stack': {
+                file: 'docs/technical-stack.md',
+                title: 'Kiến trúc Kỹ thuật & Công nghệ',
+                content: `
+                    <h3>1. Nền tảng cốt lõi</h3>
+                    <p><strong>PySide6 (Qt 6.11)</strong> cung cấp giao diện desktop hiệu năng cao. Trình phát video <strong>libmpv</strong> cho phép tua và phát mượt mà không trễ.</p>
+                    
+                    <h3>2. Các bộ máy Trí tuệ Nhân tạo</h3>
+                    <ul>
+                        <li><strong>Faster-Whisper & SenseVoice:</strong> Nhận diện giọng nói với độ chính xác cao và mốc thời gian chi tiết.</li>
+                        <li><strong>RapidOCR PP-OCRv4:</strong> Quét phụ đề cứng trực tiếp từ khung hình video.</li>
+                        <li><strong>Llama.cpp & Google AI Studio:</strong> Bộ điều phối dịch thuật hỗ trợ cả offline mô hình GGUF và cloud API.</li>
+                        <li><strong>Piper & Edge TTS:</strong> Sinh âm thanh lồng tiếng tiếng Việt tự nhiên, truyền cảm.</li>
+                    </ul>
+                    
+                    <h3>3. Viewport Virtualization</h3>
+                    <p>Timeline chỉ tính toán và render các clip nằm trong khung nhìn hiển thị, đảm bảo không bao giờ giật lag ngay cả với hơn 10.000 câu thoại.</p>
+                `
+            },
+            'project-structure': {
+                file: 'docs/project-structure.md',
+                title: 'Cấu trúc Thư mục & Mã nguồn',
+                content: `
+                    <h3>Phân tầng Kiến trúc (Clean Architecture)</h3>
+                    <ul>
+                        <li><code>app/</code>: Tầng nghiệp vụ cốt lõi, bao gồm các workflows, dịch vụ (services), bộ máy AI (engines) và mô hình miền Timeline (layers).</li>
+                        <li><code>ui/</code>: Tầng giao diện người dùng PySide6, gồm cửa sổ chính, timeline ảo hóa, preview libmpv, thanh điều hướng và các Mixin tính năng.</li>
+                        <li><code>bin/</code>: Chứa các công cụ nhị phân thực thi đi kèm: FFmpeg, libmpv, CUDA 12 runtime pack.</li>
+                        <li><code>models/</code>: Thư mục lưu trữ các file trọng số AI tải về (Whisper, SenseVoice, Piper voices).</li>
+                        <li><code>docs/</code>: Cổng thông tin tài liệu tương tác và bộ ảnh chụp màn hình thực tế.</li>
+                    </ul>
+                `
+            },
+            'requirements': {
+                file: 'docs/requirements.md',
+                title: 'Yêu cầu Hệ thống & Quản lý Tài nguyên',
+                content: `
+                    <h3>1. Cấu hình máy tính khuyến nghị</h3>
+                    <p><strong>CPU Mode:</strong> Windows 10/11 64-bit, CPU 4 nhân (Intel i3/AMD Ryzen 3), 8 GB RAM, 10 GB ổ cứng trống.</p>
+                    <p><strong>GPU Mode (Khuyến nghị):</strong> NVIDIA RTX 2060 / 3060 trở lên (VRAM >= 6GB), 16 GB RAM. Tự động kích hoạt tăng tốc CUDA cho Whisper và OCR.</p>
+                    
+                    <h3>2. Tải tài nguyên tự động</h3>
+                    <p>Truy cập <strong>Manage Resources</strong> trong ứng dụng để tải SenseVoice (~237MB), Silero VAD (~2MB), Piper Voices (~60MB/giọng), và gói CUDA 12 (~450MB).</p>
+                `
+            },
+            'shortcuts': {
+                file: 'docs/keyboard-shortcuts.md',
+                title: 'Bảng Tra cứu Phím tắt Nhanh',
+                content: `
+                    <table class="w-full text-left text-xs border border-white/10 mt-2">
+                        <tr class="border-b border-white/10 bg-white/5 font-bold">
+                            <th class="p-2 text-indigo-400">Phím tắt</th>
+                            <th class="p-2">Thao tác</th>
+                        </tr>
+                        <tr class="border-b border-white/5"><td class="p-2 font-mono text-emerald-400">Space</td><td class="p-2">Bật / Tạm dừng phát video</td></tr>
+                        <tr class="border-b border-white/5"><td class="p-2 font-mono text-emerald-400">S</td><td class="p-2">Cắt (Split) clip hoặc phụ đề tại con trỏ</td></tr>
+                        <tr class="border-b border-white/5"><td class="p-2 font-mono text-emerald-400">Delete / Backspace</td><td class="p-2">Xóa clip đang chọn</td></tr>
+                        <tr class="border-b border-white/5"><td class="p-2 font-mono text-emerald-400">Ctrl + Z / Ctrl + Y</td><td class="p-2">Hoàn tác (Undo) / Làm lại (Redo)</td></tr>
+                        <tr class="border-b border-white/5"><td class="p-2 font-mono text-emerald-400">Ctrl + + / Ctrl + -</td><td class="p-2">Phóng to / Thu nhỏ Timeline</td></tr>
+                        <tr class="border-b border-white/5"><td class="p-2 font-mono text-emerald-400">F5</td><td class="p-2">Fast Preview 5 giây</td></tr>
+                        <tr><td class="p-2 font-mono text-emerald-400">Ctrl + E</td><td class="p-2">Mở bảng Xuất bản video (Export)</td></tr>
+                    </table>
+                `
+            },
+            'troubleshooting': {
+                file: 'docs/troubleshooting.md',
+                title: 'Hướng dẫn Xử lý Sự cố Thường gặp',
+                content: `
+                    <h3>1. Lỗi không nhận diện CUDA / GPU</h3>
+                    <p>Cập nhật NVIDIA Driver mới nhất từ trang chủ. Vào <strong>Manage Resources</strong>, tìm <strong>CUDA 12 Runtime Pack</strong> và bấm Download.</p>
+                    
+                    <h3>2. Tiếng thuyết minh bị lệch thời gian</h3>
+                    <p>Trong tab <code>04 Voice</code>, đặt <strong>Voice Timing Sync Mode</strong> thành <code>Smart</code>. Tăng nhẹ thanh <strong>Voice Speed</strong> lên 1.1x nếu câu thoại dài.</p>
+                    
+                    <h3>3. Phụ đề tiếng Việt bị vỡ chữ / lỗi font</h3>
+                    <p>Vào tab <code>05 Style</code> và chọn các font chuẩn Unicode: <strong>Segoe UI</strong>, <strong>Inter</strong>, <strong>Arial</strong> hoặc <strong>Montserrat</strong>.</p>
+                `
+            }
+        };
+
+        function loadDocContent(docKey) {
+            const data = docsData[docKey];
+            if (!data) return;
+
+            document.querySelectorAll('.doc-btn').forEach(btn => {
+                btn.classList.remove('active', 'border-indigo-500/50', 'bg-indigo-500/10', 'text-indigo-300');
+                btn.classList.add('border-slate-700', 'bg-slate-900', 'text-slate-300');
+            });
+            const activeBtn = document.getElementById('doc-tab-' + docKey);
+            if (activeBtn) {
+                activeBtn.classList.remove('border-slate-700', 'bg-slate-900', 'text-slate-300');
+                activeBtn.classList.add('active', 'border-indigo-500/50', 'bg-indigo-500/10', 'text-indigo-300');
+            }
+
+            document.getElementById('doc-filename').innerText = data.file;
+            document.getElementById('doc-direct-link').href = data.file.replace('docs/', '');
+            document.getElementById('doc-body').innerHTML = `
+                <h2 class="text-xl font-bold text-white mb-4">${data.title}</h2>
+                ${data.content}
+            `;
+        }
+
+        // Initialize default doc
+        loadDocContent('how-to-use');
+
+        // Copy Install Commands Logic
+        function copyInstallCommands() {
+            const commands = `git clone https://github.com/ViuGiaLai/VIUStudio.git
+cd VIUStudio
+python -m venv venv
+venv\\Scripts\\activate
+pip install -r requirements-local.txt
+python ui/gui.py`;
+
+            navigator.clipboard.writeText(commands).then(() => {
+                const icon = document.getElementById('copy-icon');
+                const text = document.getElementById('copy-text');
+                icon.className = 'fas fa-check text-emerald-400 text-[11px]';
+                text.innerText = 'Đã sao chép!';
+                setTimeout(() => {
+                    icon.className = 'fas fa-copy text-[11px]';
+                    text.innerText = 'Sao chép lệnh';
+                }, 2500);
+            });
+        }
+    </script>
 </body>
 </html>

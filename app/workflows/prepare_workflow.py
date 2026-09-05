@@ -1364,7 +1364,10 @@ class PrepareWorkflow:
                 if not raw_segments:
                     project_state.set_step_status("transcribe", "failed")
                     self.project_service.save_project(project_state)
-                    raise RuntimeError("Transcription failed.")
+                    raise RuntimeError(
+                        "No speech detected in the selected audio. "
+                        "The video may contain only music/silence, or the dialogue is too quiet."
+                    )
                 repaired_asr_count = 0
                 if repair_asr_with_ocr:
                     self._emit_step(

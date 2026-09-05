@@ -15,6 +15,14 @@ _WHISPER_MODEL_LOCK = threading.Lock()
 _WHISPER_TRANSCRIBE_LOCK = threading.Lock()
 _OPENMP_WORKAROUND_APPLIED = False
 
+# A model can still emit text for music/silence when its VAD backend is
+# unavailable (for example after an ONNX Runtime error).  Keep a conservative
+# speech gate in front of Whisper so those hallucinations never become
+# subtitles.  The gate is deliberately limited to short/direct inference;
+# long media is already split by ChunkingService.
+_WHISPER_DIRECT_VAD_MAX_SECONDS = 120.0
+_WHISPER_NO_SPEECH_PROBABILITY_LIMIT = 0.85
+
 
 
 GGML_MODEL_ALIASES = {
@@ -414,9 +422,95 @@ def _get_batched_whisper_pipeline(model):
     return pipeline
 
 
-def transcribe_audio_with_model(model, audio_path, *, language="auto", task="transcribe", use_batched: bool = True):
+def _detect_direct_speech_regions(audio_path: str):
+    """Return padded Silero speech regions, ``[]`` for confirmed silence.
+
+    ``None`` means the optional gate could not run (missing sherpa/onnx model,
+    unsupported WAV, etc.); callers then retain Whisper's own VAD instead of
+    failing transcription.  This makes voice/no-voice detection fail safe
+    without making SenseVoice a hard dependency for Whisper users.
+    """
+    try:
+        import wave
+
+        with wave.open(str(audio_path), "rb") as wav_file:
+            frame_rate = int(wav_file.getframerate() or 16000)
+            frame_count = int(wav_file.getnframes())
+        duration = frame_count / float(frame_rate or 16000)
+        if duration <= 0.0 or duration > _WHISPER_DIRECT_VAD_MAX_SECONDS:
+            return None
+
+        # Reuse the same Silero gate as SenseVoice, but import lazily so a
+        # Whisper-only installation remains fully functional.
+        from sensevoice_processor import _read_mono_16k, _detect_speech_segments
+
+        audio = _read_mono_16k(str(audio_path))
+        return list(_detect_speech_segments(audio) or [])
+    except Exception as exc:
+        print(f"[Whisper] Speech gate unavailable; relying on model VAD: {exc}")
+        # Keep a tiny dependency-free safety net for installations that do
+        # not ship sherpa/Silero.  It is intentionally only an all-silence
+        # detector; non-silent audio remains the model's responsibility so
+        # quiet dialogue is never discarded here.
+        try:
+            import numpy as np
+            from scipy.io import wavfile
+
+            _sample_rate, samples = wavfile.read(str(audio_path))
+            if getattr(samples, "ndim", 1) > 1:
+                samples = samples.mean(axis=1)
+            samples = np.asarray(samples)
+            if samples.size == 0:
+                return []
+            if np.issubdtype(samples.dtype, np.integer):
+                info = np.iinfo(samples.dtype)
+                scale = float(max(abs(info.min), info.max)) or 1.0
+                samples = samples.astype(np.float32) / scale
+            else:
+                samples = samples.astype(np.float32)
+            rms = float(np.sqrt(np.mean(np.square(samples), dtype=np.float64)))
+            if rms < 0.0015:  # approximately -56 dBFS
+                return []
+        except Exception:
+            pass
+        return None
+
+
+def _segment_overlaps_speech(segment, speech_regions: list[dict]) -> bool:
+    """Check whether a Whisper segment overlaps a confirmed VAD region."""
+    start = float(getattr(segment, "start", 0.0) or 0.0)
+    end = float(getattr(segment, "end", start) or start)
+    if end <= start:
+        return False
+    for region in speech_regions:
+        region_start = float(region.get("speech_start", region.get("start", 0.0)) or 0.0)
+        region_end = float(region.get("speech_end", region.get("end", 0.0)) or 0.0)
+        overlap = min(end, region_end) - max(start, region_start)
+        if overlap >= min(0.08, max(0.02, (end - start) * 0.25)):
+            return True
+    return False
+
+
+def transcribe_audio_with_model(
+    model,
+    audio_path,
+    *,
+    language="auto",
+    task="transcribe",
+    use_batched: bool = True,
+    speech_regions: list[dict] | None = None,
+):
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio not found at {audio_path}")
+
+    # Gate direct/short inference before loading or invoking the model.  This
+    # is especially important when faster-whisper falls back to
+    # ``vad_filter=False`` after an ONNX Runtime failure.
+    if speech_regions is None:
+        speech_regions = _detect_direct_speech_regions(audio_path)
+    if speech_regions == []:
+        print("[Whisper] No speech detected; returning an empty transcript.")
+        return []
 
     normalized_language = _normalize_language(language)
     transcribe_kwargs = {
@@ -473,26 +567,41 @@ def transcribe_audio_with_model(model, audio_path, *, language="auto", task="tra
             segments, _info = _transcribe_with_vad_fallback(model.transcribe, audio_path, transcribe_kwargs)
             raw_segments = list(segments)
 
-    return [
-        {
+    results = []
+    for segment in raw_segments:
+        text = str(getattr(segment, "text", "") or "").strip()
+        if not text:
+            continue
+        no_speech_prob = getattr(segment, "no_speech_prob", None)
+        try:
+            no_speech_prob = float(no_speech_prob) if no_speech_prob is not None else None
+        except (TypeError, ValueError):
+            no_speech_prob = None
+        if speech_regions is not None:
+            if not _segment_overlaps_speech(segment, speech_regions):
+                continue
+        elif no_speech_prob is not None and no_speech_prob >= _WHISPER_NO_SPEECH_PROBABILITY_LIMIT:
+            continue
+        results.append({
             "start": float(segment.start),
             "end": float(segment.end),
-            "text": segment.text.strip(),
+            "text": text,
+            "speech_detected": True,
+            "speech_gate": "silero_vad+whisper" if speech_regions is not None else "whisper_vad",
+            **({"no_speech_prob": no_speech_prob} if no_speech_prob is not None else {}),
             "words": [
                 {
                     "start": float(word.start),
                     "end": float(word.end),
                     "text": str(word.word or "").strip(),
                 }
-                for word in (segment.words or [])
+                for word in (getattr(segment, "words", None) or [])
                 if getattr(word, "start", None) is not None
                 and getattr(word, "end", None) is not None
                 and str(getattr(word, "word", "") or "").strip()
             ],
-        }
-        for segment in raw_segments
-        if segment.text and segment.text.strip()
-    ]
+        })
+    return results
 
 
 def transcribe_audio(audio_path, model_path, whisper_path=None, language="auto", task="transcribe"):

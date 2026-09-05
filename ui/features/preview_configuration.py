@@ -689,7 +689,7 @@ class PreviewConfigurationMixin:
         return " | ".join(part for part in style_parts if part).strip()
 
     def on_output_mode_changed(self, value: str):
-        mode = "both"
+        mode = self.get_output_mode_key()
         if getattr(self, "_filter_thumbnail_visible", False):
             self.hide_filter_thumbnail_preview()
         self.workflow_hint_label.setText(build_workflow_hint(mode, self.is_ai_polish_enabled()))
@@ -723,17 +723,17 @@ class PreviewConfigurationMixin:
         has_video = bool(video_path and os.path.exists(video_path))
         return {
             "media": {"enabled": True, "reason": ""},
+            "audio": {"enabled": has_video, "reason": "Select a video first to configure audio."},
             "language": {"enabled": has_video, "reason": "Select a video first to transcribe and translate."},
             "voice": {"enabled": has_video, "reason": "Select a video first to configure voice and audio."},
             "style": {"enabled": has_video, "reason": "Select a video first to style subtitle output."},
-            "filter": {"enabled": has_video, "reason": "Select a video first to preview and apply filters."},
             "advanced": {"enabled": True, "reason": ""},
         }
 
     def update_workflow_availability(self):
         states = self._workflow_dependency_state()
         current_index = int(self.left_panel_stack.currentIndex()) if hasattr(self, "left_panel_stack") else 0
-        page_order = ["media", "language", "voice", "style", "filter", "advanced"]
+        page_order = ["media", "audio", "language", "voice", "style", "advanced"]
 
         for page_key, state in states.items():
             container = getattr(self, "workflow_page_containers", {}).get(page_key) if hasattr(self, "workflow_page_containers") else None
@@ -750,6 +750,11 @@ class PreviewConfigurationMixin:
                 tab_btn.setEnabled(enabled)
                 tab_btn.style().unpolish(tab_btn)
                 tab_btn.style().polish(tab_btn)
+            rail_key = {"media": "source", "language": "captions"}.get(page_key, page_key)
+            rail_button = getattr(self, "navigation_buttons", {}).get(rail_key)
+            if rail_button is not None:
+                rail_button.setEnabled(enabled)
+                rail_button.setToolTip(f"Open {rail_key.title()} controls" if enabled else reason)
 
         active_key = page_order[current_index] if 0 <= current_index < len(page_order) else "media"
         active_state = states.get(active_key, {"enabled": True})

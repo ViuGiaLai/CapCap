@@ -1,41 +1,61 @@
-# Requirements and Resources
+# Yêu cầu Hệ thống & Quản lý Tài nguyên (Requirements)
 
-## System requirements
+VIUStudio được thiết kế linh hoạt để có thể vận hành ổn định trên cả máy tính văn phòng phổ thông (chỉ có CPU) lẫn máy trạm biên tập đồ họa chuyên nghiệp trang bị GPU NVIDIA cao cấp.
 
-- Windows 10/11
-- Python 3.11 when running from source
-- FFmpeg and libmpv are included in the application resources
-- CPU mode works on systems without an NVIDIA GPU
+---
 
-## GPU mode
+## 1. Yêu cầu Cấu hình Phần cứng
 
-GPU acceleration is used by Faster-Whisper and RapidOCR. It requires a supported NVIDIA GPU and a current NVIDIA driver. The CUDA runtime pack is intentionally downloaded on demand through **Manage Resources** rather than bundled into the installer.
+| Thành phần | Cấu hình Tối thiểu (CPU Mode) | Cấu hình Khuyến nghị (GPU Mode) |
+| :--- | :--- | :--- |
+| **Hệ điều hành** | Windows 10 / 11 (64-bit) | Windows 10 / 11 (64-bit) |
+| **Bộ vi xử lý (CPU)** | Intel Core i3 / AMD Ryzen 3 (4 nhân) | Intel Core i7 / AMD Ryzen 7 (8 nhân trở lên) |
+| **Bộ nhớ RAM** | 8 GB RAM | 16 GB - 32 GB RAM |
+| **Card đồ họa (GPU)** | Đồ họa tích hợp (Intel UHD / AMD Radeon) | NVIDIA RTX 2060 / 3060 / 4060 trở lên (VRAM >= 6GB) |
+| **Ổ cứng lưu trữ** | 10 GB dung lượng trống (ưu tiên SSD) | 50 GB SSD NVMe tốc độ cao |
+| **Màn hình** | Độ phân giải 1280×720 (Scale 100%) | 1920×1080 (Full HD) hoặc 2K/4K |
 
-No CUDA Toolkit installation is required when the CUDA runtime pack is installed.
+---
 
-## Resource Manager
+## 2. Danh mục Tài nguyên Mô hình AI
 
-Open **Manage Resources** from the launcher or Settings. It reports each resource as Ready, Partial, or Missing and provides download links.
+Toàn bộ các mô hình AI có thể được tải tự động thông qua hộp thoại **Manage Resources** trong ứng dụng:
 
-| Resource | Target folder |
-| --- | --- |
-| Faster-Whisper models | `models/faster_whisper/` |
-| CUDA 12 runtime pack | `bin/cuda12_fw/` |
-| SenseVoice model | `models/sensevoice/` |
-| Vietnamese Piper voices | `models/piper/` |
-| English Piper voices | `models/piper-en/` |
-| Speaker diarization models | `models/pyannote/` |
+![Manage Resources](assets/screenshots/resource_manager.png)
 
-## Environment configuration
+| Tên mô hình | Mục đích sử dụng | Dung lượng | Vị trí lưu trữ |
+| :--- | :--- | :--- | :--- |
+| **SenseVoice Small** | Nhận diện giọng nói siêu nhanh trên CPU (Trung, Anh, Nhật, Hàn) | ~237 MB | `models/sensevoice/` |
+| **Silero VAD** | Phân tách khoảng lặng giọng nói | ~2 MB | `bin/` |
+| **Faster-Whisper Base** | Nhận diện giọng nói phổ thông trên CPU | ~145 MB | `models/faster_whisper/` |
+| **Faster-Whisper Small/Medium** | Nhận diện giọng nói độ chính xác cao trên GPU | ~480 MB - 1.5 GB | `models/faster_whisper/` |
+| **CUDA 12 Runtime Pack** | Thư viện tăng tốc GPU cho Whisper & OCR | ~450 MB | `bin/cuda12_fw/` |
+| **Piper Voice (Tiếng Việt)** | Giọng đọc thuyết minh tự nhiên (Ngọc Huyền, Tuấn Khang) | ~60 MB / giọng | `models/piper/` |
+| **Sherpa-ONNX Diarization** | Nhận diện phân tách người nói | ~40 MB | `models/pyannote/` |
+| **PP-OCRv4 (ONNX)** | Nhận diện chữ phụ đề trên khung hình video | ~30 MB | `models/ocr/` |
 
-Copy `.env_example` to `.env` only for manual setup. The active variables are:
+---
 
-| Group | Variables |
-| --- | --- |
-| AI translation | `OPENAI_PROVIDER`, `AI_POLISHER_PROVIDER`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL` |
-| Google AI Studio | `GOOGLE_AI_STUDIO_API_KEY`, `GOOGLE_AI_STUDIO_MODEL`, `GOOGLE_AI_STUDIO_BASE_URL` |
-| OCR crop | `OCR_SUBTITLE_REGION`, `OCR_SAMPLING_FPS`, optional `OCR_CROP_RATIO`, `OCR_SUBTITLE_RECT` |
-| Remote API | `VIUSTUDIO_REMOTE_API_URL`, `VIUSTUDIO_REMOTE_API_TOKEN`, `VIUSTUDIO_REMOTE_API_HOST`, `VIUSTUDIO_REMOTE_API_PORT`, `VIUSTUDIO_REMOTE_API_TIMEOUT`, `VIUSTUDIO_QUIET` |
-| Optional Whisper tuning | `VIUSTUDIO_WHISPER_DEVICE`, `VIUSTUDIO_WHISPER_GPU_BATCHED`, `VIUSTUDIO_WHISPER_GPU_BATCH_SIZE` |
+## 3. Hướng dẫn Cài đặt Môi trường chạy từ Mã nguồn
 
-Subtitle Source is project-local and intentionally is not an environment variable.
+### Bước 1: Clone kho mã nguồn
+```bash
+git clone https://github.com/ViuGiaLai/VIUStudio.git
+cd VIUStudio
+```
+
+### Bước 2: Tạo môi trường ảo Python 3.11
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+
+### Bước 3: Cài đặt thư viện phụ thuộc
+```bash
+pip install -r requirements-local.txt
+```
+
+### Bước 4: Khởi chạy ứng dụng
+```bash
+python ui/gui.py
+```

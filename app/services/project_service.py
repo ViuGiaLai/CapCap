@@ -231,7 +231,8 @@ class ProjectService:
                 delete=False,
             ) as handle:
                 temporary_path = handle.name
-                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                # Invalid timing values must not replace a usable project.
+                json.dump(payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary_path, target)

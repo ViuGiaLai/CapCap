@@ -92,6 +92,18 @@ class ChunkingService:
                 continue
             break
 
+        # ``silencedetect`` may omit ``silence_end`` when silence runs until
+        # EOF (notably with short or truncated WAVs).  Treat the pending
+        # interval as silence through the end of the file instead of
+        # accidentally classifying the entire track as speech.
+        if pending_start is not None:
+            silence_regions.append(
+                {
+                    "start": max(0.0, pending_start),
+                    "end": total_duration,
+                }
+            )
+
         speech_regions = []
         cursor = 0.0
         for silence in silence_regions:
@@ -158,7 +170,11 @@ class ChunkingService:
             min_speech_duration=min_speech_duration,
         )
         if not speech_regions:
-            speech_regions = [{"start": 0.0, "end": total_duration}]
+            # An all-silent track must stay empty.  Falling back to the full
+            # duration feeds silence into Whisper, which can hallucinate
+            # subtitles (and consequently generate bogus TTS).  Callers can
+            # surface this as a clear "no speech detected" result.
+            return []
 
         os.makedirs(output_dir, exist_ok=True)
         bounded_regions = self._force_split_regions(

@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -25,6 +26,10 @@ class StudioShellNavigationTests(unittest.TestCase):
         self.app.processEvents()
 
     def test_navigation_rail_proxies_existing_workflow_stack(self):
+        source = patch.object(self.window, "resolve_canonical_video_path", return_value=__file__)
+        source.start()
+        self.addCleanup(source.stop)
+        self.window.update_workflow_availability()
         self.assertEqual(
             set(self.window.navigation_buttons),
             {"source", "audio", "captions", "voice", "style", "advanced"},
@@ -35,6 +40,33 @@ class StudioShellNavigationTests(unittest.TestCase):
             self.app.processEvents()
             self.assertEqual(self.window.left_panel_stack.currentIndex(), index)
             self.assertTrue(self.window.navigation_buttons[key].isChecked())
+            legacy_key = {"source": "media", "captions": "language"}.get(key, key)
+            self.assertTrue(self.window.workflow_tab_buttons[legacy_key].isChecked())
+
+    def test_empty_project_locks_the_same_pages_on_both_navigation_controls(self):
+        with patch.object(self.window, "resolve_canonical_video_path", return_value=""):
+            self.window.update_workflow_availability()
+            for key in ("audio", "captions", "voice", "style"):
+                self.assertFalse(self.window.navigation_buttons[key].isEnabled())
+                self.window.navigation_buttons[key].click()
+                self.assertEqual(self.window.left_panel_stack.currentIndex(), 0)
+            self.window.navigation_buttons["advanced"].click()
+            self.window.update_workflow_availability()
+            self.assertEqual(self.window.left_panel_stack.currentIndex(), 5)
+
+    def test_voice_controls_follow_output_mode_independently_of_timing_mode(self):
+        with patch.object(self.window, "resolve_canonical_video_path", return_value=__file__), \
+             patch.object(self.window, "using_existing_audio_source", return_value=False), \
+             patch.object(self.window, "_translation_phase_complete", return_value=True):
+            self.window.translated_text.setPlainText("Translated dialogue")
+            for output_index in range(self.window.output_mode_combo.count()):
+                self.window.output_mode_combo.setCurrentIndex(output_index)
+                wants_voice = self.window.get_output_mode_key() in ("voice", "both")
+                for timing_index in range(self.window.voice_timing_sync_combo.count()):
+                    self.window.voice_timing_sync_combo.setCurrentIndex(timing_index)
+                    self.window.refresh_ui_state()
+                    self.assertEqual(self.window.voice_engine_combo.isEnabled(), wants_voice)
+                self.assertEqual(self.window.use_generated_audio_radio.isHidden(), not wants_voice)
 
     def test_legacy_duplicate_tab_bar_is_hidden_but_controls_remain_available(self):
         self.assertFalse(self.window.workflow_tab_bar.isVisible())

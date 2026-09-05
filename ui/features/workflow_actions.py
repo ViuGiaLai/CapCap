@@ -52,8 +52,8 @@ class WorkflowActionsMixin:
         self.extract_btn.setEnabled(v_ok)
         self.vocal_sep_btn.setEnabled(a_ok)
         if hasattr(self, "voice_timing_sync_combo") and hasattr(self, "voice_speed_spin"):
-            mode = self.voice_timing_sync_combo.currentText().strip().lower()
-            self.voice_speed_spin.setEnabled(mode != "off")
+            sync_mode = self.voice_timing_sync_combo.currentText().strip().lower()
+            self.voice_speed_spin.setEnabled(sync_mode != "off")
         self.transcribe_btn.setEnabled(a_ok)
         self.translate_btn.setEnabled(bool(self.transcript_text.toPlainText().strip()))
         self.apply_translated_btn.setEnabled(translation_ready and has_translated_text)

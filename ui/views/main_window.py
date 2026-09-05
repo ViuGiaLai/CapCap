@@ -145,10 +145,14 @@ def _build_navigation_rail(gui):
         gui.navigation_buttons[key] = button
 
         def _select_page(_checked=False, index=page_index, key=key):
+            legacy_key = {"source": "media", "captions": "language"}.get(key, key)
+            legacy = getattr(gui, "workflow_tab_buttons", {}).get(legacy_key)
+            if legacy is not None and not legacy.isEnabled():
+                _sync_navigation_selection(gui, gui.left_panel_stack.currentIndex())
+                return
             stack = getattr(gui, "left_panel_stack", None)
             if stack is not None:
                 stack.setCurrentIndex(index)
-            legacy = getattr(gui, "workflow_tab_buttons", {}).get(key)
             if legacy is not None and not legacy.isChecked():
                 legacy.setChecked(True)
 
