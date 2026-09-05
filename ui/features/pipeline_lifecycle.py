@@ -1109,6 +1109,34 @@ class PipelineLifecycleMixin:
         if target_stage == "tts" and has_translation:
             self.run_voiceover_with_progress(target_stage="tts")
             return
+        if target_stage == "transcript":
+            # A transcript-only run must not keep displaying or restoring a
+            # translation from an earlier run of the same project.
+            state = self.ensure_current_project()
+            self.current_translated_segments = []
+            self.current_translated_segment_models = []
+            self.last_translated_srt_path = ""
+            self.processed_artifacts.pop("srt_translated", None)
+            if hasattr(self, "translated_text"):
+                self.translated_text.clear()
+            if state is not None:
+                for artifact_name in (
+                    "translation_raw",
+                    "translation_refined",
+                    "translation_final",
+                    "subtitle_translated_srt",
+                    "srt_translated",
+                ):
+                    state.artifacts.pop(artifact_name, None)
+                state.settings.pop("translation_signature", None)
+                state.set_step_status("translate_raw", "pending")
+                state.set_step_status("refine_translation", "pending")
+                self.project_service.save_project(state)
+            if hasattr(self, "media_player"):
+                self.media_player.clear_subtitle()
+            if hasattr(self, "timeline"):
+                self.timeline.set_segments(list(self.current_segments or []))
+            self.log("[Pipeline] Transcript-only requested; cleared stale translated subtitle state.")
         mode = self.get_output_mode_key()
         include_voice = target_stage == "tts" and mode in ("voice", "both")
         is_ocr = self.get_transcription_engine() == "ocr"

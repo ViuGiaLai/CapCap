@@ -1469,6 +1469,18 @@ class PrepareWorkflow:
 
         if skip_translation:
             print("\n--- Step 4: Translation skipped (keep original text) ---")
+            # Transcript-only is a real stage boundary.  Do not leave an old
+            # translated artifact attached to the freshly generated source
+            # transcript or load_project_context() will restore it into TS1.
+            for artifact_name in (
+                "translation_raw",
+                "translation_refined",
+                "translation_final",
+                "subtitle_translated_srt",
+                "srt_translated",
+            ):
+                project_state.artifacts.pop(artifact_name, None)
+            project_state.settings.pop("translation_signature", None)
             project_state.set_step_status("translate_raw", "skipped")
             project_state.set_step_status("refine_translation", "skipped")
             self.project_service.save_project(project_state)
@@ -1638,14 +1650,17 @@ class PrepareWorkflow:
             translate_elapsed = time.perf_counter() - translate_started
             print(f"[Timing] Translate/refine: {translate_elapsed:.2f}s")
 
-        print("\n--- Step 5: Generating Vietnamese Subtitle ---")
-        translated_subtitle_started = time.perf_counter()
-        self.engine_runtime.generate_srt(segment_models, srt_translated_path)
-        translated_subtitle_elapsed = time.perf_counter() - translated_subtitle_started
-        project_state.set_artifact("subtitle_translated_srt", srt_translated_path)
-        self.project_service.save_project(project_state)
+        translated_subtitle_elapsed = 0.0
+        if not skip_translation:
+            print("\n--- Step 5: Generating Translated Subtitle ---")
+            translated_subtitle_started = time.perf_counter()
+            self.engine_runtime.generate_srt(segment_models, srt_translated_path)
+            translated_subtitle_elapsed = time.perf_counter() - translated_subtitle_started
+            project_state.set_artifact("subtitle_translated_srt", srt_translated_path)
+            self.project_service.save_project(project_state)
         workflow_elapsed = time.perf_counter() - workflow_started
-        print(f"[Timing] Build translated subtitle: {translated_subtitle_elapsed:.2f}s")
+        if not skip_translation:
+            print(f"[Timing] Build translated subtitle: {translated_subtitle_elapsed:.2f}s")
         print(f"[Timing] Prepare workflow total: {workflow_elapsed:.2f}s")
         print(f"\nCOMPLETED! Project saved at: {project_state.project_root}")
         return project_state
