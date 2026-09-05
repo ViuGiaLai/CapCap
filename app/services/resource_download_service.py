@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -669,6 +670,50 @@ class ResourceDownloadService:
                     "description": "Offline English voices detected in the Piper storage folder.",
                 }
             )
+        external_tts = (
+            (
+                "tts:zerotts",
+                "ZeroTTS [VI]",
+                "zerotts",
+                "https://pypi.org/project/zerotts/",
+                models_path("zerotts"),
+                "Natural Vietnamese TTS. Install the Python runtime; model weights download on first use.",
+            ),
+            (
+                "tts:korvatts",
+                "KorvaTTS [VI/EN]",
+                "korva_tts",
+                "https://huggingface.co/nghiakvnvsd/korva-tts-v1",
+                models_path("korvatts"),
+                "Local Vietnamese and English ONNX TTS. Runtime integration is not yet available in VIUStudio.",
+            ),
+            (
+                "tts:kokoro",
+                "Kokoro-82M [EN]",
+                "kokoro",
+                "https://huggingface.co/hexgrad/Kokoro-82M",
+                models_path("kokoro"),
+                "Natural English TTS. Runtime integration is not yet available in VIUStudio.",
+            ),
+        )
+        for resource_id, name, module_name, download_url, target_dir, description in external_tts:
+            try:
+                runtime_found = importlib.util.find_spec(module_name) is not None
+            except (ImportError, ModuleNotFoundError, ValueError):
+                runtime_found = False
+            resources.append(
+                {
+                    "id": resource_id,
+                    "name": name,
+                    "kind": "voice",
+                    "status": "partial" if runtime_found else "missing",
+                    "status_label": "Runtime found; adapter pending" if runtime_found else "Not installed",
+                    "target_dir": target_dir,
+                    "download_url": download_url,
+                    "auto_download_supported": False,
+                    "description": description,
+                }
+            )
         return resources
 
     def is_resource_installed(self, resource_id: str) -> bool:
@@ -702,6 +747,16 @@ class ResourceDownloadService:
             return self._voice_pack_status("vi") == "installed"
         if resource_id == "voice:pack-en":
             return self._voice_pack_status("en") == "installed"
+        if resource_id in {"tts:zerotts", "tts:korvatts", "tts:kokoro"}:
+            module_name = {
+                "tts:zerotts": "zerotts",
+                "tts:korvatts": "korva_tts",
+                "tts:kokoro": "kokoro",
+            }[resource_id]
+            try:
+                return importlib.util.find_spec(module_name) is not None
+            except (ImportError, ModuleNotFoundError, ValueError):
+                return False
         if resource_id.startswith("voice:"):
             voice_id = resource_id.split(":", 1)[1].strip()
             voice_entry = self._find_voice_entry(voice_id)

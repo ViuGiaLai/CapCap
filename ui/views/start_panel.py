@@ -732,7 +732,7 @@ def build_start_group(gui, left_layout):
     # users can choose the TTS model explicitly.
     gui.voice_engine_combo.addItem("Select TTS engine…", "")
     gui.voice_engine_combo.addItem("Piper [VI/EN] · Fast · Offline", "fast")
-    gui.voice_engine_combo.addItem("ZeroTTS [VI/EN] · Natural · Not installed", "zerotts")
+    gui.voice_engine_combo.addItem("ZeroTTS [VI] · Natural · Not installed", "zerotts")
     gui.voice_engine_combo.addItem("KorvaTTS [VI/EN] · Natural / Local · Not installed", "korvatts")
     gui.voice_engine_combo.addItem("Kokoro-82M [EN] · Natural · Not installed", "kokoro")
     gui.voice_engine_combo.setToolTip(

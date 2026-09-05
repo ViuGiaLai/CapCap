@@ -109,18 +109,11 @@ class SetupWizard(QDialog):
         self.voice_options.setObjectName("profile")
         voice_layout = QVBoxLayout(self.voice_options)
         voice_layout.setContentsMargins(14, 10, 14, 10)
-        self.voice_title = QLabel("Offline Piper voice packs (optional)", self.voice_options)
-        self.voice_title.setStyleSheet("color: #e7f0fb; font-size: 13px; font-weight: 700;")
-        voice_layout.addWidget(self.voice_title)
-        voice_hint = QLabel("Choose one or both languages for offline voiceover.", self.voice_options)
-        voice_hint.setObjectName("hint")
-        voice_hint.setWordWrap(True)
-        voice_layout.addWidget(voice_hint)
         voice_layout.addWidget(QLabel("Preferred TTS engine", self.voice_options))
         self.tts_engine_combo = QComboBox(self.voice_options)
         self.tts_engine_combo.addItem("Select an engine…", "")
         self.tts_engine_combo.addItem("Piper [VI/EN] · Fast · Offline", "piper")
-        self.tts_engine_combo.addItem("ZeroTTS [VI/EN] · Natural · Not installed", "zerotts")
+        self.tts_engine_combo.addItem("ZeroTTS [VI] · Natural · Not installed", "zerotts")
         self.tts_engine_combo.addItem("KorvaTTS [VI/EN] · Natural / Local · Not installed", "korvatts")
         self.tts_engine_combo.addItem("Kokoro-82M [EN] · Natural · Not installed", "kokoro")
         self.tts_engine_combo.setToolTip(
@@ -128,6 +121,13 @@ class SetupWizard(QDialog):
         )
         self.tts_engine_combo.currentIndexChanged.connect(lambda _index: self._refresh_status())
         voice_layout.addWidget(self.tts_engine_combo)
+        self.voice_title = QLabel("Piper voice pack languages (optional)", self.voice_options)
+        self.voice_title.setStyleSheet("color: #e7f0fb; font-size: 13px; font-weight: 700;")
+        voice_layout.addWidget(self.voice_title)
+        self.voice_hint = QLabel("Download only the language packs you need.", self.voice_options)
+        self.voice_hint.setObjectName("hint")
+        self.voice_hint.setWordWrap(True)
+        voice_layout.addWidget(self.voice_hint)
         voice_checks = QHBoxLayout()
         self.voice_vi_check = QCheckBox("Vietnamese", self.voice_options)
         self.voice_en_check = QCheckBox("English", self.voice_options)
@@ -198,13 +198,20 @@ class SetupWizard(QDialog):
         selected_engine = str(self.tts_engine_combo.currentData() or "").strip().lower()
         unsupported_engine = selected_engine in {"zerotts", "korvatts", "kokoro"}
         if self._profile_key == "local" and unsupported_engine:
+            engine_name = {
+                "zerotts": "ZeroTTS",
+                "korvatts": "KorvaTTS",
+                "kokoro": "Kokoro-82M",
+            }[selected_engine]
+            self.advanced_btn.setText(f"Download {engine_name}…")
             self.status_label.setText(
-                "This engine is not integrated yet. Use Download / Manage Resources for available packs, or choose Piper."
+                f"{engine_name} is not integrated yet. The download button opens its verified runtime/model resource."
             )
             self.status_label.setStyleSheet("color: #fca5a5; font-weight: 700;")
             self.install_btn.setText("Unavailable")
             self.install_btn.setEnabled(False)
             return
+        self.advanced_btn.setText("Download / Manage Resources")
         if missing:
             self.status_label.setText(f"{len(missing)} resource(s) need installation for {profile['title']}.")
             self.status_label.setStyleSheet("color: #f6c453; font-weight: 700;")
@@ -220,6 +227,7 @@ class SetupWizard(QDialog):
         """Show Piper language packs only when Piper is selected."""
         visible = self._profile_key == "local" and self.selected_engine() == "piper"
         self.voice_title.setVisible(visible)
+        self.voice_hint.setVisible(visible)
         self.voice_vi_check.setVisible(visible)
         self.voice_en_check.setVisible(visible)
 
