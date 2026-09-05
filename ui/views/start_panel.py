@@ -731,10 +731,10 @@ def build_start_group(gui, left_layout):
     # the offline Piper engine. New projects start with no forced engine so
     # users can choose the TTS model explicitly.
     gui.voice_engine_combo.addItem("Select TTS engine…", "")
-    gui.voice_engine_combo.addItem("Piper (Fast · Offline)", "fast")
-    gui.voice_engine_combo.addItem("ZeroTTS (Natural · Not installed)", "zerotts")
-    gui.voice_engine_combo.addItem("KorvaTTS (Natural / Local · Not installed)", "korvatts")
-    gui.voice_engine_combo.addItem("Kokoro-82M (Natural · Not installed)", "kokoro")
+    gui.voice_engine_combo.addItem("Piper [VI/EN] · Fast · Offline", "fast")
+    gui.voice_engine_combo.addItem("ZeroTTS [VI/EN] · Natural · Not installed", "zerotts")
+    gui.voice_engine_combo.addItem("KorvaTTS [VI/EN] · Natural / Local · Not installed", "korvatts")
+    gui.voice_engine_combo.addItem("Kokoro-82M [EN] · Natural · Not installed", "kokoro")
     gui.voice_engine_combo.setToolTip(
         "Choose the engine explicitly. Engines marked Not installed require their runtime/model before generation."
     )
