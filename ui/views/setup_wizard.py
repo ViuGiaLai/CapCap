@@ -157,7 +157,8 @@ class SetupWizard(QDialog):
         root.addStretch(1)
 
         buttons = QHBoxLayout()
-        self.advanced_btn = QPushButton("Advanced Resources", self)
+        self.advanced_btn = QPushButton("Download / Manage Resources", self)
+        self.advanced_btn.setToolTip("Download required runtimes, voice packs, and optional models.")
         self.advanced_btn.clicked.connect(self._open_advanced)
         buttons.addWidget(self.advanced_btn)
         buttons.addStretch(1)
@@ -198,7 +199,7 @@ class SetupWizard(QDialog):
         unsupported_engine = selected_engine in {"zerotts", "korvatts", "kokoro"}
         if self._profile_key == "local" and unsupported_engine:
             self.status_label.setText(
-                "Selected TTS engine is not integrated in this build; choose Piper or install its runtime manually."
+                "This engine is not integrated yet. Use Download / Manage Resources for available packs, or choose Piper."
             )
             self.status_label.setStyleSheet("color: #fca5a5; font-weight: 700;")
             self.install_btn.setText("Unavailable")
