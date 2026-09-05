@@ -1411,7 +1411,7 @@ class MpvVideoView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet("background-color: black; border-radius: 10px;")
+        self.setStyleSheet("background-color: #050811; border-radius: 8px;")
         self.setMinimumSize(320, 180)
         self.video_source_width = 0
         self.video_source_height = 0
@@ -1493,38 +1493,16 @@ class MpvVideoView(QWidget):
         self.ratio_badge.raise_()
 
     def _update_preview_clip_mask(self):
-        """Clip native MPV content to the rounded preview frame on Windows."""
-        if self.width() <= 0 or self.height() <= 0:
-            return
+        """Keep the preview viewport clean without clipping native content."""
         try:
-            bitmap = QBitmap(self.size())
-            bitmap.fill(Qt.color0)
-            painter = QPainter(bitmap)
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setBrush(Qt.color1)
-            painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 10, 10)
-            painter.end()
-            self.setMask(bitmap)
+            self.clearMask()
         except Exception:
-            # Masking is cosmetic; never prevent video playback if a native
-            # window platform does not support it.
             pass
 
     def _update_video_surface_mask(self):
-        """Round the native MPV child so it follows the device-frame corners."""
-        if self.video_surface.width() <= 0 or self.video_surface.height() <= 0:
-            return
+        """Keep the native MPV video surface rectangular without cutting corners."""
         try:
-            bitmap = QBitmap(self.video_surface.size())
-            bitmap.fill(Qt.color0)
-            painter = QPainter(bitmap)
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setBrush(Qt.color1)
-            painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(self.video_surface.rect().adjusted(1, 1, -1, -1), 8, 8)
-            painter.end()
-            self.video_surface.setMask(bitmap)
+            self.video_surface.clearMask()
         except Exception:
             pass
 
@@ -1712,7 +1690,7 @@ class MpvVideoView(QWidget):
         self.update()
 
     def _video_surface_rect(self):
-        """Keep the native MPV child clipped to the selected output canvas.
+        """Keep the native MPV child fitted cleanly to the selected output canvas.
 
         For Fill, the source is zoomed/cropped by MPV inside this canvas. The
         normalized overlay geometry still uses ``get_video_content_rect`` so
@@ -1720,14 +1698,8 @@ class MpvVideoView(QWidget):
         """
         is_fill = str(getattr(self, "preview_scale_mode", "fit") or "fit").strip().lower() == "fill"
         if is_fill:
-            rect = self.get_preview_canvas_rect().toRect()
-        else:
-            rect = self.get_video_content_rect().toRect()
-        # Leave the simulated device/frame stroke visible on both sides.
-        # Floating canvas coordinates can round asymmetrically on odd pixel
-        # widths, so use a symmetric one-pixel inset for the native surface.
-        inset = 2 if is_fill else 1
-        return rect.adjusted(inset, inset, -inset, -inset) if rect.width() > inset * 2 and rect.height() > inset * 2 else rect
+            return self.get_preview_canvas_rect().toRect()
+        return self.get_video_content_rect().toRect()
 
     def reset_preview_fill_focus(self):
         self.set_preview_fill_focus(0.5, 0.5)
@@ -1963,16 +1935,15 @@ class MpvVideoView(QWidget):
             return
 
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
         outer = QPainterPath()
         outer.addRect(QRectF(self.rect()))
         inner = QPainterPath()
-        inner.addRoundedRect(canvas_rect, 12, 12)
+        inner.addRect(canvas_rect)
         matte = outer.subtracted(inner)
-        painter.fillPath(matte, QColor(2, 8, 16, 190))
-        painter.setPen(QPen(QColor(78, 117, 158, 180), 1.5))
-        painter.drawRoundedRect(canvas_rect, 12, 12)
+        if not matte.isEmpty():
+            painter.fillPath(matte, QColor(4, 6, 12, 230))
+        painter.setPen(QPen(QColor(30, 41, 59, 180), 1.0))
+        painter.drawRect(canvas_rect)
 
     def set_blur_edit_enabled(self, enabled: bool):
         if enabled:

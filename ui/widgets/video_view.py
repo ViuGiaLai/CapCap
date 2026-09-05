@@ -34,7 +34,7 @@ class VideoView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setFrameShape(QFrame.NoFrame)
-        self.setStyleSheet("background-color: black; border-radius: 10px;")
+        self.setStyleSheet("background-color: #050811; border-radius: 8px;")
         self.setRenderHint(QPainter.Antialiasing)
 
         self._scene = QGraphicsScene(self)
@@ -620,16 +620,15 @@ class VideoView(QGraphicsView):
             return
 
         painter = QPainter(self.viewport())
-        painter.setRenderHint(QPainter.Antialiasing)
-
         outer = QPainterPath()
         outer.addRect(QRectF(self.viewport().rect()))
         inner = QPainterPath()
-        inner.addRoundedRect(canvas_rect, 12, 12)
+        inner.addRect(canvas_rect)
         matte = outer.subtracted(inner)
-        painter.fillPath(matte, QColor(2, 8, 16, 190))
-        painter.setPen(QPen(QColor(78, 117, 158, 180), 1.5))
-        painter.drawRoundedRect(canvas_rect, 12, 12)
+        if not matte.isEmpty():
+            painter.fillPath(matte, QColor(4, 6, 12, 230))
+        painter.setPen(QPen(QColor(30, 41, 59, 180), 1.0))
+        painter.drawRect(canvas_rect)
 
         aspect_key = str(getattr(self, "preview_aspect_key", "source") or "source").strip().lower()
         if aspect_key != "source":
