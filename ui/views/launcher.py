@@ -7,7 +7,7 @@ import shutil
 import re
 import tempfile
 
-from PySide6.QtCore import QMetaObject, Qt, QTimer
+from PySide6.QtCore import QMetaObject, QSettings, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -880,7 +880,12 @@ class LauncherWindow(QDialog):
     def _on_setup_resources(self):
         """Open the guided installer from the launcher."""
         from views.setup_wizard import open_setup_wizard
-        open_setup_wizard(workspace_root(), parent=self)
+        selected_engine = open_setup_wizard(workspace_root(), parent=self)
+        if selected_engine:
+            # Setup and editor share the same persisted engine key. Keep the
+            # legacy ``fast`` value for Piper projects from older builds.
+            persisted_engine = "fast" if selected_engine == "piper" else selected_engine
+            QSettings("VIUStudio", "VideoTranslatorGUI").setValue("voice_engine", persisted_engine)
         self._validate_resources_for_device()
 
     def _validate_resources_for_device(self):

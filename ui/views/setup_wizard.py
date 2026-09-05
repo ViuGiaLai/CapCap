@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -115,6 +116,18 @@ class SetupWizard(QDialog):
         voice_hint.setObjectName("hint")
         voice_hint.setWordWrap(True)
         voice_layout.addWidget(voice_hint)
+        voice_layout.addWidget(QLabel("Preferred TTS engine", self.voice_options))
+        self.tts_engine_combo = QComboBox(self.voice_options)
+        self.tts_engine_combo.addItem("Select an engine…", "")
+        self.tts_engine_combo.addItem("Piper (Fast · Offline)", "piper")
+        self.tts_engine_combo.addItem("ZeroTTS (Natural · Not installed)", "zerotts")
+        self.tts_engine_combo.addItem("KorvaTTS (Natural / Local · Not installed)", "korvatts")
+        self.tts_engine_combo.addItem("Kokoro-82M (Natural · Not installed)", "kokoro")
+        self.tts_engine_combo.setToolTip(
+            "Choose one engine. Models marked Not installed require their runtime before use."
+        )
+        self.tts_engine_combo.currentIndexChanged.connect(lambda _index: self._refresh_status())
+        voice_layout.addWidget(self.tts_engine_combo)
         voice_checks = QHBoxLayout()
         self.voice_vi_check = QCheckBox("Vietnamese", self.voice_options)
         self.voice_en_check = QCheckBox("English", self.voice_options)
@@ -180,6 +193,16 @@ class SetupWizard(QDialog):
         profile = self.PROFILES[self._profile_key]
         missing = [rid for rid in self._selected_resources() if not self.service.is_resource_installed(rid)]
         self._pending = missing
+        selected_engine = str(self.tts_engine_combo.currentData() or "").strip().lower()
+        unsupported_engine = selected_engine in {"zerotts", "korvatts", "kokoro"}
+        if self._profile_key == "local" and unsupported_engine:
+            self.status_label.setText(
+                "Selected TTS engine is not integrated in this build; choose Piper or install its runtime manually."
+            )
+            self.status_label.setStyleSheet("color: #fca5a5; font-weight: 700;")
+            self.install_btn.setText("Unavailable")
+            self.install_btn.setEnabled(False)
+            return
         if missing:
             self.status_label.setText(f"{len(missing)} resource(s) need installation for {profile['title']}.")
             self.status_label.setStyleSheet("color: #f6c453; font-weight: 700;")
@@ -244,6 +267,12 @@ class SetupWizard(QDialog):
         open_resource_manager(self.workspace_root, parent=self)
         self._refresh_status()
 
+    def selected_engine(self) -> str:
+        """Return the user's setup choice for synchronizing the editor."""
+        return str(self.tts_engine_combo.currentData() or "").strip().lower()
 
-def open_setup_wizard(workspace_root: str, parent=None) -> None:
-    SetupWizard(workspace_root, parent=parent).exec()
+
+def open_setup_wizard(workspace_root: str, parent=None) -> str:
+    wizard = SetupWizard(workspace_root, parent=parent)
+    result = wizard.exec()
+    return wizard.selected_engine() if result == QDialog.DialogCode.Accepted else ""
